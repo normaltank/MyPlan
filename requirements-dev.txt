@@ -1,0 +1,5 @@
+# 开发与测试依赖；运行环境只装 requirements.txt
+-r requirements.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.9

@@ -200,7 +200,7 @@ async def test_stale_lease_in_real_database_cannot_publish(tmp_path):
     from server.agent_queue import LeaseConflictError
     queue = AgentTaskQueue(tmp_path / "queue.db")
     task = queue.submit_task("University", "A")
-    claimed = queue.claim_task("fixture", task_id=task.task_id)
+    queue.claim_task("fixture", task_id=task.task_id)
     root = tmp_path / "outputs"
     root.mkdir()
     previous = root / "University.xlsx"

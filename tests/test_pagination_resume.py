@@ -46,6 +46,7 @@ async def replay_context(browser, bodies, visits, *, blocked=None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_interrupted_url_pagination_resumes_at_last_success_without_revisiting_first(tmp_path):
     bodies = {ROOT: roster(1, next_href='/list/2'),
               'https://example.edu/list/2': roster(2, next_href='/list/3'),
@@ -74,6 +75,7 @@ async def test_interrupted_url_pagination_resumes_at_last_success_without_revisi
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_changed_frontier_discards_saved_prefix_and_restarts_from_entry(tmp_path):
     state = HarvestState(tmp_path, PLAN)
     state.save_roster_progress(BRANCH, ROOT, roster(1, next_href='/list/2'), 0)
@@ -106,6 +108,7 @@ def test_corrupt_or_noncontiguous_progress_is_not_reused(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_same_url_ajax_states_restart_from_entry(tmp_path):
     state = HarvestState(tmp_path, PLAN)
     first = roster(1, ajax=True)
@@ -122,6 +125,7 @@ async def test_same_url_ajax_states_restart_from_entry(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_resume_does_not_reset_page_limit_budget(tmp_path):
     branch = {**BRANCH, 'max_pages': 2}
     plan = {**PLAN, 'branches': [branch]}
@@ -140,6 +144,7 @@ async def test_resume_does_not_reset_page_limit_budget(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_delayed_frontier_change_is_checked_before_restoring_prefix(tmp_path):
     state = HarvestState(tmp_path, PLAN)
     state.save_roster_progress(BRANCH, ROOT, roster(1, next_href='/list/2'), 0)
@@ -157,6 +162,7 @@ async def test_delayed_frontier_change_is_checked_before_restoring_prefix(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_pending_ajax_after_networkidle_does_not_validate_old_frontier(tmp_path):
     state = HarvestState(tmp_path, PLAN)
     state.save_roster_progress(BRANCH, ROOT, roster(1, next_href='/list/2'), 0)
@@ -174,6 +180,7 @@ async def test_pending_ajax_after_networkidle_does_not_validate_old_frontier(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_batch_resume_preserves_all_people_and_fetches_only_missing_profiles(tmp_path):
     bodies = {ROOT: roster(1, next_href='/list/2'),
               'https://example.edu/list/2': roster(2, next_href='/list/3'),
@@ -199,6 +206,7 @@ async def test_batch_resume_preserves_all_people_and_fetches_only_missing_profil
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_cancellation_preserves_last_successful_page_and_cursor(tmp_path):
     bodies = {ROOT: roster(1, next_href='/list/2'),
               'https://example.edu/list/2': roster(2, next_href='/list/3'),

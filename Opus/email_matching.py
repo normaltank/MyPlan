@@ -41,7 +41,7 @@ import numpy as np
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from scipy.optimize import linear_sum_assignment
 
-from iso_mining import ancestors_inclusive, in_template, lca
+from iso_mining import ancestors_inclusive, in_template
 
 # --------------------------------------------------------------------------
 # Data structures

@@ -7,7 +7,6 @@ recorded no usage, and full-page screenshots were sent as multi-MB images.
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import threading
@@ -134,6 +133,7 @@ async def test_worker_fails_fast_on_phase_limit_without_repair_rounds(tmp_path, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_screenshot_is_a_bounded_jpeg_and_identical_snapshots_are_not_duplicated(tmp_path):
     from playwright.async_api import async_playwright
     from server.recon_browser_mcp import BrowserScout, SCREENSHOT_MAX_HEIGHT

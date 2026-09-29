@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from email_matching import (DomainConventionModel, build_weight_matrix, extract_email_mentions,
                             match_flow, persons_from_group)
 from iso_mining import FusionConfig, mine_records, name_prob
-from wrapper_synth import Page, Validator, WrapperRegistry, build_prompt, synthesize
+from wrapper_synth import Page, Validator, WrapperRegistry, synthesize
 
 NAMES = ["张伟", "李娜", "王强", "赵敏", "陈刚", "刘洋", "孙丽", "周杰", "吴昊", "郑爽",
          "何平", "高远", "罗兰", "梁静", "谢飞", "宋佳", "唐宁", "许诺", "韩梅", "冯军",

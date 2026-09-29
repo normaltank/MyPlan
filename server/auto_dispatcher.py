@@ -43,7 +43,6 @@ async def run_auto_dispatcher(interval: int = 5, once: bool = False, base_url: s
                 if r.status_code == 200:
                     data = r.json()
                     count = data.get("count", 0)
-                    tasks = data.get("tasks", [])
 
                     if count > 0:
                         if now_ts - last_idle_log >= 20.0:

@@ -80,6 +80,7 @@ def test_each_native_chrome_gets_its_own_port_and_profile_which_is_removed(monke
         assert proc.stopped and not user_dir.exists()
 
 
+@pytest.mark.browser
 def test_concurrent_native_chrome_fetches_do_not_cross(monkeypatch, tmp_path):
     monkeypatch.delenv("HARVEST_DISABLE_NATIVE_CHROME_FALLBACK", raising=False)
     if browser_batch_tool._native_chrome_executable() is None:

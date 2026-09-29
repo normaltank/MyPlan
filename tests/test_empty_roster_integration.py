@@ -39,6 +39,7 @@ def mixed_sources():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_confirmed_empty_branch_is_counted_as_covered_beside_normal_teachers(tmp_path):
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -55,6 +56,7 @@ async def test_confirmed_empty_branch_is_counted_as_covered_beside_normal_teache
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_empty_branch_is_revisited_and_changed_content_blocks_delivery(tmp_path):
     state = HarvestState(tmp_path / 'state', PLAN)
     sources = mixed_sources()
@@ -76,6 +78,7 @@ async def test_empty_branch_is_revisited_and_changed_content_blocks_delivery(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_zero_cards_without_visible_empty_marker_are_not_confirmed(tmp_path):
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -87,6 +90,7 @@ async def test_zero_cards_without_visible_empty_marker_are_not_confirmed(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_entirely_empty_college_reports_explicit_review_requirement(tmp_path):
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)

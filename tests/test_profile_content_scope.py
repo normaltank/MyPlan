@@ -200,6 +200,7 @@ async def _run_browser_plan(tmp_path, *, selectors=('#profile',), shared=False, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_run_plan_scopes_all_field_extraction_and_preserves_raw_snapshot(tmp_path):
     report, records = await _run_browser_plan(tmp_path)
     assert report['delivery_ready'] and len(records) == 1
@@ -215,6 +216,7 @@ async def test_run_plan_scopes_all_field_extraction_and_preserves_raw_snapshot(t
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_run_plan_missing_scope_keeps_records_but_blocks_delivery(tmp_path):
     report, records = await _run_browser_plan(tmp_path, missing=True)
     assert records and not report['delivery_ready'] and report['excel_path'] is None
@@ -222,6 +224,7 @@ async def test_run_plan_missing_scope_keeps_records_but_blocks_delivery(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_run_plan_conflicting_scopes_keeps_records_but_blocks_delivery(tmp_path):
     report, records = await _run_browser_plan(tmp_path, selectors=('#profile', 'article'))
     assert records and not report['delivery_ready'] and report['excel_path'] is None
@@ -229,6 +232,7 @@ async def test_run_plan_conflicting_scopes_keeps_records_but_blocks_delivery(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_run_plan_shared_container_uses_existing_person_attribution(tmp_path):
     report, records = await _run_browser_plan(tmp_path, shared=True)
     assert len(records) == 2
@@ -239,6 +243,7 @@ async def test_run_plan_shared_container_uses_existing_person_attribution(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_stylesheet_hidden_profile_scope_is_blocked_in_real_browser(tmp_path):
     report, records = await _run_browser_plan(tmp_path, stylesheet='<style>#profile {display:none}</style>')
     assert records
@@ -248,6 +253,7 @@ async def test_stylesheet_hidden_profile_scope_is_blocked_in_real_browser(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_stylesheet_hidden_descendant_is_blocked_in_real_browser(tmp_path):
     report, records = await _run_browser_plan(tmp_path, stylesheet='<style>#profile section {visibility:hidden}</style>')
     assert records
@@ -256,6 +262,7 @@ async def test_stylesheet_hidden_descendant_is_blocked_in_real_browser(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_scoped_checkpoint_is_reopened_and_original_time_only_preserved_if_unchanged(tmp_path):
     from playwright.async_api import async_playwright
     from server.harvest_workflow import capture_profiles
@@ -307,6 +314,7 @@ async def test_unscoped_checkpoint_retains_zero_browser_visit_recovery(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_native_fallback_profile_cannot_authorize_scoped_delivery(tmp_path, monkeypatch):
     from server import browser_batch_tool
     async def failed_capture(_context, urls, _concurrency, _ready, **_kwargs):

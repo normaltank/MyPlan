@@ -120,9 +120,9 @@ uv pip sync --python .runtime/worker-venv/Scripts/python.exe requirements.lock
 ## 10. 测试与历史回归记录
 
 ```powershell
-uv run --no-project --with-requirements requirements.lock --python 3.12 python -m pytest tests/ -q
+uv run --no-project --with-requirements requirements-dev.lock --python 3.12 python -m pytest -q
 ```
-`requirements.lock` 固定 Python 3.12 下解析出的依赖版本；更新 `requirements.txt` 后用 `uv pip compile requirements.txt --output-file requirements.lock --python-version 3.12` 重建。2026-09-24 的隔离环境回归结果为 **137 passed、1 skipped**。开发机原有 NumPy 2.5.3 超出 SciPy 1.15.2 声明的 `<2.5` 范围，因此以锁定环境结果为准。
+测试依赖在 `requirements-dev.lock`，运行环境的 `requirements.lock` 不含 pytest；浏览器测试的标记、ruff 与 CI 见 README“开发与测试”。2026-09-29 起全量为 **536 passed、3 skipped**，其中启动真实 Chromium 的 66 项标记为 `browser`。2026-09-24 的隔离环境回归结果为 **137 passed、1 skipped**。开发机原有 NumPy 2.5.3 超出 SciPy 1.15.2 声明的 `<2.5` 范围，因此以锁定环境结果为准。
 
 最新 2026-09-27 固定环境全量回归为 **365 passed、1 skipped**，生产队列与测试数据库隔离；包含分页续采、严格空态、永久方案库、逐详情正文范围证明、浏览器脚本隔离和交付门禁。唯一跳过来自缺少历史源码归档。六所预先冻结的新学校随机学院真实测试为 1 校独立通过、5 校保留阻断；本轮没有 DeepSeek API 请求，不能等同 Harness 自主侦察或全国适配率。见 [随机学院验证](audits/2026-09-27-random-college-validation.md) 和 [先前实现审计](audits/2026-09-27-verifiable-harvest.md)。
 

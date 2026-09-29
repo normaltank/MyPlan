@@ -5,6 +5,8 @@ from playwright.async_api import Error, async_playwright
 
 from server.browser_context import new_browser_context
 
+pytestmark = pytest.mark.browser
+
 
 @pytest.mark.asyncio
 async def test_legacy_page_map_is_unchanged_and_tools_are_isolated(tmp_path):
@@ -19,7 +21,9 @@ async def test_legacy_page_map_is_unchanged_and_tools_are_isolated(tmp_path):
         await raw.route('**/*', lambda route: route.fulfill(body=html, content_type='text/html'))
         bad = await raw.new_page()
         await bad.goto('https://fixture.example.edu/roster')
-        with pytest.raises(Error, match='extraEngines is not iterable'):
+        # Playwright 1.47 reports 'extraEngines is not iterable'; 1.56 reports
+        # 'this._engines.keys ... is not iterable'. Either way the legacy Map breaks it.
+        with pytest.raises(Error, match='is not iterable'):
             await bad.locator('a').evaluate_all('nodes => nodes.map(n => ({url:n.href}))')
         await raw.close()
 

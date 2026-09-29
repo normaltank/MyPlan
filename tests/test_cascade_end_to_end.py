@@ -8,11 +8,9 @@ End-to-end verification of the L1 -> L2 -> L3 cascade in server/faculty_extracto
 from __future__ import annotations
 
 import time
-import pytest
 from server.faculty_extractor import (
     FacultyDirectoryExtractor,
     FacultyHarvestPipeline,
-    FacultyCandidate,
 )
 from server.runtime_l1 import L1RuntimeExecutor, SQLiteWrapperRegistry, cluster_key_for
 from server.agent_queue import AgentTaskQueue

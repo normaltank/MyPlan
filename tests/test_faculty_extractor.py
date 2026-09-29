@@ -5,8 +5,7 @@ Verifies DOM Isomorphic Clustering without keyword blacklists.
 
 import os
 
-import pytest
-from server.faculty_extractor import FacultyDirectoryExtractor, FacultyCandidate
+from server.faculty_extractor import FacultyDirectoryExtractor
 
 SAMPLE_DIRECTORY_HTML = """
 <!DOCTYPE html>

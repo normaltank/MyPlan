@@ -88,6 +88,7 @@ async def test_source_capture_transfers_proof_and_coverage_rechecks_binding():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_real_browser_empty_verification_rejects_hidden_content_media_loading_and_pagination():
     from server.empty_roster import verify_empty_roster, empty_roster_proof_valid, install_empty_roster_tracking
     async with async_playwright() as pw:
@@ -158,6 +159,7 @@ def test_request_tracking_is_shared_idempotent_and_unavailable_without_a_page():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_late_network_request_cannot_confirm_still_loading_roster():
     from server.empty_roster import verify_empty_roster, install_empty_roster_tracking
     async with async_playwright() as pw:
@@ -196,6 +198,7 @@ async def test_late_network_request_cannot_confirm_still_loading_roster():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_browser_verify_replays_empty_selector_arguments_with_real_dom(tmp_path):
     from server.recon_browser_mcp import BrowserScout
     async with async_playwright() as pw:
@@ -219,6 +222,7 @@ async def test_browser_verify_replays_empty_selector_arguments_with_real_dom(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_hidden_pseudo_content_in_marker_or_visible_inline_descendant_is_not_empty():
     from server.empty_roster import verify_empty_roster, install_empty_roster_tracking
     async with async_playwright() as pw:

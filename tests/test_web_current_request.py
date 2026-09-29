@@ -1,7 +1,6 @@
 """Current work must not be replaced by a terminal/global historical request."""
 import asyncio
 import contextlib
-import json
 from urllib.parse import urlparse
 
 import pytest
@@ -129,6 +128,7 @@ async def local_page(browser, *, storage=None, active=False, hold_old=None, acti
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('legacy_storage', [False, True])
+@pytest.mark.browser
 async def test_terminal_history_is_not_automatically_the_current_request(legacy_storage):
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -144,6 +144,7 @@ async def test_terminal_history_is_not_automatically_the_current_request(legacy_
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_late_history_response_cannot_overwrite_new_request_view():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -166,6 +167,7 @@ async def test_late_history_response_cannot_overwrite_new_request_view():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_other_employee_browser_pointer_is_not_restored():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -179,6 +181,7 @@ async def test_other_employee_browser_pointer_is_not_restored():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_running_batch_pointer_restores_only_its_own_batch():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -196,6 +199,7 @@ async def test_running_batch_pointer_restores_only_its_own_batch():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_history_is_explicit_and_return_to_new_request_clears_old_results():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -219,6 +223,7 @@ async def test_history_is_explicit_and_return_to_new_request_clears_old_results(
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_current_running_single_request_is_restored():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -233,6 +238,7 @@ async def test_current_running_single_request_is_restored():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_single_form_requires_entry_before_posting():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()

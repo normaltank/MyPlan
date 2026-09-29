@@ -243,11 +243,11 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
                 raise PlanHygieneError(f"{path}.url must be a URL")
             if not _is_structure_url(raw_url):
                 raise PlanHygieneError(f"{path}.url is not a permitted roster URL")
-        for field in ("card_selector", "next_selector", "initial_click_selector", "child_link_selector",
+        for name in ("card_selector", "next_selector", "initial_click_selector", "child_link_selector",
                       "empty_state_selector", "roster_container_selector",
                       "profile_content_selector", "profile_content_start_selector",
                       "container_selector", "record_start_selector"):
-            selector(node, field, path)
+            selector(node, name, path)
         if node.get("kind") == "segmented":
             from server.segmented_roster import branch_valid
             if child or not branch_valid(node) or node.get("single_page") is not True:
@@ -265,9 +265,9 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
                 raise PlanHygieneError(f"{path}.card_selector is required")
         if "single_page" in node and not isinstance(node["single_page"], bool):
             raise PlanHygieneError(f"{path}.single_page must be boolean")
-        for field in ("max_pages", "max_children"):
-            if field in node and (type(node[field]) is not int or not 1 <= node[field] <= 100):
-                raise PlanHygieneError(f"{path}.{field} must be an integer from 1 to 100")
+        for name in ("max_pages", "max_children"):
+            if name in node and (type(node[name]) is not int or not 1 <= node[name] <= 100):
+                raise PlanHygieneError(f"{path}.{name} must be an integer from 1 to 100")
         if "child_branch" in node:
             if not isinstance(node["child_branch"], dict):
                 raise PlanHygieneError(f"{path}.child_branch must be an object")

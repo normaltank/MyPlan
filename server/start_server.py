@@ -33,7 +33,7 @@ def main():
     print("      [Playwright 无头浏览器 + DOM 同构子树聚类 + CS 原理自适应抽取]")
     print("=" * 70)
     print()
-    print(f" [✓] 本机访问地址:    http://localhost:8000")
+    print(" [✓] 本机访问地址:    http://localhost:8000")
     print(" [★] 多员工访问:  请先通过 HTTPS 反向代理发布服务")
     print()
     print("=" * 70)

@@ -82,6 +82,7 @@ def test_cache_rejects_expiry_and_changed_contract(tmp_path, monkeypatch, change
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_branch_only_validation_checks_fresh_cards_and_actual_ajax_pagination(tmp_path):
     from playwright.async_api import async_playwright
     from server.agent_recon import selector_evidence_issues
@@ -131,6 +132,7 @@ def test_cache_requires_discovery_evidence_and_never_accepts_teacher_fields(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_cached_plan_is_revalidated_in_real_browser_and_detects_new_links(tmp_path):
     from playwright.async_api import async_playwright
     from server.recon_plan_cache import navigation_evidence

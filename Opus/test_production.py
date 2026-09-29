@@ -63,7 +63,6 @@ def t2_text_lists():
     print("missing:", missing, "| rare-surname review:", review)
     assert not missing
     assert "郗鉴" in accepted | review
-    rejected = [c for c in res.candidates if c.utility <= 0 and isinstance(c.records[0][0], object)]
     prose = [c for c in res.candidates if "法理学" in c.texts() or any("专任教师" in t for t in c.texts())]
     print("prose/research groups U:", [round(c.utility, 2) for c in prose])
     assert all(c.utility <= 0 for c in prose)

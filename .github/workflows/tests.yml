@@ -1,0 +1,44 @@
+name: 测试
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ruff@0.16.9 check .
+
+  unit:
+    name: 单元测试（不启动浏览器）
+    runs-on: ubuntu-latest
+    env:
+      # 指向不存在的目录：没标 browser 的测试若偷偷启动浏览器，这里会直接失败。
+      PLAYWRIGHT_BROWSERS_PATH: /nonexistent
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12 && uv pip sync requirements-dev.lock
+      - run: .venv/bin/python -m pytest -m "not browser" -q
+
+  browser:
+    name: 浏览器测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12 && uv pip sync requirements-dev.lock
+      - run: .venv/bin/python -m playwright install --with-deps chromium
+      - run: .venv/bin/python -m pytest -m browser -q

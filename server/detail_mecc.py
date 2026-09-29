@@ -8,14 +8,11 @@ Zero keyword blacklists. Zero AI summarization. Based on:
 """
 from __future__ import annotations
 
-import os
 import re
 import sys
-from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 

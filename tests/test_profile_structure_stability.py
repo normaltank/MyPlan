@@ -9,6 +9,8 @@ from server.browser_readiness import install_request_tracking
 from server.profile_structure import verify_profile_container
 from server.harvest_workflow import capture_profiles
 
+pytestmark = pytest.mark.browser
+
 URL = 'https://scope.example.edu/p'
 BODY = '<aside id="outside">页面轮播</aside><article id="text"><p id="bio">完整正文只能保留在本地。</p></article>'
 OUTSIDE = '<script>let n=1;setInterval(()=>document.querySelector("#outside").style.opacity=String(++n/100000),5)</script>'

@@ -8,6 +8,7 @@
 - [ ] **P2-14 姓氏与多音字**：姓氏表换成完整数据文件；邮箱与姓名匹配改用全部多音字读音（单、曾、解、仇、区、查、朴等）。
 - [ ] **P2-13 职称词表与大函数**：`TITLE_KEYWORDS` 只保留一份并补充主任医师、正高级工程师等；`run_plan`（约 400 行）按"采集 → 对账 → 详情页 → 媒体 → 身份 → 导出"拆分；`app.py` 内嵌 HTML/JS 移到模板文件。
 - [ ] **P2-15 侦察计划格式**：提供带 JSON Schema 的 `submit_plan` 工具，当场校验、当场报错；提示词加完整示例、长段落改清单；写明"选择器不含中文"是有意限制。
-- [ ] **P2-16 测试与工具链**：用 marker 区分单元/浏览器/实网测试；接入 ruff 与 CI；`requirements.txt` 拆分运行与测试依赖；lock 文件跨平台；评估升级 Playwright。
-- [ ] **P2-12 包结构**：加 `pyproject.toml`，去掉 5 处 `sys.path` 拼接与 `app.py` 的双套 import，`Opus/` 改为正式模块名。
+- [x] **P2-16 测试与工具链**：启动真实 Chromium 的 66 项测试标记为 `browser`；现有测试都不访问实网（在访问不到高校官网的云端环境中全量通过），所以不设实网标记。接入 ruff（只查会出错的问题）与 GitHub Actions CI（ruff、单元、浏览器三个任务）；运行与开发依赖拆成 `requirements.txt` / `requirements-dev.txt`，两个 lock 都改为 `--universal`，版本号未变。
+- [ ] **Playwright 升级（待决定）**：当前锁定 1.47.0。1.56.0 下全量测试通过（只有一条断言写死了旧版报错原文，已改为两版通用）；最新 1.63.0 的浏览器在云端下载不到，未验证。升级后本机 worker 环境须重新运行 `python -m playwright install chromium`，否则启动自检不通过。
+- [ ] **P2-12 包结构**：`pyproject.toml` 已建（目前只有 pytest/ruff 配置），补包元数据，去掉 5 处 `sys.path` 拼接与 `app.py` 的双套 import，`Opus/` 改为正式模块名。
 - [ ] **其他**：`.agents/skills` 与 `.claude/skills` 中 38 个重复技能只保留一份；AGENT_HANDOVER 继续瘦身，只描述当前系统。

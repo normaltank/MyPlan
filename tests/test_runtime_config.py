@@ -1,6 +1,5 @@
 """Production runtime paths must not depend on scratch validation files."""
 
-from pathlib import Path
 
 import pytest
 

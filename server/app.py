@@ -1,7 +1,6 @@
 import asyncio
 import os
 import sys
-import re
 import uuid
 import json
 import sqlite3
@@ -20,13 +19,12 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
-import pandas as pd
 
 if __package__:
-    from .agent_queue import agent_queue, AgentTask, LeaseConflictError
+    from .agent_queue import agent_queue, LeaseConflictError
     from .access_control import AccountStore, Account
     from .task_image_review import (task_review_audit, has_image_review, review_items,
                                     review_complete, prepare_review_resume,
@@ -34,7 +32,7 @@ if __package__:
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
-    from agent_queue import agent_queue, AgentTask, LeaseConflictError
+    from agent_queue import agent_queue, LeaseConflictError
     from access_control import AccountStore, Account
     from task_image_review import (task_review_audit, has_image_review, review_items,
                                    review_complete, prepare_review_resume,

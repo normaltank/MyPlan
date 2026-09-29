@@ -140,7 +140,8 @@ async def test_alias_download_rechecks_its_own_snapshot_after_new_completion(tmp
         task=queue.submit_task('University',college,mode='batch',batch_id='legacy')
         finish(queue,task,[row(url)])
         old.append(task)
-    root=tmp_path/'outputs';root.mkdir()
+    root=tmp_path/'outputs'
+    root.mkdir()
     (root/'University.xlsx').write_bytes(b'old ambiguous workbook')
     (root/'University.manifest.json').write_text(json.dumps({'school':'University',
         'college_snapshots':[{'task_id':task.task_id} for task in old]}))

@@ -9,6 +9,7 @@ from server.recon_browser_mcp import BrowserScout
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_real_browser_probe_paginates_navigation_and_counts_all_cards():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -40,6 +41,7 @@ async def test_real_browser_probe_paginates_navigation_and_counts_all_cards():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_discovery_navigate_returns_medium_navigation_in_one_bounded_result(tmp_path):
     from server.browser_context import new_browser_context
 
@@ -66,6 +68,7 @@ async def test_discovery_navigate_returns_medium_navigation_in_one_bounded_resul
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_discovery_navigate_sends_repeated_menus_and_text_once_per_session(tmp_path):
     import json
     from server.browser_context import new_browser_context
@@ -110,6 +113,7 @@ def test_runtime_resolves_evidence_path_and_complete_browser_config(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_survey_reads_several_candidate_pages_in_one_call(tmp_path):
     import json
     from server.browser_context import new_browser_context

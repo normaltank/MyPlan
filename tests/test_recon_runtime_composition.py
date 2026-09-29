@@ -1,10 +1,15 @@
 """Inspect actual runtime composition, without a model/API request."""
-import os, subprocess, sys
+import os
+import subprocess
 from pathlib import Path
-import pytest, yaml
+import pytest
+import yaml
 from server import agent_recon
 
-class ConfigLoader(yaml.SafeLoader): pass
+class ConfigLoader(yaml.SafeLoader):
+    pass
+
+
 ConfigLoader.add_constructor('tag:yaml.org,2002:js', lambda loader,node: loader.construct_scalar(node))
 
 
