@@ -159,6 +159,40 @@ def _segment_name_items(audit: dict, root: Path, listed: set) -> list[dict]:
     return items
 
 
+_REVIEW_CSS = (
+    "body{max-width:880px;margin:0 auto;padding:24px 16px 48px}"
+    "h1{font-size:22px;margin:4px 0 6px}"
+    "body>h2{font-size:15px;color:var(--muted);margin:28px 0 0}"
+    ".card h2{font-size:16px;margin-bottom:8px}"
+    ".intro,.back{color:var(--muted)}"
+    ".card{padding:20px;margin:14px 0;display:grid;gap:10px}"
+    ".card img{max-width:100%;display:block;border:1px solid var(--border);border-radius:6px}"
+    ".card label{display:grid;gap:6px;font-weight:600;color:var(--text-2)}"
+    "textarea,.name-card input{width:100%;padding:10px 12px;border:1px solid var(--border-strong);"
+    "border-radius:var(--radius-sm);font:inherit;font-weight:400;color:var(--text);background:var(--surface)}"
+    "textarea:focus,.name-card input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}"
+    "button{justify-self:start;height:38px;padding:0 16px;border:0;border-radius:var(--radius-sm);"
+    "background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}"
+    "button:hover{background:var(--accent-hover)}button:disabled{opacity:.55;cursor:not-allowed}"
+    "button.secondary{background:var(--surface);color:var(--text-2);border:1px solid var(--border-strong)}"
+    "button.secondary:hover{background:var(--surface-2)}"
+    ".actions{display:flex;flex-wrap:wrap;gap:8px}"
+    "body>h2+p{color:var(--muted);margin-top:4px}"
+    ".meta{color:var(--muted);font-size:13px}.status{font-size:13px;color:var(--ok)}.status:empty{display:none}"
+    ".email-option{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 10px;padding:12px;"
+    "border:1px solid var(--border);border-radius:var(--radius-sm);font-weight:400!important;cursor:pointer}"
+    ".email-option img,.email-option small{grid-column:2}"
+    ".email-option:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}"
+    "blockquote{margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-2)}"
+    "#retry-review{height:44px;margin-top:20px;background:var(--ok)}#retry-review:hover{background:#065f46}"
+    "#retry-status{color:var(--text-2);margin-top:8px}"
+)
+
+
+def _base_css() -> str:
+    return (Path(__file__).with_name("templates") / "base.css").read_text(encoding="utf-8")
+
+
 def _page_link(url: str) -> str:
     if url.startswith(("http://", "https://")):
         return ('<a href="' + escape(url, quote=True) + '" target="_blank" rel="noopener noreferrer">'
@@ -178,8 +212,8 @@ def _name_cards(name_items: list[dict]) -> list[str]:
             '<p>卡片原文：</p><blockquote>' + escape(item.get("card_text", "")[:300]) + '</blockquote>'
             '<label>教师姓名（可改正）<input type="text" maxlength="40" value="'
             + escape(item["name"], quote=True) + '"></label>'
-            '<button type="button" data-verdict="person">是教师，按此姓名采集</button> '
-            '<button type="button" data-verdict="not_person" class="secondary">不是教师姓名</button>'
+            '<div class="actions"><button type="button" data-verdict="person">是教师，按此姓名采集</button>'
+            '<button type="button" data-verdict="not_person" class="secondary">不是教师姓名</button></div>'
             '<p class="status" role="status"></p></section>')
     return cards
 
@@ -240,19 +274,9 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                    '<p id="retry-status" role="status"></p>')
     return ("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<title>人工复核</title><style>"
-            "body{font:16px system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;background:#f7f9fc;color:#172033}"
-            ".card{background:white;border:1px solid #d6dce6;border-radius:12px;padding:1.25rem;margin:1rem 0}"
-            "img{max-width:100%;display:block;margin:1rem 0;border:1px solid #ddd}"
-            "textarea{display:block;width:100%;box-sizing:border-box;margin:.5rem 0;padding:.75rem;font:inherit}"
-            "button{border:0;border-radius:8px;background:#1956ba;color:white;padding:.7rem 1rem;cursor:pointer}"
-            ".meta{color:#5d6675;font-size:.9rem}.status{min-height:1rem}"
-            ".email-option{display:block;margin:1rem 0;padding:.8rem;border:1px solid #ddd;border-radius:8px}"
-            ".name-card input{display:block;width:100%;box-sizing:border-box;margin:.5rem 0;padding:.75rem;font:inherit}"
-            "blockquote{margin:.5rem 0;padding:.5rem .75rem;background:#f1f4f9;border-radius:8px}"
-            "button.secondary{background:#6b7280}"
-            "</style>"
-            "<h1>人工复核</h1><p>对照原图或名录页，确认或更正。决定仅对完全相同的证据生效。</p>"
+            "<title>人工复核 · 高校师资采集平台</title><style>" + _base_css() + _REVIEW_CSS + "</style>"
+            '<p class="back"><a href="' + escape(return_url, quote=True) + '">← 返回采集平台</a></p>'
+            "<h1>人工复核</h1><p class=\"intro\">对照原图或名录页，确认或更正。决定仅对完全相同的证据生效。</p>"
             + body + footer + "<script>const reviewCsrf=" + csrf_js + ";"
             "document.querySelectorAll('.name-card').forEach(card=>{"
             "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"

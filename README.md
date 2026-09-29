@@ -85,7 +85,7 @@ uv run --no-project --with-requirements requirements-dev.lock --python 3.12 ruff
 | :--- | :--- |
 | `server/` | 网页、队列、worker、侦察、采集、审计与 Excel 导出 |
 | `server/recon_discovery.md`、`server/recon_instructions.md` | 两个侦察阶段的指令，由代码直接读取 |
-| `server/templates/` | 网页的主页、登录页、创建管理员页（静态 HTML，改后刷新即生效） |
+| `server/templates/` | 网页的主页、登录页、创建管理员页与共用样式 `base.css`（静态文件，改后刷新即生效；不依赖外部 CDN） |
 | `Opus/` | 名录挖掘、邮箱匹配等算法层 |
 | `tests/` | 自动化测试 |
 | `scripts/` | 本机启动与重启脚本 |
