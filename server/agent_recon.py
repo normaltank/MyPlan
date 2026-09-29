@@ -322,6 +322,10 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
             if (isinstance(value, str) and _URL.match(value)
                     and not _EMAIL.search(unquote(value))):
                 issue[key] = value
+        samples = [url for url in item.get("sample_urls") or []
+                   if isinstance(url, str) and _URL.match(url) and not _EMAIL.search(unquote(url))][:4]
+        if samples:
+            issue["sample_urls"] = samples
         value = item.get("selector")
         if (isinstance(value, str) and len(value) <= 500
                 and not _CJK.search(value) and not _EMAIL.search(value)):
@@ -386,6 +390,16 @@ def browser_url_aliases(events: list[dict[str, Any]]) -> dict[str, str]:
                     except (TypeError, ValueError):
                         continue
                     if not isinstance(result, dict) or result.get("error"):
+                        continue
+                    if name == "mcp__playwright__browser_survey":
+                        for item in (result.get("pages") or {}).get("items", []):
+                            if not isinstance(item, dict) or item.get("error"):
+                                continue
+                            source, destination = item.get("url"), item.get("final_url")
+                            if (isinstance(source, str) and _URL.match(source) and isinstance(destination, str)
+                                    and _URL.match(destination) and source != destination):
+                                aliases[source] = destination
+                        last_verify = None
                         continue
                     source = None
                     if name == "mcp__playwright__browser_navigate":
@@ -517,6 +531,17 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
         samples = list(dict.fromkeys(url for _, result, _ in matching
                        for url in result.get("linkedSamples", result.get("profileSamples", []))
                        if _is_structure_url(url) and resolve(url) != resolve(branch["url"])))[:2]
+        # Profiles linked from this roster's own verified pages: the entry page
+        # and the pages reached through its verified next links.
+        chain, linked = {resolve(branch["url"])}, []
+        for args, result, _ in observations:
+            if (args.get("card_selector") != selector or resolve(result.get("url")) not in chain
+                    or type(result.get("cardCount")) is not int or result["cardCount"] <= 0):
+                continue
+            if result.get("nextUrl"):
+                chain.add(resolve(result["nextUrl"]))
+            linked.extend(url for url in result.get("linkedSamples", result.get("profileSamples", []))
+                          if _is_structure_url(url) and resolve(url) not in chain and url not in linked)
         if branch.get("kind") == "navigation":
             if not samples:
                 issues.append({"status": "child_roster_not_verified", "url": branch["url"]})
@@ -532,7 +557,11 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
         if samples and not branch.get("profile_content_selector"):
             issues.append({"status": "profile_content_selector_missing", "url": branch["url"]})
         if branch.get("profile_content_selector"):
-            if not samples or any(not any(
+            # Any two distinct profiles linked from verified cards prove the
+            # scope; a scout that sampled page 2 rather than page 1 has not
+            # verified less. The harvest re-verifies every profile anyway.
+            required = min(2, len(linked))
+            if not linked or sum(any(
                     args.get("profile_content_selector") == branch["profile_content_selector"]
                     and args.get("profile_content_start_selector") == branch.get("profile_content_start_selector")
                     and result.get("profile_content_selector") == branch["profile_content_selector"]
@@ -543,9 +572,10 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
                     and result.get("dom_stable") is True and result.get("network_idle") is True
                     and all(isinstance(result.get(key), str) and re.fullmatch(r"[a-f0-9]{64}", result[key])
                             for key in ("html_sha256", "selected_html_sha256"))
-                    for args, result, _ in profile_observations) for url in samples):
+                    for args, result, _ in profile_observations) for url in linked) < required:
                 issues.append({"status": "profile_content_not_verified", "url": branch["url"],
-                               "selector": branch["profile_content_selector"]})
+                               "selector": branch["profile_content_selector"],
+                               "sample_urls": linked[:4]})
     return issues
 
 
@@ -599,7 +629,8 @@ def observed_browser_urls(events: list[dict[str, Any]]) -> set[str]:
     for event in events:
         data = event.get("data") or {}
         if event.get("type") == "tool/call" and data.get("name") in (
-                "mcp__playwright__browser_navigate", "mcp__playwright__browser_navigation"):
+                "mcp__playwright__browser_navigate", "mcp__playwright__browser_navigation",
+                "mcp__playwright__browser_survey"):
             calls.add(data.get("callId"))
         elif event.get("type") == "tool/result":
             for block in (data.get("message") or {}).get("content", []):

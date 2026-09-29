@@ -30,15 +30,29 @@ def tool(name: str, description: str, properties: dict, required: tuple = ()) ->
 
 STRING = {"type": "string"}
 SCREENSHOT_JPEG_QUALITY = 60
+PAGE_PREVIEW_CHARS = 600
+SURVEY_MAX_URLS = 8
+SURVEY_PREVIEW_CHARS = 300
+SURVEY_MAX_NEW_LINKS = 20
 SCREENSHOT_MAX_WIDTH = 1280
 SCREENSHOT_MAX_HEIGHT = 2000
 RANGE = {"selector": STRING, "offset": {"type": "integer", "minimum": 0},
          "limit": {"type": "integer", "minimum": 1, "maximum": 24}}
 NAV_RANGE = {"selector": STRING, "offset": {"type": "integer", "minimum": 0},
-             "limit": {"type": "integer", "minimum": 1, "maximum": 64}}
+             "limit": {"type": "integer", "minimum": 1, "maximum": 64},
+             "query": {"type": "string", "description": "Keywords separated by | or spaces; keep only links "
+                       "whose label or URL contains one of them."}}
 TOOLS = [
-    tool("browser_navigate", "Open official URL in the real browser; return first navigation range.", {"url": STRING}, ("url",)),
-    tool("browser_navigation", "Read navigation URL/label ranges. Follow nextOffset until relevant containers are covered.", NAV_RANGE),
+    tool("browser_navigate", "Open official URL in the real browser. Returns a page summary (title, headings, common "
+         "content containers with counts, and page text lines not yet shown in this session) plus navigation links "
+         "not yet returned in this session.",
+         {"url": STRING}, ("url",)),
+    tool("browser_navigation", "Read navigation URL/label ranges; query filters by keyword. Follow nextOffset until "
+         "relevant containers are covered.", NAV_RANGE),
+    tool("browser_survey", "Open up to 8 official URLs one after another in the real browser and return, for each, "
+         "its final URL, a page summary and links not yet returned in this session. Use it instead of separate "
+         "navigate calls when several candidate pages need a look.",
+         {"urls": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 8}}, ("urls",)),
     tool("browser_structure", "Read repeated DOM subtree containers and counts; inspect their returned CSS paths.", RANGE),
     tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes and sample URLs.",
          {"card_selector": STRING, "next_selector": STRING,
@@ -59,7 +73,7 @@ TOOLS = [
 
 def phase_tools(phase: str) -> list[dict]:
     if phase == "discovery":
-        allowed = {"browser_navigate", "browser_navigation", "browser_evaluate", "browser_screenshot"}
+        allowed = {"browser_navigate", "browser_navigation", "browser_survey", "browser_evaluate", "browser_screenshot"}
     elif phase == "branch":
         allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
                    "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot"}
@@ -76,6 +90,8 @@ class BrowserScout:
         self.sequence = 0
         self.phase = phase
         self._last_html_digest = None
+        self._seen_links: set[str] = set()
+        self._seen_lines: set[str] = set()
         from server.empty_roster import install_empty_roster_tracking
         install_empty_roster_tracking(page)
 
@@ -87,6 +103,35 @@ class BrowserScout:
         else:
             path.write_text(content, encoding="utf-8")
         return path
+
+    def _page_summary(self, summary: Any, max_chars: int = PAGE_PREVIEW_CHARS) -> Any:
+        """Keep only text lines not shown earlier in this session, as a short preview."""
+        if not isinstance(summary, dict) or not isinstance(summary.get("lines"), list):
+            return summary
+        fresh, used, repeated = [], 0, 0
+        for line in summary.pop("lines"):
+            if line in self._seen_lines:
+                repeated += 1
+                continue
+            self._seen_lines.add(line)
+            if used < max_chars:
+                fresh.append(line[:max_chars - used])
+                used += len(fresh[-1])
+        summary["new_text"] = "\n".join(fresh)
+        summary["new_text_truncated"] = used >= max_chars
+        summary["repeated_lines_omitted"] = repeated
+        return summary
+
+    def _omit_seen_links(self, navigation: Any) -> Any:
+        """Site menus repeat on every page; return each link once per session."""
+        if not isinstance(navigation, dict) or not isinstance(navigation.get("items"), list):
+            return navigation
+        fresh = [item for item in navigation["items"] if item.get("url") not in self._seen_links]
+        self._seen_links.update(item.get("url") for item in navigation["items"])
+        omitted = len(navigation["items"]) - len(fresh)
+        if omitted:
+            navigation = {**navigation, "items": fresh, "seen_omitted": omitted}
+        return navigation
 
     def text_result(self, value: Any) -> dict:
         full = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -126,15 +171,44 @@ class BrowserScout:
             await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await self.snapshot()
             if self.phase == "discovery":
-                value = await self.page.evaluate("() => __facultyRecon.navigation('body',0,64)")
+                value = await self.page.evaluate(
+                    "() => ({url: location.href, page: __facultyRecon.summary(), navigation: __facultyRecon.navigation('body',0,64)})")
+                value["navigation"] = self._omit_seen_links(value["navigation"])
+                value["page"] = self._page_summary(value["page"])
             elif self.phase == "branch":
-                value = await self.page.evaluate("() => ({url:location.href,structure:__facultyRecon.structure('body',0,8),pagination:__facultyRecon.pagination()})")
+                value = await self.page.evaluate("() => ({url:location.href,page:__facultyRecon.summary(),structure:__facultyRecon.structure('body',0,8),pagination:__facultyRecon.pagination()})")
+                value["page"] = self._page_summary(value["page"])
             else:
                 value = await self.page.evaluate("() => ({url:location.href,navigation:__facultyRecon.navigation('body',0,24),structure:__facultyRecon.structure('body',0,8)})")
+        elif name == "browser_survey":
+            pages = []
+            for url in list(arguments["urls"])[:SURVEY_MAX_URLS]:
+                if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                    pages.append({"url": url, "error": "http(s) URL required"})
+                    continue
+                try:
+                    response = await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    await self.snapshot()
+                    probe = await self.page.evaluate(
+                        "() => ({page: __facultyRecon.summary(), navigation: __facultyRecon.navigation('body',0,64)})")
+                    links = self._omit_seen_links(probe["navigation"])
+                    items = links.get("items", []) if isinstance(links, dict) else []
+                    pages.append({"url": url, "final_url": self.page.url,
+                                  "status": response.status if response is not None else None,
+                                  "page": self._page_summary(probe["page"], SURVEY_PREVIEW_CHARS),
+                                  "new_links": items[:SURVEY_MAX_NEW_LINKS],
+                                  "more_new_links": max(0, len(items) - SURVEY_MAX_NEW_LINKS),
+                                  "links_total": links.get("total") if isinstance(links, dict) else None})
+                except Exception as exc:  # one unreachable page must not hide the others
+                    pages.append({"url": url, "error": f"{type(exc).__name__}: {exc}"[:200]})
+            value = {"url": self.page.url, "pages": {"offset": 0, "end": len(pages), "total": len(pages),
+                                                     "nextOffset": None, "items": pages}}
         elif name in ("browser_navigation", "browser_structure"):
             method = "navigation" if name == "browser_navigation" else "structure"
             values = [arguments.get("selector", "body"), arguments.get("offset", 0),
                       arguments.get("limit", 64 if name == "browser_navigation" else 24)]
+            if name == "browser_navigation" and arguments.get("query"):
+                values.append(arguments["query"])
             value = await self.page.evaluate(f"args => __facultyRecon.{method}(...args)", values)
             if self.phase == "discovery":
                 await self.snapshot()

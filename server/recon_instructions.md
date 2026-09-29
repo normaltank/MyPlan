@@ -14,7 +14,7 @@
 4. 名录 verify 返回实际 linkedSamples。先核实链接目标是否为个人主页；若是，打开最多两个不同样例，核实完整学术正文的唯一容器，并用 browser_verify_profile 传入 profile_content_selector；它须覆盖全部履历、联系方式和学术内容，不能只选一个段落或删去共享正文。若正文由图片或嵌入 PDF 承载，仍核实覆盖全部原始资源的唯一容器；只提交 CSS，由 worker 本地读取原件和 OCR，无法取得原件会阻断交付。两个样例须使用同一 CSS 且工具 confirmed:true。若正文没有独立包装容器，可加 profile_content_start_selector，必须是唯一容器内的唯一直接子边界：复制边界之后到容器结束的全部 DOM，不按词语裁剪。只返回 CSS，禁止转写任何姓名、职称、邮箱或简介。没有个人主页的名录不用该字段；不要把名录页当个人页验证。更多个人页由 worker 批量访问并逐页检查范围，缺失或冲突会阻断。
 5. 保留已核实事实供最终计划使用，避免再次访问已验证页面或逐项重复查询同一 DOM。增加检查时针对尚未核实的具体问题。JS href 占位符可能承载 AJAX，不可将所有 javascript:void 链接一概视为禁用；必须核实真实翻页行为及末页，选择器可限定实际页面中真正的下一页链接。
 
-优先使用内置结构工具，避免重复编写长 JS：structure 的 selector 默认 body，offset 默认 0，limit 默认 24；返回 nextOffset 且当前候选不足时继续查看结构范围。改用具体容器减少无关项。verify 接收 card_selector 与可选 next_selector；翻页用 browser_click 的 selector。必要的特殊问题才用 browser_evaluate。
+browser_navigate 的 page 摘要已给出标题、常见正文容器（命中数、文字量、图片、链接、表格）和本会话新出现的页面文字，判断正文容器与图片时先用它。优先使用内置结构工具，避免重复编写长 JS：structure 的 selector 默认 body，offset 默认 0，limit 默认 24；返回 nextOffset 且当前候选不足时继续查看结构范围。改用具体容器减少无关项。verify 接收 card_selector 与可选 next_selector；翻页用 browser_click 的 selector。必要的特殊问题才用 browser_evaluate。
 严格空态流程仅适用于普通单页名录：先实际确认官网空态提示及完整名录容器，再用 browser_verify 同时传入 card_selector、empty_state_selector、roster_container_selector；三个 CSS 字符串必须与最终计划完全一致。只有工具返回 empty_roster.confirmed:true、cardCount:0 且 pagination.total:0 时才可提交空分支。工具要求容器与提示唯一可见、提示位于容器内、没有隐藏教师内容、图片或背景图、嵌入页面、其它链接/控件/条目、busy、待加载和分页；网络与 DOM 必须稳定。任何失败或超时、没有明确可见提示、分页或图片名录都需复核，不得自行以零卡片绕过门禁。不得输出空态文字、人数或 confirmed 标志；独立采集浏览器会重新验证。
 探针只提供结构候选，仍须判断条目性质并实际翻页；全部名录入口由发现阶段负责，不在本阶段重新调查。
 

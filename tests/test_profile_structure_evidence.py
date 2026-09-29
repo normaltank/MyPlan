@@ -146,3 +146,20 @@ async def test_missing_stylesheet_cannot_confirm_a_visible_profile(tmp_path):
             assert json.loads(reply['content'][0]['text'])['confirmed'] is False
         finally:
             await browser.close()
+
+
+def test_any_two_profiles_linked_from_verified_pages_prove_the_scope():
+    page2 = "https://scope.example.edu/list/2"
+    later = ["https://scope.example.edu/p/3", "https://scope.example.edu/p/4"]
+    plan = {"school": "样本大学", "college": "样本学院", "branches": [
+        {"url": URL, "next_selector": ".next", "card_selector": ".cards>li", "profile_content_selector": "article"}]}
+    events = (event("browser_verify", {"card_selector": ".cards>li", "next_selector": ".next"},
+                    {"url": URL, "cardCount": 2, "nextCount": 1, "nextUrl": page2, "nextDisabled": False,
+                     "pagination": {"total": 1}, "linkedSamples": PROFILES}, "0")
+              + event("browser_verify", {"card_selector": ".cards>li"},
+                      {"url": page2, "cardCount": 2, "pagination": {"total": 1}, "linkedSamples": later}, "1"))
+    one = selector_evidence_issues(plan, events + scope_events(later[0], cid="2"))
+    assert [issue["status"] for issue in one] == ["profile_content_not_verified"]
+    assert one[0]["sample_urls"] == PROFILES + later
+    assert selector_evidence_issues(plan, events + scope_events(later[0], cid="2")
+                                    + scope_events(later[1], cid="3")) == []

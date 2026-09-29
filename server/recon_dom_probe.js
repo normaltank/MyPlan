@@ -27,16 +27,42 @@
     return {url: location.href, total: items.length, offset, end,
       nextOffset: end < items.length ? end : null, items: items.slice(offset, end)};
   };
+  const collapse = text => (text || '').replace(/\s+/g, ' ').trim();
   Object.defineProperty(window, '__facultyRecon', {configurable: true, value: Object.freeze({
-    navigation(selector = 'body', offset = 0, limit = 64) {
+    navigation(selector = 'body', offset = 0, limit = 64, query = '') {
       const root = document.querySelector(selector);
       if (!root) return {error: 'container_empty', url: location.href};
       const seen = new Set();
+      const words = String(query || '').split(/[|,，\s]+/).map(w => w.trim().toLowerCase()).filter(Boolean);
       const links = [...root.querySelectorAll('a[href]')].filter(a => {
         if (!/^https?:/.test(a.href) || seen.has(a.href)) return false;
         seen.add(a.href); return true;
-      }).map(a => ({url: a.href, label: (a.textContent || a.getAttribute('title') || '').trim().slice(0, 32)}));
-      return page(links, offset, limit, 64);
+      }).map(a => ({url: a.href, label: (a.textContent || a.getAttribute('title') || '').trim().slice(0, 32)}))
+        .filter(link => !words.length || words.some(w => link.label.toLowerCase().includes(w)
+          || decodeURIComponent(link.url).toLowerCase().includes(w)));
+      const result = page(links, offset, limit, 64);
+      if (words.length) result.query = words;
+      return result;
+    },
+    summary() {
+      // Answers "what is this page" in the same call as navigation. Text lines
+      // are deduplicated per session by the Python tool, so repeated site
+      // chrome (menus, footers) is sent once.
+      const lines = (document.body.innerText || '').split('\n').map(collapse).filter(Boolean)
+        .map(line => line.slice(0, 80)).slice(0, 400);
+      const headings = [...document.querySelectorAll('h1, h2, h3')].map(h => collapse(h.textContent).slice(0, 40))
+        .filter(Boolean).slice(0, 4);
+      const containers = [];
+      for (const selector of ['#vsb_content', '.v_news_content', '.wp_articlecontent', 'article', 'main']) {
+        const node = document.querySelector(selector);
+        if (!node) continue;
+        containers.push({selector, count: document.querySelectorAll(selector).length,
+          text_chars: collapse(node.innerText).length, images: node.querySelectorAll('img').length,
+          links: node.querySelectorAll('a[href]').length, tables: node.querySelectorAll('table').length});
+      }
+      return {url: location.href, title: collapse(document.title).slice(0, 80), headings, lines,
+        images: document.images.length, tables: document.querySelectorAll('table').length,
+        iframes: document.querySelectorAll('iframe, embed, object').length, containers};
     },
     structure(selector = 'body', offset = 0, limit = 8) {
       const root = document.querySelector(selector);

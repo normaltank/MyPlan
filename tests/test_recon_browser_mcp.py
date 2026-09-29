@@ -60,7 +60,7 @@ async def test_mcp_protocol_drives_real_browser_navigation_and_verification(tmp_
     try:
         assert (await request(1, "initialize"))["capabilities"] == {"tools": {}}
         tools = (await request(2, "tools/list"))["tools"]
-        assert len(tools) == 9
+        assert len(tools) == 10
         reply = await request(3, "tools/call", {"name": "browser_navigate",
                                               "arguments": {"url": f"http://127.0.0.1:{http.server_port}/"}})
         assert not reply["isError"]
