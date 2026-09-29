@@ -90,6 +90,8 @@ worker 常驻轮询 `server/tasks.db`；使用锁定依赖中的 Harness 可执�
 
 运行补丁用 `insert` 安装 `dsh-mcp-client`，默认独立 ID 为 `faculty-recon-browser`，无需事先手工配置浏览器插件。阶段与证据会话通过启动参数显式传递。每次模型运行前先检查实际合成配置：浏览器缺失/重复、无关工具或通用指令注入仍启用、补丁未生效时直接失败，不花 Token 试错。自定义 profile 也须通过此检查。先在该环境运行 `python -m playwright install chromium`。编辑侦察 MD 或 Python 后需重启常驻 worker。
 
+发现阶段的 `browser_navigate` 同时返回页面摘要，本会话已返回过的链接和重复的菜单、页脚文字不再重发；`browser_navigation` 可用 `query` 按关键词筛链接；`browser_survey` 一次查看最多 8 个候选页。个人页正文验证未通过时返回 `reason`（如 `hidden_content`、`network_not_idle`）和阻断请求的类型。
+
 ## 8. 固定运行环境
 
 常驻进程使用固定环境，不能从会随启动器退出而清理的临时环境启动后台子进程。本机已使用 `.runtime/worker-venv`，依赖来自 `requirements.lock`：
