@@ -742,12 +742,8 @@ _TEMPLATES = Path(__file__).resolve().parent / "templates"
 
 
 def _page(name: str) -> str:
-    """Static page from server/templates; read per request so edits need no restart.
-
-    The ``/*base.css*/`` marker inside a page's <style> becomes the shared stylesheet.
-    """
-    page = (_TEMPLATES / name).read_text(encoding="utf-8")
-    return page.replace("/*base.css*/", (_TEMPLATES / "base.css").read_text(encoding="utf-8"), 1)
+    """Static page from server/templates; read per request so edits need no restart."""
+    return (_TEMPLATES / name).read_text(encoding="utf-8")
 
 
 def _bootstrap_page() -> str:

@@ -1,15 +1,9 @@
-<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>首次设置 · 高校师资采集平台</title>
-<style>
-/*base.css*/
-</style>
-</head><body><main class="auth"><div class="auth-card card">
-<div class="auth-brand"><span class="brand-mark"><svg class="icon" viewBox="0 0 24 24"><path d="M3 21h18M5 21V11M9.5 21V11M14.5 21V11M19 21V11M2.5 11 12 4.5 21.5 11z"/></svg></span>高校师资采集平台</div>
-<h1>首次创建管理员</h1><p>此页面只能在服务器本机打开。创建管理员后，可在平台内为同事创建员工账号。</p>
-<form id="setup"><label class="field"><span class="field-label">登录名（小写英文）</span><input id="username" class="input" autocomplete="username" required></label>
-<label class="field"><span class="field-label">显示名称</span><input id="displayName" class="input" required></label>
-<label class="field"><span class="field-label">密码（至少 12 位）</span><input id="password" class="input" type="password" autocomplete="new-password" required></label>
-<label class="field"><span class="field-label">确认密码</span><input id="confirm" class="input" type="password" autocomplete="new-password" required></label>
-<button type="submit" class="btn btn-primary btn-lg btn-block">创建并登录</button><p id="message" role="alert"></p></form></div></main>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>首次设置 · 高校师资采集平台</title><style>body{font:16px system-ui,sans-serif;background:#f4f6fb;color:#1e293b;margin:0;display:grid;min-height:100vh;place-items:center}main{background:white;box-shadow:0 12px 40px #1e293b14;border-radius:18px;padding:32px;width:min(380px,calc(100vw - 48px))}h1{font-size:22px;margin:0 0 8px}p{color:#64748b;font-size:14px}label{display:block;font-size:14px;font-weight:600;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;font-size:16px}button{width:100%;padding:12px;border:0;border-radius:9px;background:#4f46e5;color:white;font-size:15px;font-weight:700;margin-top:20px;cursor:pointer}#message{min-height:22px;color:#b91c1c}</style></head>
+<body><main><h1>首次创建管理员</h1><p>此页面仅能从服务器本机打开。请设置管理员账号；之后可在平台内创建员工账号。</p>
+<form id="setup"><label for="username">登录名（小写英文）</label><input id="username" autocomplete="username" required>
+<label for="displayName">显示名称</label><input id="displayName" required>
+<label for="password">密码（至少 12 位）</label><input id="password" type="password" autocomplete="new-password" required>
+<label for="confirm">确认密码</label><input id="confirm" type="password" autocomplete="new-password" required>
+<button type="submit">创建并登录</button><p id="message" role="alert"></p></form></main>
 <script>document.getElementById('setup').addEventListener('submit',async event=>{event.preventDefault();const password=document.getElementById('password').value;if(password!==document.getElementById('confirm').value){document.getElementById('message').textContent='两次密码不一致';return}const button=event.target.querySelector('button');button.disabled=true;const response=await fetch('/api/auth/bootstrap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value,display_name:document.getElementById('displayName').value,password})});if(response.ok){location.reload();return}const data=await response.json();document.getElementById('message').textContent=data.detail||'创建失败';button.disabled=false});</script></body></html>
