@@ -11,7 +11,8 @@ from .image_bio_review import (collect_email_conflict_items, collect_review_item
                                resolve_email_conflict)
 
 
-IMAGE_REVIEW_STATUSES = {'image_bio_low_confidence', 'image_bio_email_conflict'}
+IMAGE_REVIEW_STATUSES = {'image_bio_low_confidence', 'image_bio_email_conflict',
+                         'segment_name_needs_review'}
 
 
 def task_review_audit(output_dir: str | Path, task) -> Path | None:
@@ -52,7 +53,7 @@ def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[d
     if not ocr_items and not email_items:
         return False
     issues = {item.get('status') for item in json.loads(audit_path.read_text(encoding='utf-8')).get('unresolved', [])}
-    if (('image_bio_low_confidence' in issues and not ocr_items)
+    if ((issues & {'image_bio_low_confidence', 'segment_name_needs_review'} and not ocr_items)
             or ('image_bio_email_conflict' in issues and not email_items)):
         return False
     try:

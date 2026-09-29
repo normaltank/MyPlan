@@ -148,15 +148,17 @@ _CJK = re.compile(r"[一-鿿]")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}")
 _URL = re.compile(r"^https?://", re.I)
 # 计划 schema 里允许出现的字面量（非 URL、非选择器的合法值）
-_SCHEMA_LITERALS = {"university_faculty_roster", "hospital_doctor_roster", "navigation"}
+_SCHEMA_LITERALS = {"university_faculty_roster", "hospital_doctor_roster", "navigation", "segmented"}
 _MODEL_PLAN_KEYS = {"school", "college", "source_kind", "branches",
                     "profile_concurrency", "profile_ready_selector"}
 _MODEL_BRANCH_KEYS = {"url", "kind", "source_kind", "card_selector", "single_page",
                       "next_selector", "max_pages", "initial_click_selector",
                       "child_link_selector", "child_branch", "max_children",
                       "empty_state_selector", "roster_container_selector",
-                      "profile_content_selector", "profile_content_start_selector"}
-_MODEL_CHILD_KEYS = _MODEL_BRANCH_KEYS - {"url", "kind", "child_link_selector", "child_branch", "max_children"}
+                      "profile_content_selector", "profile_content_start_selector",
+                      "container_selector", "record_start_selector"}
+_MODEL_CHILD_KEYS = _MODEL_BRANCH_KEYS - {"url", "kind", "child_link_selector", "child_branch", "max_children",
+                                          "container_selector", "record_start_selector"}
 
 
 def _collect_strings(node: Any, path: str = "$") -> list[tuple[str, str]]:
@@ -243,8 +245,15 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
                 raise PlanHygieneError(f"{path}.url is not a permitted roster URL")
         for field in ("card_selector", "next_selector", "initial_click_selector", "child_link_selector",
                       "empty_state_selector", "roster_container_selector",
-                      "profile_content_selector", "profile_content_start_selector"):
+                      "profile_content_selector", "profile_content_start_selector",
+                      "container_selector", "record_start_selector"):
             selector(node, field, path)
+        if node.get("kind") == "segmented":
+            from server.segmented_roster import branch_valid
+            if child or not branch_valid(node) or node.get("single_page") is not True:
+                raise PlanHygieneError(f"{path} segmented branch requires container_selector, "
+                                       "record_start_selector and single_page true only")
+            return
         if "profile_content_start_selector" in node and not node.get("profile_content_selector"):
             raise PlanHygieneError(f"{path} profile start requires a content selector")
         if "empty_state_selector" in node or "roster_container_selector" in node:
@@ -318,7 +327,8 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
                 and not _CJK.search(value) and not _EMAIL.search(value)):
             issue["selector"] = value
         for key in ("branch_index", "observed_count", "candidate_count", "card_count",
-                    "visible_cards", "extracted_candidates", "page"):
+                    "visible_cards", "extracted_candidates", "page", "segment", "extra_name_lines",
+                    "container_count", "email_count"):
             if type(item.get(key)) is int:
                 issue[key] = item[key]
         issues.append(issue)
@@ -412,12 +422,13 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
     calls = {}
     observations = []
     profile_observations = []
+    segment_observations = []
     clicks = []
     for index, event in enumerate(events):
         data = event.get("data") or {}
         if event.get("type") == "tool/call" and data.get("name") in (
                 "mcp__playwright__browser_verify", "mcp__playwright__browser_click",
-                "mcp__playwright__browser_verify_profile"):
+                "mcp__playwright__browser_verify_profile", "mcp__playwright__browser_verify_segments"):
             try:
                 args = json.loads(data.get("arguments") or "{}")
             except (TypeError, ValueError):
@@ -439,6 +450,8 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
                     if isinstance(result, dict):
                         if name == "mcp__playwright__browser_click":
                             clicks.append((args, index))
+                        elif name == "mcp__playwright__browser_verify_segments":
+                            segment_observations.append((args, result, index))
                         elif name == "mcp__playwright__browser_verify_profile":
                             profile_observations.append((args, result, index))
                         else:
@@ -447,6 +460,21 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
     aliases = browser_url_aliases(events)
     resolve = lambda url: resolved_browser_url(url, aliases)
     for branch in plan["branches"]:
+        if branch.get("kind") == "segmented":
+            verified = any(
+                args.get("container_selector") == branch.get("container_selector")
+                and args.get("record_start_selector") == branch.get("record_start_selector")
+                and result.get("container_selector") == branch.get("container_selector")
+                and result.get("record_start_selector") == branch.get("record_start_selector")
+                and resolve(result.get("url")) == resolve(branch["url"])
+                and result.get("structure_ok") is True
+                and type(result.get("segment_count")) is int and result["segment_count"] > 0
+                and (result.get("pagination") or {}).get("total") == 0
+                for args, result, _ in segment_observations)
+            if not verified:
+                issues.append({"status": "segments_not_verified", "url": branch["url"],
+                               "selector": branch.get("record_start_selector")})
+            continue
         selector = branch.get("card_selector") or branch.get("child_link_selector")
         if branch.get("empty_state_selector") or branch.get("roster_container_selector"):
             from server.empty_roster import SELECTORS, empty_roster_proof_valid
@@ -528,7 +556,7 @@ def restore_verified_profile_selector(branch: dict[str, Any], plan: dict[str, An
     The model must have supplied the exact CSS to browser_verify_profile in this
     session. The normal evidence gate then checks every sampled profile again.
     """
-    if branch.get("profile_content_selector"):
+    if branch.get("profile_content_selector") or branch.get("kind") == "segmented":
         return branch
     candidate_pairs: set[tuple[str, str | None]] = set()
     for event in events:

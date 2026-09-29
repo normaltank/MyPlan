@@ -58,6 +58,12 @@ class RosterReconciliation:
     unresolved: list[dict[str, Any]]
     profile_content_selectors: dict[str, set[tuple[str, str | None]]] = field(default_factory=dict)
     profile_content_sources: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    # 分段平铺名录: records named from their own text, records waiting for an
+    # OCR name, and per-page addresses that no single record may claim.
+    segment_records: list[Any] = field(default_factory=list)
+    segment_pending: list[Any] = field(default_factory=list)
+    segment_shared_emails: dict[str, set[str]] = field(default_factory=dict)
+    segmented_pages: dict[str, str] = field(default_factory=dict)
 
 
 async def capture_profiles(
@@ -269,7 +275,30 @@ def reconcile_rosters(
     profile_content_selectors: dict[str, set[tuple[str, str | None]]] = {}
     profile_content_sources: dict[str, list[dict[str, str]]] = {}
 
+    segment_records: list[Any] = []
+    segment_pending: list[Any] = []
+    segment_shared: dict[str, set[str]] = {}
+    segmented_pages: dict[str, str] = {}
     for page in captured:
+        if page.branch.get("kind") == "segmented":
+            from server.segmented_roster import reconcile_page
+            source_kind = page.branch.get("source_kind") or default_source
+            result = reconcile_page(page.html, page.url, page.branch)
+            observations.append(result.observation)
+            unresolved.extend(result.unresolved)
+            segmented_pages[page.url] = page.branch["container_selector"]
+            segment_shared[page.url] = result.shared_emails
+            for record in result.records + result.pending_ocr:
+                record.source_kind = source_kind
+            segment_pending.extend(result.pending_ocr)
+            for record in result.records:
+                segment_records.append(record)
+                person = FacultyCandidate(name=record.name, url=page.url, title=record.title)
+                candidates.append(person)
+                candidate_sources.setdefault((person.name, person.url), set()).add(source_kind)
+            if not result.records and not result.pending_ocr and not result.unresolved:
+                unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
+            continue
         if "profile_content_start_selector" in page.branch and "profile_content_selector" not in page.branch:
             unresolved.append({"url": page.url, "status": "profile_content_start_selector_without_container"})
         found = FacultyDirectoryExtractor.extract(page.html, page.url)
@@ -347,6 +376,10 @@ def reconcile_rosters(
         unresolved=unresolved,
         profile_content_selectors=profile_content_selectors,
         profile_content_sources=profile_content_sources,
+        segment_records=segment_records,
+        segment_pending=segment_pending,
+        segment_shared_emails=segment_shared,
+        segmented_pages=segmented_pages,
     )
 
 

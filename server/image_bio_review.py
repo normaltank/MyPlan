@@ -119,7 +119,45 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
                     "crop_bytes": _crop_original(original, evidence["kind"], page_number,
                                                  line["box"]),
                 })
+    result.extend(_segment_name_items(audit, root, {(item["media_url"], item["page"], item["line_index"])
+                                                    for item in result}))
     return result
+
+
+def _segment_name_items(audit: dict, root: Path, listed: set) -> list[dict]:
+    """The exact OCR line a segmented-roster record name was read from.
+
+    Such a line needs a person even when OCR was confident, because the name
+    could not be cross-checked against the record's own email.
+    """
+    flagged = {(item.get("media_url"), item.get("page"), item.get("line_index"))
+               for item in audit.get("unresolved", [])
+               if item.get("status") == "segment_name_needs_review"}
+    items = []
+    for evidence in audit.get("segment_name_evidence", []):
+        key = (evidence.get("media_url"), evidence.get("name_page"), evidence.get("name_line_index"))
+        if key not in flagged or key in listed:
+            continue
+        original = _inside(evidence["original_path"], root).read_bytes()
+        digest = sha256(original).hexdigest()
+        if digest != evidence["sha256"]:
+            raise ValueError("review original SHA-256 mismatch")
+        scanned = json.loads(_inside(evidence["ocr_path"], root).read_text(encoding="utf-8"))
+        if scanned.get("source_sha256") not in (None, digest):
+            raise ValueError("review OCR source SHA-256 mismatch")
+        page = next(page for page in scanned["pages"] if page["page"] == key[1])
+        line = page["lines"][key[2]]
+        if not line.get("box"):
+            raise ValueError("OCR line lacks coordinates; refresh this image before review")
+        listed.add(key)
+        items.append({
+            "id": _item_id(key[0], digest, key[1], key[2], line["text"]),
+            "media_url": key[0], "source_sha256": digest, "page": key[1], "line_index": key[2],
+            "ocr_text": line["text"], "ocr_text_sha256": _text_digest(line["text"]),
+            "confidence": line["confidence"], "purpose": "segment_name",
+            "crop_bytes": _crop_original(original, "image", key[1], line["box"]),
+        })
+    return items
 
 
 def render_review_page(items: list[dict], email_items: list[dict] | None = None, *,
@@ -132,7 +170,8 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
         crop = base64.b64encode(item["crop_bytes"]).decode("ascii")
         cards.append(
             '<section class="card" data-id="' + escape(item["id"]) + '">'
-            '<p class="meta">第 ' + str(item["page"]) + ' 页 · 置信度 '
+            '<p class="meta">' + ('姓名行（请核对并改正为原图中的姓名） · ' if item.get("purpose") == "segment_name" else '')
+            + '第 ' + str(item["page"]) + ' 页 · 置信度 '
             + f'{item["confidence"]:.2f}' + '</p>'
             '<img alt="待核对的原图局部" src="data:image/png;base64,' + crop + '">'
             '<label>OCR 原文<textarea rows="2">' + escape(item["ocr_text"]) + '</textarea></label>'
@@ -252,8 +291,8 @@ def apply_review_decisions(scanned: dict, media_url: str, source_sha256: str,
         if page.get("source") != "local_ocr":
             continue
         for line_index, line in enumerate(page["lines"]):
-            if line.get("confidence", 1) >= .8:
-                continue
+            # Decisions are bound to one exact line; a confident line can carry
+            # one too when a record name read from it was sent for review.
             item_id = _item_id(media_url, source_sha256, page["page"], line_index, line["text"])
             decision = decisions.get(item_id)
             if not isinstance(decision, dict):

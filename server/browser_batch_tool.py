@@ -74,8 +74,17 @@ def _validate_plan(plan: dict[str, Any]) -> None:
             if not str(child.get("card_selector", "")).strip():
                 raise ValueError("child_branch requires card_selector")
             continue
+        if branch.get("kind") == "segmented":
+            from server.segmented_roster import branch_valid
+            if not branch_valid(branch):
+                raise ValueError("segmented branch requires container_selector, record_start_selector "
+                                 "and exactly one of single_page or next_selector, without card selectors")
+            max_pages = branch.get("max_pages", 20)
+            if not isinstance(max_pages, int) or not 1 <= max_pages <= 100:
+                raise ValueError("max_pages must be an integer from 1 to 100")
+            continue
         if branch.get("kind", "roster") != "roster":
-            raise ValueError("branch kind must be roster or navigation")
+            raise ValueError("branch kind must be roster, navigation or segmented")
         if bool(branch.get("single_page")) == bool(branch.get("next_selector")):
             raise ValueError("each branch needs exactly one of single_page or next_selector")
         if "card_selector" in branch and not str(branch["card_selector"]).strip():
@@ -131,6 +140,12 @@ def _validate_plan(plan: dict[str, Any]) -> None:
             raise ValueError("appointment quote must be short and contain academic_title")
         if plan["school"] not in item["quote"] and plan["college"] not in item["quote"]:
             raise ValueError("appointment quote must name target university or college")
+
+
+def _ocr_cache_dir(out: Path) -> Path:
+    production_outputs = (Path(__file__).resolve().parent / "outputs").resolve()
+    return (production_outputs / "ocr_cache" if out.is_relative_to(production_outputs)
+            else out / "ocr_cache")
 
 
 class _PollingExecutor:
@@ -359,10 +374,15 @@ def _batch_fetch_profiles_via_native_chrome(urls: list[str], batch_size: int = 8
     return results
 
 
+def _unit_selector(branch: dict) -> str:
+    """The verified selector for one record: a card, or a segment start."""
+    return branch.get("card_selector") or branch.get("record_start_selector") or ""
+
+
 def _frontier_signature(html: str, branch: dict) -> tuple | None:
     """Compare the verified source and control DOM, ignoring unrelated chrome."""
     soup = BeautifulSoup(html, "html.parser")
-    cards = soup.select(branch.get("card_selector", "")) if branch.get("card_selector") else []
+    cards = soup.select(_unit_selector(branch)) if _unit_selector(branch) else []
     if not cards:
         return None
     controls = soup.select(branch["next_selector"]) if branch.get("next_selector") else []
@@ -445,7 +465,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             evidence["visited_pages"] = page_number
             if branch.get("single_page"):
                 probe_errors = await _probe_single_page(context, html, page.url,
-                                                         branch.get("card_selector", ""))
+                                                         _unit_selector(branch))
                 unresolved.extend(probe_errors)
                 evidence["end"] = ("single_page_pagination_unverified" if probe_errors
                                    else "single_page_no_pagination_control_seen")
@@ -492,7 +512,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                     on_page(url, native_html, 0)
                 evidence["visited_pages"] = 1
                 probe_errors = await _probe_single_page(context, native_html, url,
-                                                         branch.get("card_selector", ""))
+                                                         _unit_selector(branch))
                 evidence["end"] = ("single_page_pagination_unverified" if probe_errors
                                    else "single_page_no_pagination_control_seen")
                 if branch.get("empty_state_selector"):
@@ -635,6 +655,33 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     roster_reconciliation = reconcile_rosters(source_capture.roster_pages, plan)
     candidates.extend(roster_reconciliation.candidates)
     candidate_sources.update(roster_reconciliation.candidate_sources)
+    segment_naming = {"admitted": [], "unresolved": [], "evidence": []}
+    if roster_reconciliation.segment_pending:
+        from server.image_biography import fetch_browser_asset
+        from server.segmented_roster import name_image_segments
+
+        async def fetch_segment_image(media_url: str) -> bytes:
+            return await fetch_browser_asset(browser_context, media_url)
+
+        segment_naming = await name_image_segments(
+            roster_reconciliation.segment_pending, fetch_asset=fetch_segment_image,
+            evidence_dir=out / f"{_safe_name(plan['school'] + '_' + plan['college'])}_snapshots" / "segment_names",
+            cache_dir=_ocr_cache_dir(out), review_decisions_path=out / "image_bio_reviews.json",
+            shared_emails=roster_reconciliation.segment_shared_emails)
+        unresolved.extend(segment_naming["unresolved"])
+        for record in segment_naming["admitted"]:
+            person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
+            candidates.append(person)
+            candidate_sources.setdefault((person.name, person.url), set()).add(record.source_kind)
+    segment_records = {(record.page_url, record.name): record for record in
+                       roster_reconciliation.segment_records + segment_naming["admitted"]}
+    # Text duplicates are reported by the reconciler; a name read by OCR that
+    # repeats another record of the same article must not collapse two people.
+    named = Counter((record.page_url, record.name) for record in
+                    roster_reconciliation.segment_records + segment_naming["admitted"])
+    ocr_named = {(record.page_url, record.name) for record in segment_naming["admitted"]}
+    unresolved.extend({"url": url, "status": "segment_duplicate_name", "occurrences": count}
+                      for (url, name), count in named.items() if count > 1 and (url, name) in ocr_named)
     roster_observations = roster_reconciliation.observations
     unresolved.extend(
         item for item in roster_reconciliation.unresolved
@@ -772,16 +819,23 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     media_pages.update((url, html) for url, html in all_pages
                        if url in manually_covered_urls or url in image_roster_cards
                        or url in pdf_roster_urls)
+    # Only admitted records of a segmented article carry media into the audit;
+    # a record still waiting for its name has no owner yet.
+    segment_media: dict[str, list[str]] = {}
+    for (page_url, _name), record in sorted(segment_records.items(),
+                                            key=lambda item: (item[0][0], item[1].segment.index)):
+        if record.segment.images:
+            segment_media.setdefault(page_url, []).append(record.segment.html)
+    media_pages.update((url, "".join(parts)) for url, parts in segment_media.items())
+    segment_media_urls = set(segment_media)
     media_owners: dict[str, set[str]] = {}
     for candidate in admitted:
         if candidate.url in media_pages:
             media_owners.setdefault(candidate.url, set()).add(candidate.name)
-    production_outputs = (Path(__file__).resolve().parent / "outputs").resolve()
-    ocr_cache_dir = (production_outputs / "ocr_cache" if out.is_relative_to(production_outputs)
-                     else out / "ocr_cache")
+    ocr_cache_dir = _ocr_cache_dir(out)
     media_audit = await audit_profile_media(
         media_pages, media_owners, snapshot_dir / "profile_media",
-        fetch_asset=fetch_original_media, scoped_urls=set(profile_scope_evidence),
+        fetch_asset=fetch_original_media, scoped_urls=set(profile_scope_evidence) | segment_media_urls,
         known_names={candidate.name for candidate in candidates},
         review_decisions_path=out / "image_bio_reviews.json",
         cache_dir=ocr_cache_dir)
@@ -793,6 +847,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             if (url, candidate_name) not in media_audit["assigned_biographies"]:
                 unresolved.append({"url": url, "name": candidate_name,
                                    "status": "image_bio_unreadable_profile"})
+    for record in segment_naming["admitted"]:
+        if (record.page_url, record.name) not in media_audit["assigned_biographies"]:
+            unresolved.append({"url": record.page_url, "name": record.name,
+                               "segment": record.segment.index, "status": "segment_image_bio_unassigned"})
     for roster_url, card_count in image_roster_cards.items():
         roster_names = {candidate.name for candidate in admitted if candidate.url == roster_url}
         assigned_names = {name for url, name in media_audit["assigned_biographies"]
@@ -831,6 +889,17 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     unresolved.extend(extraction["unresolved"])
     pipeline_records = extraction["sheet1_with_email"] + extraction["sheet2_no_email"]
     for record in pipeline_records:
+        segment = segment_records.get((record["主页"], record["姓名"]))
+        if segment is None:
+            continue
+        # The record's own article text, verbatim; an image-named record keeps
+        # document order, so its resume text is placed before the text below it.
+        record["简介"] = segment.segment.text if segment.name_source == "text" else ""
+        if record["职称"] == "教师" and segment.title != "教师":
+            record["职称"] = segment.title
+        if segment.email and not record["邮箱"]:
+            record["邮箱"] = segment.email
+    for record in pipeline_records:
         image_bio = media_audit["assigned_biographies"].get((record["主页"], record["姓名"]))
         if image_bio:
             existing = record["简介"].strip()
@@ -864,6 +933,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                                        "status": "image_bio_email_conflict"})
             elif personal_emails and not record["邮箱"]:
                 record["邮箱"] = personal_emails[0]
+    for record in pipeline_records:
+        segment = segment_records.get((record["主页"], record["姓名"]))
+        if segment is not None and segment.name_source == "ocr" and segment.segment.text:
+            existing = record["简介"].strip()
+            record["简介"] = existing + ("\n\n" if existing else "") + segment.segment.text
     profile_owners = Counter(cand.url for cand in admitted)
     for record in pipeline_records:
         url = record["主页"]
@@ -896,7 +970,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "extraction": ("deterministic_dom_and_local_ocr"
                        if (row["主页"], row["姓名"]) in media_audit["assigned_biographies"]
                        else "deterministic_dom"),
-        "attribution_scope": "candidate_and_profile",
+        "attribution_scope": ("segmented_article_record"
+                              if (row["主页"], row["姓名"]) in segment_records else "candidate_and_profile"),
+        **({"segment_record": segment_records[(row["主页"], row["姓名"])].provenance()}
+           if (row["主页"], row["姓名"]) in segment_records else {}),
         "image_biography_evidence": [item for item in media_audit["evidence"]
                                       if item["profile_url"] == row["主页"]
                                       and item.get("assigned_name") == row["姓名"]],
@@ -932,6 +1009,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "branches": branches, "roster_observations": roster_observations,
         "profile_aliases": profile_aliases,
         "image_biography_evidence": media_audit["evidence"],
+        "segment_name_evidence": segment_naming["evidence"],
         "unresolved": unresolved, "snapshots": snapshots,
         "records_path": str(records_path), "excel_path": excel_path,
         "coverage_scope": "supplied_roster_branches_only",

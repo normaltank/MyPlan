@@ -60,7 +60,7 @@ async def test_mcp_protocol_drives_real_browser_navigation_and_verification(tmp_
     try:
         assert (await request(1, "initialize"))["capabilities"] == {"tools": {}}
         tools = (await request(2, "tools/list"))["tools"]
-        assert len(tools) == 8
+        assert len(tools) == 9
         reply = await request(3, "tools/call", {"name": "browser_navigate",
                                               "arguments": {"url": f"http://127.0.0.1:{http.server_port}/"}})
         assert not reply["isError"]
@@ -70,6 +70,12 @@ async def test_mcp_protocol_drives_real_browser_navigation_and_verification(tmp_
         assert json.loads(reply["content"][0]["text"])["cardCount"] == 37
         assert json.loads(reply["content"][0]["text"])["pagination"]["total"] == 1
         assert "教师" not in reply["content"][0]["text"]
+        reply = await request(40, "tools/call", {"name": "browser_verify_segments", "arguments": {
+            "container_selector": "main", "record_start_selector": "main ul > li"}})
+        segments = json.loads(reply["content"][0]["text"])
+        assert not reply["isError"] and segments["segment_count"] == 37
+        assert segments["container_selector"] == "main" and segments["pagination"]["total"] == 1
+        assert "@" not in reply["content"][0]["text"] and "教师" not in reply["content"][0]["text"]
         url = f"http://127.0.0.1:{http.server_port}/"
         plan = {"branches": [{"url": url, "card_selector": "main ul > li", "next_selector": "#next",
                               "profile_content_selector": "article"}]}

@@ -152,6 +152,7 @@ def test_discovery_and_branch_tool_surfaces_enforce_stage_boundary():
     assert "browser_verify" not in discovery and "browser_structure" not in discovery
     assert "browser_navigation" not in branch
     assert "browser_verify" in branch and "browser_navigate" in discovery
+    assert "browser_verify_segments" in branch and "browser_verify_segments" not in discovery
 
 
 @pytest.mark.parametrize("feedback", [

@@ -8,6 +8,7 @@
 3. 正常名录在实际 DOM 上验证带容器锚定的 card_selector 只命中教师条目且数量大于零；明确空态按下面的独立流程验证。next_selector 必须唯一，并实际进入下一页验证同构卡片。无分页证据才可使用 single_page。
    若本入口只是通往一张或多张同构多人名录的目录，输出 kind:"navigation"、child_link_selector 和 child_branch。先用 browser_verify 的 card_selector 参数验证 child_link_selector 只命中这些真实名录链接；再打开最多两个不同子名录，用 browser_verify 核实 child_branch 的 card_selector 与分页。子名录有真正的个人主页时仍须按第 4 步核实正文范围。child_branch 不含 url，只有实际验证过的 CSS 和分页字段。若链接指向个人主页，本入口仍是普通名录，不使用 navigation。
    若名单与逐人简介图片同页，先用真实浏览器核实每张图确为一人条目，再把只命中这些原图的 CSS 作为 card_selector 验证；worker 会对原图 OCR、姓名归属及图片数与去重人数逐项对账。图片只含头像或图与人无法一一对应时，保留未解决项，不编造文本卡片。
+   分段平铺名录：若本入口是一篇正文里依次平铺多位教师的文章，每人没有独立外层容器（照片或简历图、姓名、简介段落、邮箱行是正文里的同级段落），不要用 card_selector，改输出 kind:"segmented"。container_selector 为唯一的正文容器；record_start_selector 命中每位教师记录的第一个元素（通常是正文内的照片或简历图，姓名写在图前时则是姓名行），worker 从一个起点切到下一个起点之前，按位置归属文字和邮箱。姓名只在简历图里、正文只有邮箱行时同样适用：worker 本地 OCR 取名，与该段文字邮箱交叉核对，核对不上送人工确认，不需要你转写任何姓名。用 browser_verify_segments 验证，要求 structure_ok:true、segment_count 等于页面实际人数、pagination.total 为 0；multiple_name_lines 或 unnamed_without_image 不为 0 说明起点选错，调整后重新验证。preamble 是第一位教师之前的内容，只应含标题或学院公共联系方式。记录里有指向个人主页的链接时不用 segmented，按普通名录核实卡片与个人页。
    最终 JSON 的选择器必须与成功 browser_verify 调用中的字符串完全一致。添加父容器、改写路径或调整任何字符后必须重新 verify；不能把近似选择器当作已验证选择器。
    navigate/verify 返回的 pagination 是当前真实 DOM 的控件候选。pagination.total > 0 时不能直接宣称 single_page；必须核实这些控件，找到有效下一页并验证。控件候选含实际 CSS 路径，不用再逐项搜索整页 HTML。
 4. 名录 verify 返回实际 linkedSamples。先核实链接目标是否为个人主页；若是，打开最多两个不同样例，核实完整学术正文的唯一容器，并用 browser_verify_profile 传入 profile_content_selector；它须覆盖全部履历、联系方式和学术内容，不能只选一个段落或删去共享正文。若正文由图片或嵌入 PDF 承载，仍核实覆盖全部原始资源的唯一容器；只提交 CSS，由 worker 本地读取原件和 OCR，无法取得原件会阻断交付。两个样例须使用同一 CSS 且工具 confirmed:true。若正文没有独立包装容器，可加 profile_content_start_selector，必须是唯一容器内的唯一直接子边界：复制边界之后到容器结束的全部 DOM，不按词语裁剪。只返回 CSS，禁止转写任何姓名、职称、邮箱或简介。没有个人主页的名录不用该字段；不要把名录页当个人页验证。更多个人页由 worker 批量访问并逐页检查范围，缺失或冲突会阻断。
@@ -19,8 +20,9 @@
 
 文本返回有 8000 UTF-8 字节预算；完整证据保存在本地。nextOffset、complete:false、result_too_large 或省略/Omitted 表示尚未覆盖全部内容。必须在原页面做定向查询，缩小容器或 limit 后继续；不能把预览当完整证据。禁止返回整页 outerHTML、innerText 或全部教师条目。已检查范围与未检查范围需分别处理，直至覆盖相关导航。完整教师数据由 worker 读取，不受此预览预算影响。
 
-完成条件：本入口的卡片选择器已验证、分页控件唯一且实际下一页已验证，或已确认确实没有分页；实际个人页样例还须正文范围核验。达到条件后立即输出 JSON。不要再发现其他学院入口、巡视介绍/新闻或重复访问已验证的页面。未核实的 URL 或近似选择器不能加入计划。
+完成条件：本入口的卡片选择器（或分段平铺名录的正文容器与记录起点）已验证、分页控件唯一且实际下一页已验证，或已确认确实没有分页；实际个人页样例还须正文范围核验。达到条件后立即输出 JSON。不要再发现其他学院入口、巡视介绍/新闻或重复访问已验证的页面。未核实的 URL 或近似选择器不能加入计划。
 
+分段平铺名录只输出 url、kind:"segmented"、container_selector、record_start_selector、single_page:true，两个 CSS 须与成功的 browser_verify_segments 调用完全一致，不含 card_selector、next_selector 或个人页字段。
 普通名录只输出本分支的一个 JSON 对象：url、card_selector，恰好给 single_page:true 或 next_selector；有分页时给 max_pages。目录型名录改用 url、kind:"navigation"、child_link_selector、child_branch，子分支按普通名录填写 card_selector 与分页字段，但不填 url。严格空态验证通过的普通单页分支可成对加 empty_state_selector 与 roster_container_selector，保留 card_selector、single_page:true，不能添加 next_selector。url 必须等于本入口 URL。动态 Tab 可加 initial_click_selector。CSS 使用容器锚定路径，例如 div.list_container ul.teacher > li。不要输出学校、学院、branches 数组或其他入口。
 有实际个人主页时另给已核实的 profile_content_selector，可选 profile_content_start_selector。CSS 必须与成功 browser_verify_profile 调用完全一致，两个不同样例都须验证；只有一个个人主页时验证该实际样例即可。正文工具只回传结构与摘要，所有教师字段仍由本地确定性代码提取。
 禁止额外添加 name、label、count、说明或备注字段；名录分支只用 URL 标识。

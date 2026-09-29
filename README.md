@@ -126,6 +126,8 @@ Windows 本机也可双击 `双击启动局域网服务.bat`。它会检查后�
 
 工单因图片简介的低置信 OCR 行或邮箱冲突被挡住时，工单进度会显示“核对图片文字与邮箱”。提交员工可对照原图保存决定；管理员可查看并复核全部工单。完成该工单的全部图片复核后，点击“重新采集此工单”会使原工单重新入队，保留提交人和原始证据，重新执行确定性审计。原图或 OCR 已变化时，旧决定不会直接套用。旧的 `scratch` 验收材料没有员工归属，管理员可从网页中的“查看历史图片复核材料”进入；`8765` 是先前的本机独立页面，不再作为新员工工单入口。图片复核只解决其对应的证据问题，其他分支、身份或覆盖审计未通过时仍会阻断交付。
 
+分段平铺名录（一篇文章里依次平铺多位教师，或姓名只写在简历图里）使用同一复核页：只在图片中的姓名由本地 OCR 读取，能与该教师自己的文字邮箱全拼核对上时自动采信，核对不上时页面会出现标注“姓名行”的卡片，对照原图改正后保存即可。
+
 网页右侧默认显示本浏览器的当前请求；没有活动请求时显示“待提交”。已结束的旧批次可从“历史工单”主动查看，不会自动占据新任务进度。顶部“后台自动接单在线”取自常驻 worker 的实时心跳；显示离线时提交会入队等待，可重新双击上述 BAT 启动消费者。提交单院或批量任务都必须填写有效的学院官网入口 URL，缺少入口的批量请求整批不会入队。
 
 ### 2. 单独启动常驻 Agent 消费者（服务部署或排障）
@@ -198,6 +200,7 @@ python -m server.browser_batch_tool --plan <已核实计划.json> --output-dir s
 
 - 🏛️ **最高行动宪章**：[`AGENTS.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/AGENTS.md)（红线规范、Subagent 派发铁律、阶段边界卫生）
 - 📋 **交接文档与系统全景**：[`AGENT_HANDOVER.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/AGENT_HANDOVER.md)（业务规则库、系统状态、历史交付资产总表）
+- 🧹 **2026-09-29 清理清单**：[`docs/cleanup-2026-09-29.md`](docs/cleanup-2026-09-29.md)（删除的一次性脚本与恢复命令）
 - 📖 **领域术语与概念字典**：[`CONTEXT.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/CONTEXT.md)（Single Source of Truth）
 - 🛠️ **标准采录作业 SOP**：[`.agents/skills/faculty-browser-harvest/SKILL.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/skills/faculty-browser-harvest/SKILL.md)
 - 📐 **架构决策记录**：

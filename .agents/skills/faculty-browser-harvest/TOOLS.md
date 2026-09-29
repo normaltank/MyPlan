@@ -52,6 +52,18 @@ python -m server.browser_batch_tool --plan <计划文件.json> --output-dir serv
 
 命令只打印紧凑 JSON。完整数据在 `records_path`，访问证据及未解决项在 `audit_path`，渲染后的原始页面在 `snapshots` 指向的文件中。`delivery_ready=false` 时不生成 Excel，也不准同步完成状态。`coverage_scope=supplied_roster_branches_only` 表示工具仅核对计划给出的分支；Agent 仍须确认官网没有其他教师分支。
 
+## 分段平铺名录：一篇正文里多位教师
+
+**触发**：一篇文章里依次平铺多位教师，每人没有独立外层容器（照片或简历图、姓名、简介段落、邮箱行是同级段落），或姓名只写在简历图里、正文只有邮箱行。此时不写 `card_selector`，改用分段分支：
+
+```json
+{"url": "https://www.example.edu.cn/jxgc/info/1232/15867.htm", "kind": "segmented",
+ "container_selector": "div.v_news_content", "record_start_selector": "div.v_news_content img",
+ "single_page": true}
+```
+
+`record_start_selector` 必须命中每位教师记录的第一个元素（姓名写在照片前时选姓名行）。工具从一个起点切到下一个起点之前，简介原文与唯一邮箱按位置归属；图片中的姓名本地 OCR 读取，不能与本段邮箱全拼核对时进入图片审核页，由人核对原图姓名行后才可交付。记录链接到个人主页时不用本分支，按普通名录处理。
+
 ## 个人页正文范围
 
 **触发**：名录实际链接到个人页。打开工具给出的最多两个不同详情样例，核实完整正文 `profile_content_selector` 并逐一执行 `browser_verify_profile`；URL 与 CSS 都用本轮实际证据。没有个人页的名单保持如实留空。

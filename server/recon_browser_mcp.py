@@ -43,6 +43,10 @@ TOOLS = [
     tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes and sample URLs.",
          {"card_selector": STRING, "next_selector": STRING,
           "empty_state_selector": STRING, "roster_container_selector": STRING}, ("card_selector",)),
+    tool("browser_verify_segments", "Verify a flat multi-person article: the unique body container and the element "
+         "starting each person's record. Returns segment counts and shapes only.",
+         {"container_selector": STRING, "record_start_selector": STRING},
+         ("container_selector", "record_start_selector")),
     tool("browser_verify_profile", "Verify a complete profile DOM container and optional direct-child start boundary; structure only.",
          {"profile_content_selector": STRING, "profile_content_start_selector": STRING}, ("profile_content_selector",)),
     tool("browser_click", "Click a unique, verified CSS selector in the real browser.", {"selector": STRING}, ("selector",)),
@@ -57,7 +61,8 @@ def phase_tools(phase: str) -> list[dict]:
     if phase == "discovery":
         allowed = {"browser_navigate", "browser_navigation", "browser_evaluate", "browser_screenshot"}
     elif phase == "branch":
-        allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot"}
+        allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
+                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot"}
     else:
         return TOOLS
     return [entry for entry in TOOLS if entry["name"] in allowed]
@@ -144,6 +149,13 @@ class BrowserScout:
                 branch = {**arguments, "url": self.page.url, "single_page": True}
                 value["empty_roster"] = await verify_empty_roster(self.page, branch, await self.page.content())
                 await self.snapshot()
+        elif name == "browser_verify_segments":
+            from server.segmented_roster import verification_summary
+            html = await self.page.content()
+            value = verification_summary(html, self.page.url, arguments["container_selector"],
+                                         arguments["record_start_selector"])
+            value["pagination"] = await self.page.evaluate("() => __facultyRecon.pagination()")
+            await self.snapshot()
         elif name == "browser_verify_profile":
             from server.profile_structure import verify_profile_container
             captured = {}
