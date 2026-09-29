@@ -23,7 +23,6 @@ import asyncio
 import copy
 from dataclasses import dataclass, field
 import hashlib
-from itertools import product
 import json
 import os
 from pathlib import Path
@@ -39,6 +38,7 @@ from server.faculty_extractor import (FacultyDirectoryExtractor, LayoutAwareToke
 
 # faculty_extractor puts the Opus algorithm layer on sys.path under its flat
 # module names; import through the same names so there is one copy of each.
+from email_matching import pinyin_readings  # noqa: E402
 from iso_mining import _COMPOUND, name_prob  # noqa: E402
 
 KIND = "segmented"
@@ -267,27 +267,13 @@ def text_name(segment: Segment) -> tuple[str | None, str, int]:
     return name, title, extra
 
 
-def _pinyin_readings(name: str) -> list[list[str]]:
-    try:
-        from pypinyin import Style, pinyin
-    except ImportError:
-        return []
-    per_char = pinyin(name, style=Style.NORMAL, heteronym=True, errors="ignore")
-    combos = []
-    for choice in product(*[[reading.lower() for reading in options[:3]] for options in per_char]):
-        combos.append(list(choice))
-        if len(combos) >= 27:
-            break
-    return combos
-
-
 def full_name_email(email: str, name: str) -> bool:
     """True when the email local part spells surname and full given name."""
     local = re.sub(r"[\d._\-]+", "", email.split("@", 1)[0].lower())
     if not local or not _HAN_NAME.match(name):
         return False
     surname_chars = 2 if name[:2] in _COMPOUND and len(name) >= 3 else 1
-    for syllables in _pinyin_readings(name):
+    for syllables in pinyin_readings(name):
         surname = "".join(syllables[:surname_chars])
         given = "".join(syllables[surname_chars:])
         if not given:

@@ -122,8 +122,7 @@ def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
                 dcm = DomainConventionModel()
                 if dcm._pinyin_match(clean_local, scholar_name) or dcm._pinyin_match(local_part, scholar_name):
                     return True
-                syl = dcm.to_pinyin(scholar_name) if dcm.to_pinyin else None
-                if syl:
+                for syl in dcm.readings(scholar_name):
                     initials = "".join(s[0] for s in syl if s).lower()
                     if len(initials) >= 2 and clean_local.startswith(initials):
                         return True
@@ -844,8 +843,7 @@ class FacultyHarvestPipeline:
                 clean_local = re.sub(r'[-_.]', '', local_part)
                 # Disallow surname-only matching when multiple peers share this surname
                 if same_sur_count > 1 and dcm is not None:
-                    syl = dcm.to_pinyin(cand.name) if dcm.to_pinyin else None
-                    if syl and len(syl) > 1 and clean_local == syl[0].lower():
+                    if any(len(syl) > 1 and clean_local == syl[0] for syl in dcm.readings(cand.name)):
                         unresolved.append({
                             "姓名": cand.name, "主页": page_url,
                             "status": "ambiguous_surname_email",
@@ -896,8 +894,7 @@ class FacultyHarvestPipeline:
                     clean_local = re.sub(r'[-_.]', '', local_part)
                     same_sur_count = surname_counts.get(mc.name[0], 1) if mc.name else 1
                     if same_sur_count > 1 and dcm is not None:
-                        syl = dcm.to_pinyin(mc.name) if dcm.to_pinyin else None
-                        if syl and len(syl) > 1 and clean_local == syl[0].lower():
+                        if any(len(syl) > 1 and clean_local == syl[0] for syl in dcm.readings(mc.name)):
                             unresolved.append({
                                 "姓名": mc.name, "主页": page_url,
                                 "status": "ambiguous_surname_email",

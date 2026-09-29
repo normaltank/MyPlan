@@ -140,8 +140,7 @@ def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
                 dcm = DomainConventionModel()
                 if dcm._pinyin_match(clean_local, scholar_name) or dcm._pinyin_match(local_part, scholar_name):
                     return True
-                syl = dcm.to_pinyin(scholar_name) if dcm.to_pinyin else None
-                if syl:
+                for syl in dcm.readings(scholar_name):
                     initials = "".join(s[0] for s in syl if s).lower()
                     if len(initials) >= 2 and clean_local.startswith(initials):
                         return True
