@@ -1,0 +1,854 @@
+[
+  {
+    "id": "ordinary_full_biography",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true,
+          "card_selector": ".cards > li"
+        }
+      ]
+    },
+    "expected": {
+      "total": 3,
+      "with_email": 2,
+      "no_email": 1,
+      "delivery_ready": true,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm"
+        ]
+      ],
+      "bio_fragments": {
+        "张富有": [
+          "张富有于2001年至2005年学习计算机科学，获学士学位。",
+          "张富有于2006年至2010年开展图结构研究，获博士学位。",
+          "张富有主持项目甲，编号A-2026；发表论文乙；承担课程丙。",
+          "张富有的完整履历末段：研究资料将在2027年持续更新。"
+        ],
+        "刘圣洁": [
+          "刘圣洁于2001年至2005年学习计算机科学，获学士学位。",
+          "刘圣洁于2006年至2010年开展图结构研究，获博士学位。",
+          "刘圣洁主持项目甲，编号A-2026；发表论文乙；承担课程丙。",
+          "刘圣洁的完整履历末段：研究资料将在2027年持续更新。"
+        ],
+        "孙洁": [
+          "孙洁于2001年至2005年学习计算机科学，获学士学位。",
+          "孙洁于2006年至2010年开展图结构研究，获博士学位。",
+          "孙洁主持项目甲，编号A-2026；发表论文乙；承担课程丙。",
+          "孙洁的完整履历末段：研究资料将在2027年持续更新。"
+        ]
+      },
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm",
+          "0000000001@example.edu"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm",
+          "0000000002@example.edu"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm",
+          ""
+        ]
+      ],
+      "candidate_count": 3
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "ordinary_full_biography/01_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/1.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/1.htm",
+          "file": "ordinary_full_biography/02_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/2.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/2.htm",
+          "file": "ordinary_full_biography/03_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/3.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/3.htm",
+          "file": "ordinary_full_biography/04_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "profileless",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true,
+          "card_selector": ".cards > li"
+        }
+      ]
+    },
+    "expected": {
+      "total": 3,
+      "with_email": 0,
+      "no_email": 3,
+      "delivery_ready": true,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/roster"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/roster"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/roster"
+        ]
+      ],
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/roster",
+          ""
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/roster",
+          ""
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/roster",
+          ""
+        ]
+      ],
+      "candidate_count": 3
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "profileless/01_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "homonyms_require_identity_review",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true,
+          "card_selector": ".cards > li"
+        }
+      ]
+    },
+    "expected": {
+      "total": 3,
+      "with_email": 3,
+      "no_email": 0,
+      "delivery_ready": false,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm"
+        ],
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/2.htm"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm"
+        ]
+      ],
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm",
+          "0000000001@example.edu"
+        ],
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/2.htm",
+          "0000000002@example.edu"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm",
+          "0000000003@example.edu"
+        ]
+      ],
+      "candidate_count": 3,
+      "unresolved_status": "distinct_profile_identity_unverified"
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "homonyms_distinct_profiles/01_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/1.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/1.htm",
+          "file": "homonyms_distinct_profiles/02_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/2.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/2.htm",
+          "file": "homonyms_distinct_profiles/03_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/3.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/3.htm",
+          "file": "homonyms_distinct_profiles/04_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "shared_detail",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true,
+          "card_selector": ".cards > li"
+        }
+      ]
+    },
+    "expected": {
+      "total": 3,
+      "with_email": 3,
+      "no_email": 0,
+      "delivery_ready": true,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/shared.htm"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/shared.htm"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/shared.htm"
+        ]
+      ],
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/shared.htm",
+          "0000000001@example.edu"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/shared.htm",
+          "0000000002@example.edu"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/shared.htm",
+          "0000000003@example.edu"
+        ]
+      ],
+      "bio_fragments": {
+        "张富有": [
+          "张富有的独立完整履历和项目成果编号1。"
+        ],
+        "刘圣洁": [
+          "刘圣洁的独立完整履历和项目成果编号2。"
+        ],
+        "孙洁": [
+          "孙洁的独立完整履历和项目成果编号3。"
+        ]
+      },
+      "candidate_count": 3
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "shared_detail/01_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/shared.htm": [
+        {
+          "url": "https://acceptance.example.edu/shared.htm",
+          "file": "shared_detail/02_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "table_roster",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true,
+          "card_selector": "tbody > tr"
+        }
+      ]
+    },
+    "expected": {
+      "total": 3,
+      "with_email": 3,
+      "no_email": 0,
+      "delivery_ready": true,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm"
+        ]
+      ],
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm",
+          "0000000001@example.edu"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm",
+          "0000000002@example.edu"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm",
+          "0000000003@example.edu"
+        ]
+      ],
+      "candidate_count": 3
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "table_roster/01_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/1.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/1.htm",
+          "file": "table_roster/02_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/2.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/2.htm",
+          "file": "table_roster/03_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/3.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/3.htm",
+          "file": "table_roster/04_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "hospital_appointment",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true,
+          "card_selector": ".cards > li"
+        }
+      ],
+      "source_kind": "hospital_doctor_roster",
+      "verified_appointments": [
+        {
+          "name": "张富有",
+          "profile_url": "https://acceptance.example.edu/p/1.htm",
+          "academic_title": "教授",
+          "quote": "现任验收样本大学教授，承担教学工作。"
+        }
+      ],
+      "reviewed_exclusions": [
+        {
+          "name": "刘圣洁",
+          "profile_url": "https://acceptance.example.edu/p/2.htm",
+          "reason": "reviewed_not_university_appointment"
+        }
+      ]
+    },
+    "expected": {
+      "total": 1,
+      "with_email": 1,
+      "no_email": 0,
+      "delivery_ready": true,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm"
+        ]
+      ],
+      "excluded_count": 1,
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm",
+          "0000000001@example.edu"
+        ]
+      ],
+      "candidate_count": 2
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "hospital_appointment/01_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/1.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/1.htm",
+          "file": "hospital_appointment/02_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/2.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/2.htm",
+          "file": "hospital_appointment/03_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "pagination_url_changes",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "card_selector": ".cards > li",
+          "next_selector": ".next",
+          "max_pages": 3
+        }
+      ]
+    },
+    "expected": {
+      "total": 6,
+      "with_email": 6,
+      "no_email": 0,
+      "delivery_ready": true,
+      "directory_pages": 2,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm"
+        ],
+        [
+          "赵文成",
+          "https://acceptance.example.edu/p/4.htm"
+        ],
+        [
+          "王英华",
+          "https://acceptance.example.edu/p/5.htm"
+        ],
+        [
+          "周立新",
+          "https://acceptance.example.edu/p/6.htm"
+        ]
+      ],
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm",
+          "0000000001@example.edu"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm",
+          "0000000002@example.edu"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm",
+          "0000000003@example.edu"
+        ],
+        [
+          "赵文成",
+          "https://acceptance.example.edu/p/4.htm",
+          "0000000004@example.edu"
+        ],
+        [
+          "王英华",
+          "https://acceptance.example.edu/p/5.htm",
+          "0000000005@example.edu"
+        ],
+        [
+          "周立新",
+          "https://acceptance.example.edu/p/6.htm",
+          "0000000006@example.edu"
+        ]
+      ],
+      "candidate_count": 6
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "pagination_url_changes/01_01.html"
+        },
+        {
+          "url": "https://acceptance.example.edu/roster?page=2",
+          "file": "pagination_url_changes/01_02.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/1.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/1.htm",
+          "file": "pagination_url_changes/02_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/2.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/2.htm",
+          "file": "pagination_url_changes/03_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/3.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/3.htm",
+          "file": "pagination_url_changes/04_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/4.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/4.htm",
+          "file": "pagination_url_changes/05_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/5.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/5.htm",
+          "file": "pagination_url_changes/06_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/6.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/6.htm",
+          "file": "pagination_url_changes/07_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ajax_same_url",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "card_selector": ".cards > li",
+          "next_selector": ".next",
+          "max_pages": 3
+        }
+      ]
+    },
+    "expected": {
+      "total": 6,
+      "with_email": 6,
+      "no_email": 0,
+      "delivery_ready": true,
+      "directory_pages": 2,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm"
+        ],
+        [
+          "赵文成",
+          "https://acceptance.example.edu/p/4.htm"
+        ],
+        [
+          "王英华",
+          "https://acceptance.example.edu/p/5.htm"
+        ],
+        [
+          "周立新",
+          "https://acceptance.example.edu/p/6.htm"
+        ]
+      ],
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm",
+          "0000000001@example.edu"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm",
+          "0000000002@example.edu"
+        ],
+        [
+          "孙洁",
+          "https://acceptance.example.edu/p/3.htm",
+          "0000000003@example.edu"
+        ],
+        [
+          "赵文成",
+          "https://acceptance.example.edu/p/4.htm",
+          "0000000004@example.edu"
+        ],
+        [
+          "王英华",
+          "https://acceptance.example.edu/p/5.htm",
+          "0000000005@example.edu"
+        ],
+        [
+          "周立新",
+          "https://acceptance.example.edu/p/6.htm",
+          "0000000006@example.edu"
+        ]
+      ],
+      "candidate_count": 6
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "ajax_same_url/01_01.html"
+        },
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "ajax_same_url/01_02.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/1.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/1.htm",
+          "file": "ajax_same_url/02_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/2.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/2.htm",
+          "file": "ajax_same_url/03_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/3.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/3.htm",
+          "file": "ajax_same_url/04_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/4.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/4.htm",
+          "file": "ajax_same_url/05_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/5.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/5.htm",
+          "file": "ajax_same_url/06_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/6.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/6.htm",
+          "file": "ajax_same_url/07_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "failed_profile",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true,
+          "card_selector": ".cards > li"
+        }
+      ]
+    },
+    "expected": {
+      "total": 2,
+      "with_email": 2,
+      "no_email": 0,
+      "delivery_ready": false,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm"
+        ]
+      ],
+      "unresolved_status": "profile_navigation_failed",
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/p/1.htm",
+          "0000000001@example.edu"
+        ],
+        [
+          "刘圣洁",
+          "https://acceptance.example.edu/p/2.htm",
+          "0000000002@example.edu"
+        ]
+      ],
+      "candidate_count": 3
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "failed_profile/01_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/1.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/1.htm",
+          "file": "failed_profile/02_01.html"
+        }
+      ],
+      "https://acceptance.example.edu/p/2.htm": [
+        {
+          "url": "https://acceptance.example.edu/p/2.htm",
+          "file": "failed_profile/03_01.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "unreviewed_poster",
+    "evidence_kind": "synthetic",
+    "plan": {
+      "school": "验收样本大学",
+      "college": "验收样本学院",
+      "branches": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "single_page": true
+        }
+      ],
+      "verified_candidates": [
+        {
+          "name": "张富有",
+          "source_url": "https://acceptance.example.edu/roster",
+          "evidence_path": "poster-unreviewed-evidence.txt"
+        }
+      ]
+    },
+    "expected": {
+      "total": 1,
+      "with_email": 0,
+      "no_email": 1,
+      "delivery_ready": false,
+      "directory_pages": 1,
+      "identities": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/roster"
+        ]
+      ],
+      "unresolved_status": "poster_full_image_review_missing",
+      "email_assignments": [
+        [
+          "张富有",
+          "https://acceptance.example.edu/roster",
+          ""
+        ]
+      ],
+      "candidate_count": 1
+    },
+    "pages": {
+      "https://acceptance.example.edu/roster": [
+        {
+          "url": "https://acceptance.example.edu/roster",
+          "file": "unreviewed_poster/01_01.html"
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,437 @@
+diff -ru '--exclude=__pycache__' '--exclude=__init__.py' orig/Opus/email_matching.py proj/Opus/email_matching.py
+--- orig/Opus/email_matching.py	2026-09-23 03:20:21.477808994 +0000
++++ proj/Opus/email_matching.py	2026-09-23 03:20:21.489218146 +0000
+@@ -396,6 +396,13 @@
+     ch_e = [index.email(e) for e in emails]
+     set_p = [set(c) for c in ch_p]
+     set_e = [set(c) for c in ch_e]
++    # inverted index container -> #persons / addresses inside it; replaces the
++    # O(P+E) scan per (i, j) pair (the matrix build was O(P*E*(P+E)))
++    n_p_in: Counter = Counter(k for c in set_p for k in c)
++    addr_in: dict = defaultdict(set)
++    for e_, c in zip(emails, set_e):
++        for k in c:
++            addr_in[k].add(e_.address)
+     # record container keys: DOM record nodes, or the person's own soft cell
+     rec_keys = []
+     for p, c in zip(persons, ch_p):
+@@ -419,9 +426,8 @@
+                 reason[i, j] = "no_common_container"
+                 continue
+             C = ch_p[i][L - 1]
+-            others_p = sum(1 for k in range(P) if k != i and C in set_p[k])
+-            others_e = len({emails[k].address for k in range(E)
+-                            if emails[k].address != e.address and C in set_e[k]})
++            others_p = n_p_in[C] - 1                     # C is on p's own chain
++            others_e = len(addr_in[C]) - (e.address in addr_in[C])
+             if dfs > 1 and others_p > 0:
+                 reason[i, j] = "shared_df_nonexclusive"
+                 continue
+diff -ru '--exclude=__pycache__' '--exclude=__init__.py' orig/Opus/iso_mining.py proj/Opus/iso_mining.py
+--- orig/Opus/iso_mining.py	2026-09-23 03:20:21.477768364 +0000
++++ proj/Opus/iso_mining.py	2026-09-23 03:21:42.558814030 +0000
+@@ -212,16 +212,30 @@
+     return " ".join(parts)
+ 
+ 
++_HAN_WS = re.compile(r"[\u4e00-\u9fff\s\u3000]+")
++
++def _collapse_han(t: str) -> str:
++    """'孙  洁' -> '孙洁': CMS pad 2-char names to 3-char width. Only when the
++    whole text is 2-4 Han chars plus whitespace, so '教授 张三' is untouched."""
++    if _HAN_WS.fullmatch(t):
++        c = re.sub(r"[\s\u3000]+", "", t)
++        if 2 <= len(c) <= 4:
++            return c
++    return t
++
+ def primary_tokens(nodes: list[Tag], k: int = 3) -> list[str]:
+     if nodes and isinstance(nodes[0], VirtualNode):
+         return [nodes[0].core] if nodes[0].core else []
+     toks: list[str] = []
+     for n in nodes:                           # link texts first
+         for a in n.find_all("a") if n.name != "a" else [n]:
+-            t = a.get_text(" ", strip=True)
++            t = _collapse_han(a.get_text(" ", strip=True))
+             if t:
+                 toks.extend(x for x in _TOKEN_SPLIT.split(t) if x)
+-    toks.extend(x for x in _TOKEN_SPLIT.split(record_text(nodes)) if x)
++    for n in nodes:                           # then every text leaf, han-collapsed
++        leaves = [n.core] if isinstance(n, VirtualNode) else list(n.stripped_strings)
++        for t in leaves:
++            toks.extend(x for x in _TOKEN_SPLIT.split(_collapse_han(t)) if x)
+     seen, out = set(), []
+     for t in toks:
+         if t not in seen:
+diff -ru '--exclude=__pycache__' '--exclude=__init__.py' orig/Opus/text_lists.py proj/Opus/text_lists.py
+--- orig/Opus/text_lists.py	2026-09-23 03:20:21.477826545 +0000
++++ proj/Opus/text_lists.py	2026-09-23 03:21:51.709097243 +0000
+@@ -200,8 +200,10 @@
+ # E-mail spans inside a stream (masked before lexing, bound afterwards)
+ # --------------------------------------------------------------------------
+ _AT = r"(?:\s*(?:@|＠)\s*|\s*[\[\(（【]\s*(?:at|AT|艾特)\s*[\]\)）】]\s*)"
+-_EMAIL_SPAN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._%+\-]*" + _AT +
+-                         r"[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
++# Bounded quantifiers (RFC 5321 limits) + a left guard: the unbounded form
++# rescanned every start position of a long alnum run, O(n^2) (20k chars: 11 s).
++_EMAIL_SPAN = re.compile(r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9][A-Za-z0-9._%+\-]{0,63}" + _AT +
++                         r"[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){0,8}\.[A-Za-z]{2,24}")
+ MASK = "\ue000"
+ 
+ 
+diff -ru '--exclude=__pycache__' '--exclude=__init__.py' orig/server/faculty_extractor.py proj/server/faculty_extractor.py
+--- orig/server/faculty_extractor.py	2026-09-23 03:20:21.478118154 +0000
++++ proj/server/faculty_extractor.py	2026-09-23 03:22:31.136399381 +0000
+@@ -13,16 +13,29 @@
+ from urllib.parse import urljoin, urlparse
+ from bs4 import BeautifulSoup, Tag, NavigableString, Comment
+ 
++import logging
++import os
++import sys
++
++log = logging.getLogger("faculty_extractor")
++
++# The algorithm layer uses flat imports ('from iso_mining import ...'), so it
++# must be imported under exactly ONE module name. Importing it as
++# 'Opus.iso_mining' AND as 'iso_mining' creates two VirtualNode classes;
++# isinstance() then fails and mine_records crashes on every text-list page.
++_OPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Opus")
++if _OPUS_DIR not in sys.path:
++    sys.path.insert(0, _OPUS_DIR)
+ try:
+-    from Opus.iso_mining import mine_records
+-    from Opus.email_matching import DomainConventionModel
+-except ImportError:
+-    try:
+-        from iso_mining import mine_records
+-        from email_matching import DomainConventionModel
+-    except ImportError:
+-        mine_records = None
+-        DomainConventionModel = None
++    from iso_mining import VirtualNode, first_href, mine_records, primary_tokens
++    from email_matching import DomainConventionModel
++    from text_lists import email_spans, _AT as _AT_PATTERN
++    _AT_RE = re.compile(_AT_PATTERN)
++    L2_AVAILABLE = True
++except ImportError as _ex:                          # never silently: log it
++    log.error("L2 algorithm layer unavailable: %s", _ex)
++    mine_records = DomainConventionModel = VirtualNode = first_href = primary_tokens = email_spans = None
++    L2_AVAILABLE = False
+ 
+ # Common structural containers that are strictly external chrome/navigation
+ PRUNE_TAGS = ['script', 'style', 'noscript', 'svg', 'iframe', 'header', 'footer', 'nav']
+@@ -53,6 +66,7 @@
+     title: str
+     email: str
+     full_bio: str
++    emails: tuple = ()          # every address inside the content container, in order
+ 
+ class FacultyDirectoryExtractor:
+     """
+@@ -77,89 +91,87 @@
+         return f"{node.name}{class_str}[{child_summary}]"
+ 
+ 
++    @staticmethod
++    def _clean_name(raw: str) -> tuple:
++        if all('\u4e00' <= ch <= '\u9fff' or ch.isspace() for ch in raw):
++            name = re.sub(r'\s+', '', raw)
++        else:
++            name = re.sub(r'\s+', ' ', raw).strip()
++        name = re.sub(r'（(?:博导|硕导)）|\((?:博导|硕导)\)', '', name).strip()
++        for kw in TITLE_KEYWORDS:
++            if name.endswith(kw) and len(name) > len(kw):
++                return name[:-len(kw)], kw
++            if name.startswith(kw) and len(name) > len(kw):
++                return name[len(kw):], kw
++        return name, "教师"
++
++    @classmethod
++    def _l2_candidates(cls, html: str, base_url: str) -> List[FacultyCandidate]:
++        """Contract with iso_mining:
++        - only records with p_r >= 0.5 (group U > 0 does not make every record a person)
++        - VirtualNode records (text lists) are first-class
++        - records without a link are kept: url = list page (profile-less faculty)
++        - dedupe key is (name, url), never name alone (homonyms are distinct people)"""
++        res = mine_records(BeautifulSoup(html, 'lxml'), page_url=base_url)
++        g = res.best
++        if g is None or g.utility <= 0:
++            return []
++        # One roster is often rendered as several accepted groups: linked vs
++        # link-less cards, or one block per title. Merge accepted groups that
++        # share best's container or are sibling blocks of it; a leadership bar
++        # in a different region stays out (cross-page template inference is
++        # the stronger fix once sibling list pages are available).
++        def _region(x):
++            c = x.container
++            return (id(c), id(getattr(c, "parent", None)))
++        bc, bp = _region(g)
++        groups = [g] + [a for a in res.alternatives
++                        if _region(a)[0] == bc or _region(a)[1] == bp]
++        pairs = [(r, p) for grp in groups for r, p in zip(grp.records, grp.record_probs)]
++        out, seen = [], set()
++        for r, p in pairs:
++            if p < 0.5:
++                continue
++            head = r[0]
++            if isinstance(head, VirtualNode):
++                if not head.shape_ok:
++                    continue
++                raw, card = head.core, head.text
++                href = urljoin(base_url, head.href) if head.href else None
++                section = head.section or ""
++            else:
++                toks = primary_tokens(r)
++                raw = toks[0] if toks else ""
++                card = " ".join(n.get_text(separator=' ', strip=True) for n in r)
++                href = first_href(r, base_url)
++                section = ""
++            name, title = cls._clean_name(raw)
++            if not name:
++                continue
++            if title == "教师":
++                ctx = f"{section} {card}"
++                title = next((kw for kw in TITLE_KEYWORDS if kw in ctx), "教师")
++            url = href or base_url
++            if (name, url) in seen:
++                continue
++            seen.add((name, url))
++            out.append(FacultyCandidate(name=name, url=url, title=title, card_context=card))
++        return out
++
+     @classmethod
+     def extract(cls, html: str, base_url: str) -> List[FacultyCandidate]:
+         if not html:
+             return []
+ 
+-        # Tier 1 (L2 Isomorphic Subtree Mining): Bayes decision utility mining
+-        if mine_records:
++        # Tier 1: L2 isomorphic mining (the only path that honours the charter)
++        if L2_AVAILABLE:
+             try:
+-                soup_lxml = BeautifulSoup(html, 'lxml')
+-                res = mine_records(soup_lxml, page_url=base_url)
+-                if res.best and res.best.utility > 0 and res.best.size > 0:
+-                    iso_candidates = []
+-                    seen_names: Set[str] = set()
+-                    seen_urls: Set[str] = set()
+-                    for r in res.best.records:
+-                        all_a = []
+-                        for n in r:
+-                            if n.name == 'a':
+-                                all_a.append(n)
+-                            all_a.extend(n.find_all('a'))
+-                        if not all_a:
+-                            continue
+-
+-                        # Pick the anchor that has text or title attribute
+-                        a_tag = None
+-                        for a in all_a:
+-                            txt = a.get_text(strip=True) or a.get('title', '').strip()
+-                            if txt and 2 <= len(txt) <= 20:
+-                                a_tag = a
+-                                break
+-                        if not a_tag:
+-                            a_tag = all_a[0]
+-
+-                        href = a_tag.get('href', '').strip()
+-                        if not href or href.startswith(('javascript:', '#', 'mailto:')):
+-                            continue
+-                        full_url = urljoin(base_url, href)
+-
+-                        raw_name = a_tag.get_text(strip=True) or a_tag.get('title', '').strip()
+-                        if not raw_name:
+-                            # Fallback to card text if anchor only contains image
+-                            card_full_text = " ".join(n.get_text(separator=' ', strip=True) for n in r)
+-                            words = card_full_text.split()
+-                            if words and 2 <= len(words[0]) <= 6:
+-                                raw_name = words[0]
+-                        if all('\u4e00' <= ch <= '\u9fff' or ch.isspace() for ch in raw_name):
+-                            clean_name = re.sub(r'\s+', '', raw_name)
+-                        else:
+-                            clean_name = re.sub(r'\s+', ' ', raw_name).strip()
+-                        clean_name = re.sub(r'（(?:博导|硕导)）|\((?:博导|硕导)\)', '', clean_name).strip()
+-
+-                        matched_title = "教师"
+-                        for kw in TITLE_KEYWORDS:
+-                            if clean_name.endswith(kw) and len(clean_name) > len(kw):
+-                                clean_name = clean_name[:-len(kw)]
+-                                matched_title = kw
+-                                break
+-                            elif clean_name.startswith(kw) and len(clean_name) > len(kw):
+-                                clean_name = clean_name[len(kw):]
+-                                matched_title = kw
+-                                break
+-
+-                        card_text = " ".join(n.get_text(separator=' ', strip=True) for n in r)
+-                        if matched_title == "教师":
+-                            for kw in TITLE_KEYWORDS:
+-                                if kw in card_text:
+-                                    matched_title = kw
+-                                    break
+-
+-                        if clean_name in seen_names or full_url in seen_urls:
+-                            continue
+-                        seen_names.add(clean_name)
+-                        seen_urls.add(full_url)
+-                        iso_candidates.append(FacultyCandidate(
+-                            name=clean_name,
+-                            url=full_url,
+-                            title=matched_title,
+-                            card_context=card_text
+-                        ))
+-                    if iso_candidates:
+-                        return iso_candidates
++                l2 = cls._l2_candidates(html, base_url)
+             except Exception:
+-                pass
++                log.exception("L2 failed on %s", base_url)   # visible, then fall back
++                l2 = None
++            if l2:
++                return l2
+ 
+         # Tier 2 (Heuristic Structural Clustering Fallback)
+         soup = BeautifulSoup(html, 'html.parser')
+@@ -308,7 +320,14 @@
+     'article', 'section', 'header', 'footer', 'nav', 'table', 'tbody', 'thead', 'br', 'hr'
+ }
+ 
+-EMAIL_REGEX = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
++EMAIL_REGEX = re.compile(r'(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}'
++                         r'(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])')
++
++def find_emails(text: str) -> List[str]:
++    """All addresses in reading order, incl. '(at)'/'＠' obfuscations."""
++    if email_spans is not None:                     # original case kept for delivery
++        return [re.sub(r"\s+", "", _AT_RE.sub("@", text[a:b])).strip(".") for a, b, _ in email_spans(text)]
++    return [m.lower() for m in EMAIL_REGEX.findall(text)]
+ 
+ class LayoutAwareTokenizer:
+     """Extracts text while strictly adhering to W3C physical CSS block boundaries."""
+@@ -388,13 +407,9 @@
+         full_bio = LayoutAwareTokenizer.get_clean_text(mecc)
+ 
+         # Extract email strictly from the MECC text stream
+-        emails = EMAIL_REGEX.findall(full_bio)
+-        valid_email = ""
+-        for em in emails:
+-            em_low = em.lower()
+-            if not em_low.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js')):
+-                valid_email = em
+-                break
++        emails = [em for em in find_emails(full_bio)
++                  if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))]
++        valid_email = emails[0] if emails else ""
+ 
+         # Check for glued phone numbers (e.g. 0510-859112348843120007@...)
+         if valid_email and DomainConventionModel:
+@@ -459,7 +474,8 @@
+             name=name,
+             title=title,
+             email=valid_email,
+-            full_bio=full_bio
++            full_bio=full_bio,
++            emails=tuple(emails)
+         )
+ 
+ 
+@@ -491,45 +507,68 @@
+         sheet1_with_email = []
+         sheet2_no_email = []
+ 
+-        # Step 2: Concurrently/serially fetch profiles and resolve attributes
++        # Step 2: fetch. A failed fetch is NOT 'no e-mail': it is unresolved and
++        # blocks delivery, otherwise timeouts silently land in Sheet 2.
++        fetched = []                                    # (cand, profile|None, status)
+         for cand in candidates:
+-            profile_html = profile_fetcher(cand.url) if profile_fetcher else ""
+-            profile = FacultyProfileExtractor.extract(profile_html, cand.url, fallback_name=cand.name)
+-
+-            final_title = profile.title if profile.title != "教师" else cand.title
+-
++            if cand.url == base_url:                    # profile-less faculty
++                fetched.append((cand, None, "no_profile"))
++                continue
++            html, status = None, "fetch_failed"
++            for _attempt in range(2):
++                try:
++                    html = profile_fetcher(cand.url) if profile_fetcher else ""
++                    status = "ok" if html is not None else "fetch_failed"
++                    break
++                except Exception as ex:
++                    status = f"fetch_failed:{type(ex).__name__}"
++            prof = FacultyProfileExtractor.extract(html, cand.url, fallback_name=cand.name) \
++                if status == "ok" else None
++            fetched.append((cand, prof, status))
++
++        # Step 3: detail-df. An address on >=2 different teachers' pages is site
++        # chrome (footer / office mailbox), not personal. Structural, no keyword list.
++        owners: Dict[str, set] = {}
++        for cand, prof, _ in fetched:
++            for em in (prof.emails if prof else ()):
++                owners.setdefault(em.lower(), set()).add((cand.name, cand.url))
++
++        sheet1_with_email, sheet2_no_email, unresolved = [], [], []
++        for cand, prof, status in fetched:
++            if status.startswith("fetch_failed"):
++                unresolved.append({"姓名": cand.name, "主页": cand.url, "status": status})
++                continue
++            email = ""
++            if prof:
++                email = next((em for em in prof.emails if len(owners.get(em.lower(), ())) < 2), "")
++                if email and DomainConventionModel:
++                    email = DomainConventionModel().split_glued_numeric(email)[0]
++            title = prof.title if prof and prof.title != "教师" else cand.title
+             record = {
+-                "序号": 0,
+-                "姓名": cand.name,
+-                "职称": final_title,
+-                "邮箱": profile.email,
+-                "学校": school,
+-                "学院": college,
+-                "采集人": agent_name,
+-                "采集日期": date_str,
+-                "简介": profile.full_bio,
+-                "主页": cand.url
++                "序号": 0, "姓名": cand.name, "职称": title, "邮箱": email,
++                "学校": school, "学院": college, "采集人": agent_name, "采集日期": date_str,
++                "简介": prof.full_bio if prof else "", "主页": cand.url,
+             }
+-
+-            if profile.email:
+-                record["序号"] = len(sheet1_with_email) + 1
+-                sheet1_with_email.append(record)
+-            else:
+-                record["序号"] = len(sheet2_no_email) + 1
+-                sheet2_no_email.append(record)
++            target = sheet1_with_email if email else sheet2_no_email
++            record["序号"] = len(target) + 1
++            target.append(record)
+ 
+         total_count = len(sheet1_with_email) + len(sheet2_no_email)
+-
+-        # Invariant assertion: Dual Sheet Conservation
+-        assert len(sheet1_with_email) + len(sheet2_no_email) == len(candidates), \
+-            f"Conservation violated! Sheet1({len(sheet1_with_email)}) + Sheet2({len(sheet2_no_email)}) != Candidates({len(candidates)})"
+-
++        keys1 = {(r["姓名"], r["主页"]) for r in sheet1_with_email}
++        keys2 = {(r["姓名"], r["主页"]) for r in sheet2_no_email}
++        # Real invariant (not an assert: 'python -O' strips asserts)
++        is_conserved = (total_count + len(unresolved) == len(candidates)) and not (keys1 & keys2)
++        if not is_conserved:
++            raise RuntimeError(f"Conservation violated: {len(sheet1_with_email)}+{len(sheet2_no_email)}"
++                               f"+{len(unresolved)} != {len(candidates)} or sheets overlap")
+ 
+         return {
+             "total_count": total_count,
+             "sheet1_with_email": sheet1_with_email,
+             "sheet2_no_email": sheet2_no_email,
+-            "is_conserved": True
++            "unresolved": unresolved,
++            "is_conserved": is_conserved,
++            "delivery_ready": is_conserved and not unresolved,
+         }
+ 
+ 
+Only in proj/tests: test_contract_regressions.py

@@ -1,0 +1,44 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "node",
+      "args": [
+        "C:/Users/27451/AppData/Local/Lenovo/ByRuntime/node/node_global/node_modules/@playwright/mcp/cli.js",
+        "--headless",
+        "--isolated",
+        "--no-sandbox",
+        "--executable-path",
+        "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+        "--ignore-https-errors"
+      ]
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch",
+        "--ignore-robots-txt",
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "node",
+      "args": [
+        "C:/Users/27451/AppData/Local/Lenovo/ByRuntime/node/node_global/node_modules/@modelcontextprotocol/server-sequential-thinking/dist/index.js"
+      ]
+    },
+    "memory": {
+      "command": "node",
+      "args": [
+        "C:/Users/27451/AppData/Local/Lenovo/ByRuntime/node/node_global/node_modules/@modelcontextprotocol/server-memory/dist/index.js"
+      ]
+    },
+    "filesystem": {
+      "command": "node",
+      "args": [
+        "C:/Users/27451/AppData/Local/Lenovo/ByRuntime/node/node_global/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js",
+        "d:/Agent Workspace/Intern/MyPlan"
+      ]
+    }
+  }
+}

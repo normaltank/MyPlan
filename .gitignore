@@ -1,0 +1,55 @@
+# ---- Python / 工具缓存 ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- 本机运行时（虚拟环境、加密密钥、日志、dsh-home）----
+.runtime/
+*.log
+
+# ---- 队列与缓存数据库（生产状态，不入库）----
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# ---- 采集产出与证据（含教师个人信息）----
+server/outputs/
+server/downloads/
+server/agent_queue.json
+server/saggas_dehydrated.json
+scratch/
+*.xlsx
+*.csv
+*.zip
+
+# ---- 浏览器 profile 与 MCP 日志 ----
+real_chrome_user_data/
+real_chrome_user_data_gui/
+tmp_chrome_profile*/
+tmp_edge_profile/
+.agents/plugins/faculty_harvest_tools/.playwright-mcp/
+
+# ---- 根目录一次性采集数据与抓取的站点脚本（含个人信息 / 第三方混淆脚本）----
+/all_teachers_raw.txt
+/processed_teachers.json
+/tcos_raw_teachers.json
+/claimed_tasks.json
+/pending_tasks.json
+/contact_*.png
+/contact_ocr.json
+/parsed_ocr_emails.json
+/ocr_sample.txt
+/no_email_names.txt
+/with_email_names.txt
+/probe_output.txt
+/ruishu*.js
+/ruishu_412.html
+/scratch_*.html
+/wyx_test.html
+/server/ruishu.js
+/server/waf_script.js

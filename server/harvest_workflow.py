@@ -1,0 +1,360 @@
+"""Generic seams for a browser-assisted college harvest.
+
+This module contains the workflow boundary, rather than a website adapter.  A
+Subagent supplies a bounded plan and the browser driver supplies page capture;
+the rest of the system receives a small, typed capture bundle that can be
+reconciled and committed independently.  Site-specific selectors therefore
+remain plan data and do not become branches in the core collector.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Iterable
+from urllib.parse import urljoin
+
+from bs4 import BeautifulSoup
+
+from server.faculty_extractor import FacultyCandidate, FacultyDirectoryExtractor
+
+
+CaptureBranch = Callable[
+    [Any, dict[str, Any]],
+    Awaitable[tuple[list[tuple[str, str]], list[dict[str, Any]], dict[str, Any]]],
+]
+DiscoverChildren = Callable[
+    [Any, dict[str, Any]],
+    Awaitable[tuple[str | None, list[str], list[dict[str, Any]], dict[str, Any]]],
+]
+
+
+@dataclass(frozen=True)
+class CapturedRosterPage:
+    """One rendered roster page and the plan branch that authorized it."""
+
+    url: str
+    html: str
+    branch: dict[str, Any]
+    empty_roster_evidence: dict[str, Any] | None = None
+
+
+@dataclass
+class SourceCapture:
+    """Browser output handed from source capture to reconciliation."""
+
+    navigation_pages: list[tuple[str, str]] = field(default_factory=list)
+    roster_pages: list[CapturedRosterPage] = field(default_factory=list)
+    unresolved: list[dict[str, Any]] = field(default_factory=list)
+    branches: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class RosterReconciliation:
+    """Deterministic page-level reconciliation before eligibility policy."""
+
+    candidates: list[FacultyCandidate]
+    candidate_sources: dict[tuple[str, str], set[str]]
+    observations: list[dict[str, Any]]
+    unresolved: list[dict[str, Any]]
+    profile_content_selectors: dict[str, set[tuple[str, str | None]]] = field(default_factory=dict)
+    profile_content_sources: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+
+
+async def capture_profiles(
+    browser_context: Any,
+    urls: Iterable[str],
+    concurrency: int,
+    ready_selector: str | None = None,
+    *,
+    state: Any = None,
+    profile_content_selectors: dict[str, set[tuple[str, str | None]]] | None = None,
+    profile_content_evidence: dict[str, dict[str, Any]] | None = None,
+) -> tuple[dict[str, str | None], list[dict[str, Any]]]:
+    """Fetch candidate pages after roster reconciliation, with bounded fan-out."""
+
+    import asyncio
+    import contextlib
+    import hashlib
+    import time
+
+    if concurrency < 1:
+        raise ValueError("profile concurrency must be positive")
+
+    semaphore = asyncio.Semaphore(concurrency)
+    pages: dict[str, str | None] = {}
+    unresolved: list[dict[str, Any]] = []
+
+    async def capture(url: str) -> None:
+        scope_pairs = (profile_content_selectors or {}).get(url, set())
+        scoped = bool(scope_pairs)
+        saved_record = state.load_page_record("profile", url) if state is not None else None
+        if state is not None:
+            saved = state.load_page("profile", url)
+            if saved is not None and not scoped:
+                pages[url] = saved
+                return
+        async with semaphore:
+            for attempt in range(3):
+                page = None
+                retryable = True
+                try:
+                    page = await browser_context.new_page()
+                    if scoped:
+                        from server.browser_readiness import install_request_tracking
+                        install_request_tracking(page)
+                    response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    if response is not None and response.status >= 400:
+                        retryable = response.status == 429 or response.status >= 500
+                        raise RuntimeError(f"HTTP {response.status}")
+                    if ready_selector:
+                        await page.locator(ready_selector).wait_for(state="visible", timeout=10000)
+                    if scoped:
+                        with contextlib.suppress(Exception):
+                            await page.wait_for_load_state("networkidle", timeout=4000)
+                    html = await page.content()
+                    if not html.strip():
+                        raise RuntimeError("empty rendered page")
+                    proof = None
+                    if scoped:
+                        from server.profile_structure import (resolve_equivalent_profile_selectors,
+                                                              verify_profile_container)
+                        pair = (next(iter(scope_pairs)) if len(scope_pairs) == 1 else
+                                await resolve_equivalent_profile_selectors(page, scope_pairs))
+                        if pair is None:
+                            unresolved.append({"url": url, "status": "profile_content_selector_conflict",
+                                               "selectors": [{"profile_content_selector": selector,
+                                                              "profile_content_start_selector": start}
+                                                             for selector, start in sorted(scope_pairs,
+                                                                 key=lambda item: (item[0], item[1] or ""))]})
+                        else:
+                            selector, start_selector = pair
+                            local_capture = {}
+                            proof = await verify_profile_container(page, selector, start_selector,
+                                                                   local_capture=local_capture)
+                            if len(scope_pairs) > 1:
+                                proof["equivalent_profile_content_selectors"] = sorted(
+                                    selector for selector, _ in scope_pairs)
+                            # Retain exactly the local snapshot hashed by the proof. The
+                            # browser-facing JSON never includes this raw capture.
+                            html = local_capture.get('html', html)
+                            if (proof.get("confirmed") is not True
+                                    or proof.get("html_sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest()):
+                                unresolved.append({"url": url, "status": "profile_content_browser_unverified",
+                                                   "selector": selector,
+                                                   "profile_content_start_selector": start_selector,
+                                                   "browser_evidence": proof})
+                                proof = None
+                    same_capture = bool(saved_record and saved_record["html"] == html)
+                    capture_record = saved_record if same_capture else None
+                    if state is not None and not same_capture:
+                        capture_record = state.save_page("profile", url, html,
+                            meta={"final_url": getattr(page, "url", url)})
+                    if proof is not None and profile_content_evidence is not None:
+                        profile_content_evidence[url] = {**proof,
+                            "verified_at": time.time(),
+                            "capture_origin": "checkpoint_revalidated" if same_capture else "fresh_browser_capture",
+                            "captured_at": capture_record["captured_at"] if capture_record else time.time()}
+                    pages[url] = html
+                    return
+                except Exception as exc:
+                    if retryable and attempt < 2:
+                        await asyncio.sleep(0.1 * (attempt + 1))
+                        continue
+                    pages[url] = None
+                    unresolved.append({"url": url, "status": "profile_navigation_failed",
+                                       "error": f"{type(exc).__name__}: {exc}", "attempts": attempt + 1})
+                    return
+                finally:
+                    if page is not None:
+                        with contextlib.suppress(Exception):
+                            await page.close()
+
+    await asyncio.gather(*(capture(url) for url in dict.fromkeys(urls)))
+    return pages, unresolved
+
+
+async def capture_sources(
+    plan: dict[str, Any],
+    browser_context: Any,
+    *,
+    capture_branch: CaptureBranch,
+    discover_children: DiscoverChildren,
+) -> SourceCapture:
+    """Execute only the bounded source-navigation portion of a plan.
+
+    The callbacks are the browser implementation.  Keeping them injected is
+    intentional: the workflow is testable with a fake browser and does not
+    need to know whether a page uses tabs, ordinary pagination, or child links.
+    No arbitrary recursion is introduced here; the plan remains the boundary.
+    """
+
+    result = SourceCapture()
+    for branch in plan["branches"]:
+        if branch.get("kind") == "navigation":
+            html, child_urls, errors, evidence = await discover_children(browser_context, branch)
+            if html is not None:
+                result.navigation_pages.append((branch["url"], html))
+            result.unresolved.extend({**item, "branch_url": branch["url"]} for item in errors)
+            for child_url in child_urls:
+                child_branch = {**branch["child_branch"], "url": child_url}
+                if "profile_content_selector" in branch and "profile_content_selector" not in child_branch:
+                    child_branch["profile_content_selector"] = branch["profile_content_selector"]
+                    if "profile_content_start_selector" in branch:
+                        child_branch["profile_content_start_selector"] = branch["profile_content_start_selector"]
+                pages, child_errors, child_evidence = await capture_branch(browser_context, child_branch)
+                result.roster_pages.extend(
+                    CapturedRosterPage(url, page_html, child_branch, child_evidence.get("empty_roster"))
+                    for url, page_html in pages
+                )
+                result.unresolved.extend({**item, "branch_url": branch["url"]} for item in child_errors)
+                evidence.setdefault("child_visits", []).append(child_evidence)
+            result.branches.append(evidence)
+            continue
+
+        pages, errors, evidence = await capture_branch(browser_context, branch)
+        result.roster_pages.extend(
+            CapturedRosterPage(url, page_html, branch, evidence.get("empty_roster"))
+            for url, page_html in pages
+        )
+        result.unresolved.extend({**item, "branch_url": branch["url"]} for item in errors)
+        result.branches.append(evidence)
+    return result
+
+
+def observe_roster(
+    html: str,
+    url: str,
+    selector: str,
+    candidates: list[FacultyCandidate],
+) -> dict[str, Any]:
+    """Compare visible source units with independently extracted candidates."""
+
+    cards = BeautifulSoup(html, "html.parser").select(selector)
+    candidate_urls = {item.url for item in candidates if item.url != url}
+    unaccounted = []
+    for index, card in enumerate(cards, 1):
+        anchors = ([card] if card.name == "a" and card.has_attr("href") else []) + card.select("a[href]")
+        links = [urljoin(url, a["href"]) for a in anchors]
+        card_text = card.get_text(" ", strip=True)
+        if not any(link in candidate_urls for link in links) and not any(
+            candidate.name in card_text for candidate in candidates
+        ):
+            unaccounted.append(
+                {"index": index, "links": links[:3], "text": card_text[:80]}
+            )
+    return {
+        "url": url,
+        "card_selector": selector,
+        "visible_cards": len(cards),
+        "extracted_candidates": len(candidates),
+        "unaccounted_cards": unaccounted,
+    }
+
+
+def reconcile_rosters(
+    captured: Iterable[CapturedRosterPage],
+    plan: dict[str, Any],
+) -> RosterReconciliation:
+    """Extract and reconcile roster pages without applying domain eligibility."""
+
+    candidates: list[FacultyCandidate] = []
+    candidate_sources: dict[tuple[str, str], set[str]] = {}
+    observations: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    default_source = plan.get("source_kind") or "university_faculty_roster"
+    profile_content_selectors: dict[str, set[tuple[str, str | None]]] = {}
+    profile_content_sources: dict[str, list[dict[str, str]]] = {}
+
+    for page in captured:
+        if "profile_content_start_selector" in page.branch and "profile_content_selector" not in page.branch:
+            unresolved.append({"url": page.url, "status": "profile_content_start_selector_without_container"})
+        found = FacultyDirectoryExtractor.extract(page.html, page.url)
+        source_kind = page.branch.get("source_kind") or default_source
+        for person in found:
+            candidate_sources.setdefault((person.name, person.url), set()).add(source_kind)
+            if "profile_content_selector" in page.branch and person.url != page.url:
+                scope = page.branch["profile_content_selector"]
+                start = page.branch.get("profile_content_start_selector")
+                if not isinstance(scope, str) or not scope.strip():
+                    unresolved.append({"url": person.url, "status": "profile_content_selector_invalid"})
+                    continue
+                if start is not None and (not isinstance(start, str) or not start.strip()):
+                    unresolved.append({"url": person.url, "status": "profile_content_start_selector_invalid"})
+                    continue
+                profile_content_selectors.setdefault(person.url, set()).add((scope, start))
+                evidence = {"roster_url": page.url, "card_selector": page.branch.get("card_selector", ""),
+                            "profile_content_selector": scope}
+                if start is not None:
+                    evidence["profile_content_start_selector"] = start
+                sources = profile_content_sources.setdefault(person.url, [])
+                if evidence not in sources:
+                    sources.append(evidence)
+
+        selector = page.branch.get("card_selector")
+        empty_declared = "empty_state_selector" in page.branch or "roster_container_selector" in page.branch
+        verified_empty = False
+        if empty_declared:
+            from server.empty_roster import empty_roster_proof_valid
+            verified_empty = empty_roster_proof_valid(page.empty_roster_evidence, page.branch,
+                                                     page.html, url=page.url)
+            if found:
+                unresolved.append({"url": page.url, "status": "empty_roster_conflict"})
+                verified_empty = False
+            elif not verified_empty:
+                unresolved.append({"url": page.url, "status": "empty_roster_not_verified"})
+        if not selector:
+            unresolved.append({"url": page.url, "status": "card_selector_missing"})
+        else:
+            observation = observe_roster(page.html, page.url, selector, found)
+            observations.append(observation)
+            verified_empty = verified_empty and observation["visible_cards"] == 0
+            if verified_empty:
+                observation["status"] = "confirmed_empty"
+            elif not observation["visible_cards"]:
+                unresolved.append(
+                    {"url": page.url, "status": "card_selector_empty", "selector": selector}
+                )
+            elif (
+                observation["visible_cards"] != observation["extracted_candidates"]
+                or observation["unaccounted_cards"]
+            ):
+                unresolved.append(
+                    {
+                        "url": page.url,
+                        "status": "roster_card_mismatch",
+                        "visible_cards": observation["visible_cards"],
+                        "extracted_candidates": observation["extracted_candidates"],
+                    }
+                )
+        if not found and not verified_empty:
+            unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
+        candidates.extend(found)
+
+    unique = {(candidate.name, candidate.url): candidate for candidate in candidates}
+    unresolved.extend({"url": url, "status": "profile_content_selector_conflict",
+                       "selectors": [{"profile_content_selector": scope,
+                                      "profile_content_start_selector": start}
+                                     for scope, start in sorted(selectors, key=lambda pair: (pair[0], pair[1] or ''))]}
+                      for url, selectors in profile_content_selectors.items() if len(selectors) > 1)
+    return RosterReconciliation(
+        candidates=list(unique.values()),
+        candidate_sources=candidate_sources,
+        observations=observations,
+        unresolved=unresolved,
+        profile_content_selectors=profile_content_selectors,
+        profile_content_sources=profile_content_sources,
+    )
+
+
+def commit_records(
+    records: list[dict[str, Any]],
+    destination: str,
+    *,
+    exporter: Callable[[list[dict[str, Any]], str], None],
+) -> str:
+    """Commit already-audited college records through an injected exporter."""
+
+    if not isinstance(records, list):
+        raise TypeError("records must be a list")
+    exporter(records, destination)
+    return destination

@@ -1,0 +1,4 @@
+{
+  "name": "faculty-harvest-tools",
+  "description": "MCP tool suite for Faculty Harvest AI: Headless browser automation (Playwright), high-speed web fetching (Fetch), persistent memory, sequential thinking, and filesystem tools."
+}

@@ -1,0 +1,50 @@
+# dsh 采集运行时 profile patch —— 给 Agent 挂载 Playwright MCP 浏览器工具
+#
+# 用法：把本文件作为 patch 交给 dsh。两种方式
+#   1) 一次性：      dsh --profile sdk --patch <本文件路径>
+#   2) 永久生效：    合并进 $DSH_HOME/profiles/<name>/cordis.patch.yml
+#      （只对本机所有 profile 生效则写入 $DSH_HOME/cordis.patch.yml）
+#
+# ── 三个必须遵守的点（每一条都是实测踩出来的，照抄能省几小时）────────────────
+#
+#  【1】必须用 dsh-mcp-client，不要用 experimental 的 browser-use 提供方
+#       packages/experimental/browser-use-playwright-mcp 声明
+#       inject=['browserUse','agents','tools','systemPrompt']，
+#       Cordis 机制下任一服务缺失即【静默不激活】——工具不下发、无任何报错。
+#       而 dsh-mcp-client 是随 profile 交付的正式组件，工作正常。
+#
+#  【2】insert: 包裹层必需
+#       README「最小配置」片段省略了这一层。不加的话 dsh 会把它理解为
+#       "覆盖已存在的条目"，于是报错：
+#           patch: entry "mcp-playwright" not found
+#
+#  【3】--executable-path 必须显式给
+#       @playwright/mcp 期望 chrome-for-testing/chromium-1243，
+#       而本机/服务器缓存里通常是别的版本，不给就报：
+#           Browser "chrome-for-testing" is not installed
+#
+# ── 服务器（Linux）部署要点 ──────────────────────────────────────────────
+#   · node 必须在 PATH 上（MCP server 是 Node 进程）
+#   · Chromium 及其系统依赖：npx playwright install --with-deps chromium
+#   · CJK 字体必须先装，否则截图→OCR 链路整体失效（渲染出豆腐块）
+#   · 瑞数等 WAF 站点可能需要 Xvfb + 去掉 --headless
+#   · CHROME_PATH 环境变量指向实际的 chrome/chromium 可执行文件
+- insert:
+    - id: mcp-playwright
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: playwright
+        transport: stdio
+        command: node
+        args:
+          - !!js process.env.PLAYWRIGHT_MCP_CLI
+          - '--isolated'
+          - '--browser'
+          - 'chromium'
+          - '--executable-path'
+          - !!js process.env.CHROME_PATH
+          # WAF 站点如需 headed：删掉下面这行，并在服务器上以 Xvfb 启动
+          - '--headless'
+        # 置 true 使启动失败响亮报错，而不是再次静默降级
+        failOnStartupError: true
+        toolCallTimeoutMs: 120000
