@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import time
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,7 +35,8 @@ from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 import yaml
 
-__all__ = ["ReconError", "ReconPlanError", "PlanHygieneError", "ReconResult", "reconnoiter"]
+__all__ = ["ReconError", "ReconPlanError", "PlanHygieneError", "ReconPhaseLimitExceeded",
+           "ReconResult", "reconnoiter"]
 
 
 class ReconError(RuntimeError):
@@ -43,6 +45,19 @@ class ReconError(RuntimeError):
 
 class ReconBudgetExceeded(ReconError):
     """A completed model request crossed the college's reconnaissance budget."""
+
+
+class ReconPhaseLimitExceeded(ReconError):
+    """One discovery/branch session used more model requests than allowed.
+
+    A structure the plan contract cannot express makes the scout probe the
+    same page again and again; a repair round rarely helps, so this is a
+    terminal failure that tells operators to look at the page type.
+    """
+
+
+class ReconCancelled(ReconError):
+    """The caller stopped waiting (task timeout); end the Harness session now."""
 
 
 class ReconBudget:
@@ -650,7 +665,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ReconError("阶段侦察超过总时限")
-        phase_cfg = {**cfg, "phase": phase, "timeout_seconds": remaining}
+        phase_cfg = {**cfg, "phase": phase, "timeout_seconds": remaining,
+                     "phase_call_limit": (cfg.get("phase_call_limits") or {}).get(phase, 0)}
         template = DISCOVERY_PROMPT if phase == "discovery" else PROMPT
         prompt = template.format(school=target["school"], college=target["college"], url=url)
         if feedback:
@@ -673,7 +689,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             write_runtime_patch(Path(cfg["runtime_patch"]), phase=phase, session_id=sid)
         try:
             result = _execute_harness(prompt, sid, phase_cfg, patches)
-        except ReconBudgetExceeded as exc:
+        except (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled) as exc:
             exc.phase = phase
             exc.phase_session_id = sid
             raise
@@ -766,7 +782,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                                 events=events, phase_metrics=phases,
                                 discovery_session_id=discovery_session_id)
     except ReconError as exc:
-        if isinstance(exc, ReconBudgetExceeded):
+        if isinstance(exc, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled)):
             partial = exc.diagnostics
             completed = run_metrics(events)
             usage = {key: completed["token_usage"][key] + partial["token_usage"][key]
@@ -830,6 +846,9 @@ def check_runtime_composition(cfg: dict[str, Any], patches: tuple[str, ...]) -> 
         raise ReconError("Harness general instruction or skill injection is active")
 
 
+_PHASE_NAMES = {"discovery": "入口发现", "branch": "分支验证", "full": "侦察"}
+
+
 def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches: tuple[str, ...]) -> Any:
     from deepseek_harness import DeepSeekHarness
 
@@ -841,6 +860,9 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
         raise
     budget: ReconBudget | None = cfg.get("budget")
     before = budget.snapshot() if budget else None
+    phase_limit = int(cfg.get("phase_call_limit") or 0)
+    phase_usage = ReconBudget()  # this session only; the budget above spans the college
+    cancel_event = cfg.get("cancel_event")
     with DeepSeekHarness(
         dsh_home=cfg["dsh_home"],
         cwd=cfg["workspace"],
@@ -857,17 +879,27 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
     ) as harness:
         try:
             run_kwargs: dict[str, Any] = {"session_id": session_id}
-            if budget is not None:
+            if budget is not None or phase_limit or cancel_event is not None:
                 def on_notification(notification: Any) -> None:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise ReconCancelled("侦察已被调用方停止（超时）")
                     if (notification.method == "session.event"
                             and notification.payload.get("sessionId") == session_id):
                         event = notification.payload.get("event")
                         if isinstance(event, dict):
-                            budget.observe(event)
+                            phase_usage.observe(event)
+                            if budget is not None:
+                                budget.observe(event)
+                            if phase_limit and phase_usage.calls > phase_limit:
+                                raise ReconPhaseLimitExceeded(
+                                    f"{_PHASE_NAMES.get(cfg.get('phase'), '侦察')}阶段已用 {phase_usage.calls} 次模型请求仍未完成"
+                                    f"（上限 {phase_limit}），页面结构可能超出当前计划格式，已停止以免继续消耗 Token")
                 run_kwargs["on_notification"] = on_notification
             return harness.run(prompt, **run_kwargs)
-        except ReconBudgetExceeded as exc:
-            exc.diagnostics = budget.delta(before)
+        except (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled) as exc:
+            exc.diagnostics = budget.delta(before) if budget is not None else {
+                "model_calls": phase_usage.calls, "token_usage": phase_usage.usage.copy(),
+                "budget_total": phase_usage.snapshot()}
             exc.usage_unknown = False
             raise
         except TimeoutError as exc:
@@ -917,6 +949,7 @@ async def reconnoiter(
     verified_branches: dict[str, Any] | None = None,
     resume_discovery: dict[str, Any] | None = None,
     budget: ReconBudget | None = None,
+    phase_call_limits: dict[str, int] | None = None,
 ) -> ReconResult:
     """让 Agent 侦察目标学院，返回**已通过双重门禁**的采集计划。
 
@@ -939,6 +972,9 @@ async def reconnoiter(
     cfg["verified_branches"] = verified_branches
     cfg["resume_discovery"] = resume_discovery
     cfg["budget"] = budget
+    cfg["phase_call_limits"] = phase_call_limits or {}
+    cancel_event = threading.Event()
+    cfg["cancel_event"] = cancel_event
     budget_before = budget.snapshot() if budget else None
     Path(cfg["workspace"]).mkdir(parents=True, exist_ok=True)
 
@@ -967,9 +1003,20 @@ async def reconnoiter(
             timeout=timeout_seconds,
         )
     except asyncio.TimeoutError as exc:
-        raise ReconError(f"侦察超时（{timeout_seconds:.0f}s）") from exc
-    except ReconBudgetExceeded as exc:
-        exc.diagnostics = budget.delta(budget_before)
+        # The SDK call runs in a thread that asyncio cannot cancel; the flag makes
+        # the next Harness event end the session instead of spending until its own deadline.
+        cancel_event.set()
+        error = ReconError(f"侦察超时（{timeout_seconds:.0f}s）")
+        if budget is not None:
+            error.diagnostics = {"session_id": sid, **budget.delta(budget_before)}
+            error.usage_unknown = False
+        raise error from exc
+    except asyncio.CancelledError:
+        cancel_event.set()  # the whole task timed out or the worker is stopping
+        raise
+    except (ReconBudgetExceeded, ReconPhaseLimitExceeded) as exc:
+        if budget is not None:
+            exc.diagnostics = {**getattr(exc, "diagnostics", {}), **budget.delta(budget_before)}
         exc.usage_unknown = False
         raise
     except ReconError:

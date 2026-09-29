@@ -146,6 +146,9 @@ worker 常驻轮询 `server/tasks.db`；使用锁定依赖中的 Harness 可执�
 - 内存保护：已有学院在跑、且可用物理内存低于 1024MB 时，worker 暂缓领取新工单，内存恢复后继续；第一个学院不受影响。参数 `--min-free-memory-mb`，`0` 关闭。
 - 侦察用量告警：单学院侦察累计超过 100 万 Token 或 150 次模型请求时，只告警、不中断。告警写入 worker 日志和任务目录的 `recon-usage-alert.json`，并随工单统计保存为 `recon_usage_alerts`。参数 `--recon-alert-tokens`、`--recon-alert-calls`，`0` 关闭。需要硬性熔断时，仍使用上面的 `--max-recon-calls` 与 `--max-recon-tokens`。
 - 批量提交上限：单次最多 30 个学院（`server/config.json` 的 `max_batch_colleges`），同一学院重复出现的批次会整批拒绝。
+- 单会话请求上限：入口发现会话最多 40 次模型请求，单个分支验证会话最多 25 次。超过时判定页面结构超出当前计划格式，该学院直接失败、不再补缺，审计状态为 `recon_phase_limit`。参数 `--max-discovery-calls`、`--max-branch-calls`，`0` 关闭。
+- 侦察超时会立即结束对应的 Harness 会话，已发生的用量照常记入 `recon-attempts.json`；以前超时后会话仍在后台继续消耗，且用量记为未知。
+- 侦察截图只发送当前视口或指定元素的 JPEG（高不超过 2000px），不再发送整页 PNG；同一页面的重复 HTML 快照只保存一份。
 
 **启动自检**：常驻 worker 领取工单前，会检查算法层、pypinyin、OCR、PyMuPDF、Harness 运行时、`DEEPSEEK_API_KEY` 和 Playwright Chromium 是否齐全。任一缺失时，worker 在 `.runtime/local-worker.err.log` 写明原因并退出（退出码 2），不会带着降级的依赖继续采集；双击启动脚本会等待自检结果并提示。排障时可加 `--skip-self-check` 跳过。Excel 导出时，抓取到的文本一律按文本写入（以 `=` 开头的内容不会变成公式），xlsx 无法保存的控制字符会被去掉，不再导致整份大学表导出失败。
 

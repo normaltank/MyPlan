@@ -29,6 +29,9 @@ def tool(name: str, description: str, properties: dict, required: tuple = ()) ->
 
 
 STRING = {"type": "string"}
+SCREENSHOT_JPEG_QUALITY = 60
+SCREENSHOT_MAX_WIDTH = 1280
+SCREENSHOT_MAX_HEIGHT = 2000
 RANGE = {"selector": STRING, "offset": {"type": "integer", "minimum": 0},
          "limit": {"type": "integer", "minimum": 1, "maximum": 24}}
 NAV_RANGE = {"selector": STRING, "offset": {"type": "integer", "minimum": 0},
@@ -45,7 +48,8 @@ TOOLS = [
     tool("browser_click", "Click a unique, verified CSS selector in the real browser.", {"selector": STRING}, ("selector",)),
     tool("browser_evaluate", "Run a JS function in the current page only for questions probes cannot answer. Return compact structure.",
          {"function": STRING}, ("function",)),
-    tool("browser_screenshot", "View a real full-page image when roster shape cannot be judged from DOM.", {}),
+    tool("browser_screenshot", "View the current viewport, or one element via selector, as a compressed image when roster "
+         "shape cannot be judged from DOM. Images are costly; prefer structure/verify.", {"selector": STRING}),
 ]
 
 
@@ -66,6 +70,7 @@ class BrowserScout:
         evidence_dir.mkdir(parents=True, exist_ok=True)
         self.sequence = 0
         self.phase = phase
+        self._last_html_digest = None
         from server.empty_roster import install_empty_roster_tracking
         install_empty_roster_tracking(page)
 
@@ -99,7 +104,11 @@ class BrowserScout:
         return {"content": [{"type": "text", "text": full}], "isError": False}
 
     async def snapshot(self) -> None:
-        self.save("html", await self.page.content())
+        html = await self.page.content()
+        digest = hashlib.sha256(html.encode("utf-8")).hexdigest()
+        if digest != self._last_html_digest:  # repeated probes of one page kept 30+ identical copies
+            self.save("html", html)
+            self._last_html_digest = digest
         if self.phase == "discovery":
             from server.recon_plan_cache import navigation_evidence
             self.save("discovery.json", json.dumps(await navigation_evidence(self.page), ensure_ascii=False))
@@ -157,10 +166,24 @@ class BrowserScout:
             value = await self.page.evaluate(arguments["function"])
             await self.snapshot()
         elif name == "browser_screenshot":
-            data = await self.page.screenshot(full_page=True)
-            evidence = self.save("png", data)
+            # Full-page PNGs (e.g. 1280x19624, 3.7 MB) were sent to the model and then
+            # re-sent with every later request of the session. Send one bounded JPEG.
+            options = {"type": "jpeg", "quality": SCREENSHOT_JPEG_QUALITY, "scale": "css"}
+            if arguments.get("selector"):
+                target = self.page.locator(arguments["selector"]).first
+                await target.scroll_into_view_if_needed(timeout=10000)
+                box = await target.bounding_box()
+                if box is None:
+                    raise ValueError("screenshot selector is not visible")
+                scroll = await self.page.evaluate("() => ({x: window.scrollX, y: window.scrollY})")
+                options["clip"] = {"x": box["x"] + scroll["x"], "y": box["y"] + scroll["y"],
+                                   "width": min(box["width"], SCREENSHOT_MAX_WIDTH),
+                                   "height": min(box["height"], SCREENSHOT_MAX_HEIGHT)}
+                options["full_page"] = True
+            data = await self.page.screenshot(**options)
+            evidence = self.save("jpg", data)
             return {"content": [{"type": "text", "text": json.dumps({"evidence_path": str(evidence)})},
-                                {"type": "image", "mimeType": "image/png", "data": base64.b64encode(data).decode()}]}
+                                {"type": "image", "mimeType": "image/jpeg", "data": base64.b64encode(data).decode()}]}
         else:
             raise ValueError("unknown browser tool")
         return self.text_result(value)

@@ -46,7 +46,7 @@ import httpx
 
 from server.agent_queue import AgentTaskQueue
 from server.agent_recon import (PlanHygieneError, ReconBudget, ReconBudgetExceeded,
-                               ReconError, ReconPlanError, ReconResult,
+                               ReconError, ReconPhaseLimitExceeded, ReconPlanError, ReconResult,
                                build_repair_feedback, reconnoiter, run_metrics, validate_model_plan)
 
 __all__ = ["AgentWorker", "main"]
@@ -66,6 +66,10 @@ DEFAULT_RECON_ALERT_CALLS = 150
 # Every queued college still starts at once; a new one waits only while the
 # machine is short of memory and at least one college is already running.
 DEFAULT_MIN_FREE_MEMORY_MB = 1024
+# One Harness session that needs more model requests than this is probing a
+# page the plan format cannot express; stop it instead of repeating the probe.
+DEFAULT_MAX_DISCOVERY_CALLS = 40
+DEFAULT_MAX_BRANCH_CALLS = 25
 
 
 def available_memory_mb() -> float | None:
@@ -116,6 +120,8 @@ class AgentWorker:
         recon_alert_tokens: int = DEFAULT_RECON_ALERT_TOKENS,
         recon_alert_calls: int = DEFAULT_RECON_ALERT_CALLS,
         min_free_memory_mb: float = DEFAULT_MIN_FREE_MEMORY_MB,
+        max_discovery_calls: int = DEFAULT_MAX_DISCOVERY_CALLS,
+        max_branch_calls: int = DEFAULT_MAX_BRANCH_CALLS,
     ) -> None:
         if lease_renew_seconds <= 0:
             raise ValueError("lease_renew_seconds must be positive")
@@ -125,6 +131,9 @@ class AgentWorker:
         self.recon_alert_tokens = recon_alert_tokens
         self.recon_alert_calls = recon_alert_calls
         self.min_free_memory_mb = min_free_memory_mb
+        if max_discovery_calls < 0 or max_branch_calls < 0:
+            raise ValueError("phase call limits must not be negative")
+        self.phase_call_limits = {"discovery": max_discovery_calls, "branch": max_branch_calls}
         self.output_dir = Path(output_dir)
         self.base_url = base_url.rstrip("/")
         self.queue = AgentTaskQueue(db_path)
@@ -312,7 +321,8 @@ class AgentWorker:
                     recon = await self._cached_recon(task, output_dir)
                 if recon is None:
                     kwargs = {"timeout_seconds": self.recon_timeout,
-                              "feedback": feedback, "budget": budget}
+                              "feedback": feedback, "budget": budget,
+                              "phase_call_limits": self.phase_call_limits}
                     if verified_branches:
                         kwargs["verified_branches"] = verified_branches
                     if resume_discovery:
@@ -346,12 +356,12 @@ class AgentWorker:
                     print("[worker]   计划门禁未通过，重新核实结构计划", flush=True)
                 continue
             except ReconError as exc:
+                status = ("recon_budget_exceeded" if isinstance(exc, ReconBudgetExceeded)
+                          else "recon_phase_limit" if isinstance(exc, ReconPhaseLimitExceeded)
+                          else "recon_failed")
                 attempts.append({**getattr(exc, "diagnostics", {}), "attempt": attempt + 1,
-                                 "status": ("recon_budget_exceeded" if isinstance(exc, ReconBudgetExceeded)
-                                            else "recon_failed")})
-                self._save_recon_audit(output_dir, attempts,
-                                      "recon_budget_exceeded" if isinstance(exc, ReconBudgetExceeded)
-                                      else "recon_failed",
+                                 "status": status})
+                self._save_recon_audit(output_dir, attempts, status,
                                       usage_unknown=getattr(exc, "usage_unknown", True))
                 raise
             (attempt_dir / "plan.json").write_text(
@@ -636,6 +646,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="单学院侦察累计 Token 超过此值时告警（不中断）；0 关闭")
     p.add_argument("--recon-alert-calls", type=int, default=DEFAULT_RECON_ALERT_CALLS,
                    help="单学院侦察累计模型请求超过此值时告警（不中断）；0 关闭")
+    p.add_argument("--max-discovery-calls", type=int, default=DEFAULT_MAX_DISCOVERY_CALLS,
+                   help="入口发现阶段单次会话的模型请求上限，超过即停止该学院；0 关闭")
+    p.add_argument("--max-branch-calls", type=int, default=DEFAULT_MAX_BRANCH_CALLS,
+                   help="单个名录分支验证会话的模型请求上限，超过即停止该学院；0 关闭")
     p.add_argument("--min-free-memory-mb", type=float, default=DEFAULT_MIN_FREE_MEMORY_MB,
                    help="可用内存低于此值时暂缓接新单（已有学院在跑时才生效）；0 关闭")
     p.add_argument("--once", action="store_true", help="处理一个工单后退出")
@@ -674,6 +688,8 @@ def main() -> None:
         recon_alert_tokens=args.recon_alert_tokens,
         recon_alert_calls=args.recon_alert_calls,
         min_free_memory_mb=args.min_free_memory_mb,
+        max_discovery_calls=args.max_discovery_calls,
+        max_branch_calls=args.max_branch_calls,
     )
     try:
         asyncio.run(worker.run_forever(once=args.once))
