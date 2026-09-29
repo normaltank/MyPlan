@@ -94,4 +94,5 @@ uv run --no-project --with-requirements requirements.lock --python 3.12 python -
 - [服务器端 Agent 运行时接入计划](docs/superpowers/plans/2026-09-24-server-agent-runtime.md)
 - 审计记录：[docs/audits/](docs/audits/)
 - [CHANGELOG.md](CHANGELOG.md)：按日期的变更记录
+- [审阅待办](docs/review-backlog.md)：尚未完成的改进项及顺序
 - 历史：[2026-09-29 清理清单](docs/cleanup-2026-09-29.md)、[2026-09-22 数据资产快照](docs/history/2026-09-22-data-assets.md)
