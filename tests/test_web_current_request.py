@@ -211,8 +211,8 @@ async def test_history_is_explicit_and_return_to_new_request_clears_old_results(
             assert await page.locator('#subtaskList > div').count() == 11
             assert '待复核' in await page.locator('#taskBadge').inner_text()
             assert await page.locator('#downloadBtn').is_hidden()
-            assert 'bg-amber-50' in await page.locator('#resultStatusCard').get_attribute('class')
-            assert 'fa-circle-exclamation' in await page.locator('#resultStatusIcon').get_attribute('class')
+            assert await page.locator('#resultStatusCard').get_attribute('data-tone') == 'warn'
+            assert await page.locator('#resultStatusIcon use').get_attribute('href') == '#i-alert'
             assert '历史' in await page.locator('#requestContext').inner_text()
             await page.locator('#newRequestBtn').click()
             assert await page.locator('#subtaskCardBox').is_hidden()
