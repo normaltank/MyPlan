@@ -1,4 +1,8 @@
-﻿param()
+﻿param(
+    # Stop this project's worker and Web processes first, then start fresh
+    # (needed after code updates; used by 重启本地服务.bat).
+    [switch]$Restart
+)
 
 $ErrorActionPreference = 'Stop'
 $securityModule = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
@@ -26,6 +30,28 @@ function Test-LocalPort([int]$Port) {
     }
 }
 
+function Stop-ProjectServices {
+    $targets = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'python.exe' -and
+        $_.CommandLine -like "*$python*" -and
+        ($_.CommandLine -like '*-m server.agent_worker*' -or $_.CommandLine -like '*-m server.start_server*')
+    })
+    if ($targets.Count -eq 0) {
+        Write-Host '没有找到正在运行的本项目接单进程或网页进程。'
+    }
+    foreach ($process in $targets) {
+        Write-Host "停止旧进程 PID $($process.ProcessId)：$($process.CommandLine)"
+        # /T also ends the interpreter child that a venv python.exe launcher starts.
+        & taskkill.exe /PID $process.ProcessId /T /F | Out-Null
+    }
+    for ($attempt = 0; $attempt -lt 20 -and (Test-LocalPort 8000); $attempt++) {
+        Start-Sleep -Milliseconds 500
+    }
+    if (Test-LocalPort 8000) {
+        throw '8000 端口仍被占用，可能是其他程序或旧窗口启动的网页服务。请关闭它后再双击重启。'
+    }
+}
+
 function Set-WorkerKey([string]$CredentialPath) {
     if (-not [string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY)) { return }
     if (Test-Path -LiteralPath $CredentialPath) {
@@ -50,7 +76,10 @@ function Set-WorkerKey([string]$CredentialPath) {
 }
 
 Push-Location $projectRoot
+$transcript = Join-Path $runtimeDir 'launcher.log'
+try { Start-Transcript -LiteralPath $transcript -Force | Out-Null } catch { $transcript = $null }
 try {
+    if ($Restart) { Stop-ProjectServices }
     $workerOnline = (& $python -c "from server.agent_queue import agent_queue; print('1' if agent_queue.get_worker_status()['online'] else '0')") -eq '1'
     $workerProcesses = @(Get-CimInstance Win32_Process | Where-Object {
         $_.Name -eq 'python.exe' -and
@@ -102,7 +131,10 @@ try {
     }
 
     if (Test-LocalPort 8000) {
-        Write-Host '网页服务已在 http://127.0.0.1:8000 运行，不重复启动。'
+        Write-Host '网页服务已在 http://127.0.0.1:8000 运行，不重复启动；已为你打开网页。'
+        Write-Host '更新代码后需要重启才会生效：请双击「重启本地服务.bat」。'
+        Start-Process 'http://127.0.0.1:8000'
+        Read-Host '按回车键关闭此窗口' | Out-Null
     } else {
         Write-Host '正在启动网页服务：http://127.0.0.1:8000'
         & $python -m server.start_server
@@ -110,4 +142,5 @@ try {
     }
 } finally {
     Pop-Location
+    if ($transcript) { try { Stop-Transcript | Out-Null } catch { } }
 }

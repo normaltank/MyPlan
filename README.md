@@ -114,7 +114,7 @@
 ```powershell
 .runtime/worker-venv/Scripts/python.exe -m server.start_server
 ```
-Windows 本机也可双击 `双击启动局域网服务.bat`。它会检查后台接单心跳，缺少在线消费者时启动常驻 `server.agent_worker`，然后启动网页；已在线的消费者或已监听的网页不会重复启动。首次启动接单服务时，窗口会要求输入 DeepSeek API Key（输入不回显），并用当前 Windows 账号加密保存在本机 `.runtime/deepseek-api-key.dpapi`；此文件不能复制到其他账号或服务器当作凭据。当前账号后续双击无需重输。worker 日志在 `.runtime/local-worker.out.log` 和 `.runtime/local-worker.err.log`。网页默认监听 `http://127.0.0.1:8000`。
+Windows 本机也可双击 `双击启动局域网服务.bat`。它会检查后台接单心跳，缺少在线消费者时启动常驻 `server.agent_worker`，然后启动网页；已在线的消费者或已监听的网页不会重复启动。两者都已在运行时，窗口会打开网页并提示后等待回车，不会一闪而过。**更新代码后请双击 `重启本地服务.bat`**：它只结束本项目虚拟环境里的接单进程与网页进程（含子进程），再按同样流程重新启动；旧的网页窗口会显示已退出，直接关闭即可。每次启动的过程记录在 `.runtime/launcher.log`。首次启动接单服务时，窗口会要求输入 DeepSeek API Key（输入不回显），并用当前 Windows 账号加密保存在本机 `.runtime/deepseek-api-key.dpapi`；此文件不能复制到其他账号或服务器当作凭据。当前账号后续双击无需重输。worker 日志在 `.runtime/local-worker.out.log` 和 `.runtime/local-worker.err.log`。网页默认监听 `http://127.0.0.1:8000`。
 
 ### 员工登录与工单归属
 
