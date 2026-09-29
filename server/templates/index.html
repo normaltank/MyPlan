@@ -28,7 +28,8 @@
         .account-panel hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
 
         /* 布局 */
-        .container { max-width: 1240px; margin: 0 auto; padding: 20px; display: grid; gap: 20px; }
+        /* minmax(0, 1fr)：列宽不被内容最小宽度撑开，宽表格在自己的框内滚动 */
+        .container { max-width: 1240px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
         .workspace { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; align-items: start; }
         .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .card-head h2 { font-size: 16px; font-weight: 700; }
@@ -139,7 +140,7 @@
         .footer { max-width: 1240px; margin: 0 auto; padding: 4px 20px 28px; color: var(--muted); font-size: 12px; text-align: center; }
 
         @media (max-width: 1023px) {
-            .workspace { grid-template-columns: 1fr; }
+            .workspace { grid-template-columns: minmax(0, 1fr); }
             .admin-form { grid-template-columns: 1fr 1fr; }
         }
         @media (max-width: 640px) {
@@ -609,6 +610,19 @@
         }
         setInterval(fetchQueueStats, 3000);
         fetchQueueStats();
+
+        // 账号菜单：点页面其他位置或按 Esc 收起
+        document.addEventListener('click', event => {
+            const menu = document.querySelector('.account');
+            if (menu.open && !menu.contains(event.target)) menu.open = false;
+        });
+        document.addEventListener('keydown', event => {
+            const menu = document.querySelector('.account');
+            if (event.key === 'Escape' && menu.open) {
+                menu.open = false;
+                menu.querySelector('summary').focus();
+            }
+        });
 
         function switchTab(mode) {
             const single = mode === 'single';

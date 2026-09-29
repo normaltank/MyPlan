@@ -268,7 +268,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     name_js = json.dumps(name_decision_url).replace('<', '\\u003c')
     retry_js = json.dumps(retry_url).replace('<', '\\u003c')
     csrf_js = json.dumps(csrf_token).replace('<', '\\u003c')
-    footer = ('<p><a href="' + escape(return_url, quote=True) + '">返回采集平台</a></p>')
+    footer = ''
     if retry_url:
         footer += ('<button id="retry-review" type="button">复核完成，重新采集此工单</button>'
                    '<p id="retry-status" role="status"></p>')
@@ -278,6 +278,10 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             '<p class="back"><a href="' + escape(return_url, quote=True) + '">← 返回采集平台</a></p>'
             "<h1>人工复核</h1><p class=\"intro\">对照原图或名录页，确认或更正。决定仅对完全相同的证据生效。</p>"
             + body + footer + "<script>const reviewCsrf=" + csrf_js + ";"
+            # Show the server's own message, not its raw JSON body.
+            "async function failure(response){const text=await response.text();"
+            "try{const detail=JSON.parse(text).detail;if(typeof detail==='string')return new Error(detail);}catch(_){}"
+            "return new Error(text||('HTTP '+response.status));}"
             "document.querySelectorAll('.name-card').forEach(card=>{"
             "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
             "const status=card.querySelector('.status');"
@@ -285,7 +289,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "try{const response=await fetch(" + name_js + ",{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
             "body:JSON.stringify({id:card.dataset.id,verdict,verified_name})});"
-            "if(!response.ok)throw new Error(await response.text());"
+            "if(!response.ok)throw await failure(response);"
             "status.textContent=verdict==='person'?'已确认为教师':'已标记为不是教师姓名';}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
             "document.querySelectorAll('.card:not(.email-card):not(.name-card)').forEach(card=>{"
@@ -293,7 +297,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "const verified_text=card.querySelector('textarea').value;"
             "try{const response=await fetch(" + decision_js + ",{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
             "body:JSON.stringify({id:card.dataset.id,verified_text})});"
-            "if(!response.ok)throw new Error(await response.text());status.textContent='已保存复核决定';}"
+            "if(!response.ok)throw await failure(response);status.textContent='已保存复核决定';}"
             "catch(error){status.textContent='保存失败：'+error.message;}}});"
             "document.querySelectorAll('.email-card').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
@@ -301,12 +305,12 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "try{const response=await fetch(" + email_js + ",{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
             "body:JSON.stringify({id:card.dataset.id,selected_email})});"
-            "if(!response.ok)throw new Error(await response.text());status.textContent='已保存邮箱选择';}"
+            "if(!response.ok)throw await failure(response);status.textContent='已保存邮箱选择';}"
             "catch(error){status.textContent='保存失败：'+error.message;}}});"
             "const retry=document.getElementById('retry-review');if(retry)retry.onclick=async()=>{"
             "const status=document.getElementById('retry-status');retry.disabled=true;"
             "try{const response=await fetch(" + retry_js + ",{method:'POST',headers:{'X-CSRF-Token':reviewCsrf}});"
-            "if(!response.ok)throw new Error(await response.text());status.textContent='已重新入队，请返回平台查看进度';}"
+            "if(!response.ok)throw await failure(response);status.textContent='已重新入队，请返回平台查看进度';}"
             "catch(error){retry.disabled=false;status.textContent='未能重试：'+error.message;}};"
             "</script></html>")
 
