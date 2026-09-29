@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import re
@@ -542,7 +543,7 @@ async def get_batch_status(batch_id: str, request: Request = None):
     running = next((task for task in status["subtasks"] if task["status"] == "running"), None)
     if running:
         status["current_step"] = running["current_step"]
-    univ_files = export_batch_by_university(batch_id)
+    univ_files = await asyncio.to_thread(export_batch_by_university, batch_id)
     status["university_files"] = univ_files
     if univ_files and len(univ_files) == len(status["delivery_scopes"]):
         status["download_url"] = univ_files[0]["download_url"]
@@ -597,8 +598,11 @@ async def renew_task_lease(task_id: str, req: LeaseRenewRequest):
 
 @app.post("/api/task/{task_id}/sync")
 async def sync_task(task_id: str, req: TaskSyncRequest):
+    # Database writes and workbook generation run off the event loop so one
+    # sync cannot stall the page, lease renewals or other syncs.
     try:
-        task = agent_queue.sync_task_result(
+        task = await asyncio.to_thread(
+            agent_queue.sync_task_result,
             task_id=task_id,
             records=req.records,
             stats=req.stats,
@@ -615,7 +619,7 @@ async def sync_task(task_id: str, req: TaskSyncRequest):
         raise HTTPException(status_code=404, detail="Task not found")
 
     from server.university_delivery import publish_delivery
-    delivery = publish_delivery(agent_queue, task.batch_id, task.school, OUTPUT_DIR)
+    delivery = await asyncio.to_thread(publish_delivery, agent_queue, task.batch_id, task.school, OUTPUT_DIR)
     if task.mode == "single" and delivery.get("download_url"):
         with agent_queue._connect() as con:
             con.execute("UPDATE tasks SET download_url=? WHERE task_id=?", (delivery["download_url"], task_id))
@@ -623,6 +627,7 @@ async def sync_task(task_id: str, req: TaskSyncRequest):
     return {"status": "synced", "task": task.to_dict(),
             "delivery_scope": delivery["delivery_scope"],
             "university_excel": delivery.get("university_excel"),
+            "university_download_url": delivery.get("download_url"),
             "delivery_version": delivery.get("version"),
             "current_snapshot_state": delivery.get("current_snapshot_state"),
             "current_identity_conflicts": delivery.get("current_identity_conflicts", [])}

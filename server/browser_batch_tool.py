@@ -922,47 +922,109 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     return report
 
 
+LEASE_SECONDS = 300
+# A transient renewal failure (busy database, Web restart, timeout) is retried
+# at this pace until the stored lease would actually have lapsed.
+_TRANSIENT_RENEW_RETRY_SECONDS = 10.0
+
+LeaseRenewer = Callable[[], Awaitable[bool]]
+
+
+def http_lease_renewer(client: Any, task_id: str, worker_id: str, lease_token: str,
+                       lease_seconds: float = LEASE_SECONDS) -> LeaseRenewer:
+    """Renew through the local Web API (IDE/CLI path).
+
+    Returns True when renewed and False when ownership is definitively gone
+    (409/404 or another client error). Server errors and connection failures
+    raise, so the caller retries them instead of abandoning a valid lease.
+    """
+    async def renew() -> bool:
+        response = await client.post(
+            f"/api/queue/renew/{quote(task_id, safe='')}",
+            json={"worker_id": worker_id, "lease_seconds": lease_seconds, "lease_token": lease_token},
+        )
+        if response.status_code == 200:
+            return True
+        if 400 <= response.status_code < 500 and response.status_code not in {408, 429}:
+            return False
+        raise RuntimeError(f"HTTP {response.status_code}")
+    return renew
+
+
+async def _keep_lease(renew: LeaseRenewer, state: dict[str, Any], *,
+                      interval_seconds: float, lease_seconds: float) -> None:
+    retry_seconds = min(interval_seconds, _TRANSIENT_RENEW_RETRY_SECONDS)
+    delay = interval_seconds
+    while True:
+        await asyncio.sleep(delay)
+        try:
+            renewed = await renew()
+        except Exception as exc:  # transient: keep trying while the stored lease is still valid
+            state["last_transient_error"] = f"{type(exc).__name__}: {exc}"
+            if time.monotonic() - state["last_success"] >= lease_seconds:
+                state["error"] = f"renewal failed until lease expiry: {state['last_transient_error']}"
+                return
+            delay = retry_seconds
+            continue
+        if not renewed:
+            state["error"] = "lease no longer owned by worker"
+            return
+        state["last_success"] = time.monotonic()
+        delay = interval_seconds
+
+
+@contextlib.asynccontextmanager
+async def lease_keepalive(renew: LeaseRenewer, *, interval_seconds: float = 60,
+                          lease_seconds: float = LEASE_SECONDS):
+    """Keep a claimed task's lease alive for the duration of the block.
+
+    Yields a state dict; ``state["error"]`` is set once ownership is lost or
+    renewal kept failing until the lease lapsed. A single transient failure no
+    longer stops the heartbeat.
+    """
+    if interval_seconds <= 0 or lease_seconds <= 0:
+        raise ValueError("positive renewal interval and lease length required")
+    state: dict[str, Any] = {"error": None, "last_success": time.monotonic()}
+    keeper = asyncio.create_task(_keep_lease(renew, state, interval_seconds=interval_seconds,
+                                             lease_seconds=lease_seconds))
+    try:
+        yield state
+    finally:
+        keeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keeper
+
+
 async def run_with_lease(harvest: Callable[[], Awaitable[dict[str, Any]]], task_id: str,
-                         worker_id: str, lease_token: str, *, client: Any,
-                         interval_seconds: float = 60) -> dict[str, Any]:
-    """Renew an owned local queue task while a browser batch is running."""
+                         worker_id: str, lease_token: str, *, client: Any = None,
+                         renew: LeaseRenewer | None = None,
+                         interval_seconds: float = 60,
+                         lease_seconds: float = LEASE_SECONDS) -> dict[str, Any]:
+    """Renew an owned local queue task while a browser batch is running.
+
+    ``renew`` renews ownership directly (the server worker uses the queue
+    database). Without it, ``client`` renews through the local Web API.
+    """
     if not task_id or not worker_id or not lease_token or interval_seconds <= 0:
         raise ValueError("task_id, worker_id, lease_token and positive interval required")
-    renewal_error: str | None = None
+    if renew is None:
+        if client is None:
+            raise ValueError("a lease renewer or local API client is required")
+        renew = http_lease_renewer(client, task_id, worker_id, lease_token, lease_seconds)
 
-    async def heartbeat() -> None:
-        nonlocal renewal_error
-        while True:
-            await asyncio.sleep(interval_seconds)
-            try:
-                response = await client.post(
-                    f"/api/queue/renew/{quote(task_id, safe='')}",
-                    json={"worker_id": worker_id, "lease_seconds": 300, "lease_token": lease_token},
-                )
-                if response.status_code != 200:
-                    renewal_error = f"HTTP {response.status_code}"
-                    return
-            except Exception as exc:
-                renewal_error = f"{type(exc).__name__}: {exc}"
-                return
-
-    renewal_task = asyncio.create_task(heartbeat())
-    try:
+    async with lease_keepalive(renew, interval_seconds=interval_seconds,
+                               lease_seconds=lease_seconds) as lease:
         report = await harvest()
-    finally:
-        renewal_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await renewal_task
+    renewal_error: str | None = lease["error"]
     if renewal_error is None:
+        # Confirm ownership before the caller syncs. A transient failure here is
+        # not a loss: the stored lease is still valid and sync re-checks it atomically.
         try:
-            response = await client.post(
-                f"/api/queue/renew/{quote(task_id, safe='')}",
-                json={"worker_id": worker_id, "lease_seconds": 300, "lease_token": lease_token},
-            )
-            if response.status_code != 200:
-                renewal_error = f"HTTP {response.status_code}"
+            if not await renew():
+                renewal_error = "lease no longer owned by worker"
         except Exception as exc:
-            renewal_error = f"{type(exc).__name__}: {exc}"
+            if time.monotonic() - lease["last_success"] >= lease_seconds:
+                renewal_error = f"{type(exc).__name__}: {exc}"
     if renewal_error is not None:
         report["status"] = "needs_agent_review"
         report["delivery_ready"] = False

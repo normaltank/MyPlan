@@ -94,8 +94,14 @@ async def sync_report(task_id: str, report_path: str | Path, worker_id: str,
             task = queue.get_task(task_id)
             if task is None or task.status != "completed":
                 raise ValueError("sync did not persist a completed college snapshot")
-            delivery = publish_delivery(queue, task.batch_id, school, root)
             result = response.json()
+            if "delivery_scope" in result:
+                # The Web sync endpoint already published this university; building
+                # the same workbooks again here only lengthened the lock window.
+                result.setdefault("university_excel", None)
+                result.setdefault("current_identity_conflicts", [])
+                return result
+            delivery = await asyncio.to_thread(publish_delivery, queue, task.batch_id, school, root)
             result.update({"university_excel": delivery.get("university_excel"),
                            "delivery_scope": delivery["delivery_scope"],
                            "delivery_version": delivery.get("version"),

@@ -11,7 +11,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 from zoneinfo import ZoneInfo
 
 _HERE = Path(__file__).resolve().parent
@@ -80,6 +80,15 @@ def _value(record: dict[str, Any], en: str, zh: str) -> str:
     return "" if value is None else str(value)
 
 
+def _site_type_registry():
+    """Import the registry under both the package and the legacy flat layout."""
+    try:
+        from .site_type_registry import SiteTypeRegistry
+    except ImportError:  # imported as top-level ``agent_queue`` from server/
+        from site_type_registry import SiteTypeRegistry
+    return SiteTypeRegistry
+
+
 class AgentTaskQueue:
     def __init__(self, db_path: str | Path | None = None,
                  legacy_json_path: str | Path | None = None) -> None:
@@ -93,10 +102,11 @@ class AgentTaskQueue:
         if source is not None:
             self._migrate_legacy(Path(source))
         self._load_views()
-        self._reconcile_failure_types_best_effort()
+        # Failure types are reconciled when a task fails and before statistics
+        # are read. Constructing a queue must not create files beside the DB.
 
     def _reconcile_failure_types(self) -> None:
-        from .site_type_registry import SiteTypeRegistry
+        SiteTypeRegistry = _site_type_registry()
         with self._connect() as con:
             rows = con.execute("""SELECT task_id,school,college,url,error,stats_json,finished_at
                 FROM tasks WHERE task_type='harvest' AND status='failed'""").fetchall()
@@ -106,11 +116,11 @@ class AgentTaskQueue:
     def _reconcile_failure_types_best_effort(self) -> None:
         try:
             self._reconcile_failure_types()
-        except (OSError, sqlite3.Error, ValueError) as exc:
+        except (OSError, sqlite3.Error, ValueError, ImportError) as exc:
             _LOG.warning("Failure type registry update pending for %s: %s", self.db_path, exc)
 
     def get_failure_type_stats(self) -> dict:
-        from .site_type_registry import SiteTypeRegistry
+        SiteTypeRegistry = _site_type_registry()
         self._reconcile_failure_types()
         return SiteTypeRegistry(self.db_path.parent / "outputs" / "site-types.sqlite3").failure_counts()
 
@@ -286,10 +296,13 @@ class AgentTaskQueue:
 
     def claim_task(self, worker_id: str, lease_seconds: float = 300,
                    *, task_id: str | None = None, claimant: str | None = None,
-                   task_type: str | None = None) -> AgentTask | None:
+                   task_type: str | None = None,
+                   exclude_task_ids: Iterable[str] = ()) -> AgentTask | None:
         """Atomically claim a queued task or reclaim an expired lease.
 
         ``claimant=`` accepts the original Web API's positional task ID.
+        ``exclude_task_ids`` lets a worker skip tasks it is still running, so a
+        lapsed lease never makes one process run the same college twice.
         """
         if claimant is not None:
             task_id, worker_id = worker_id, claimant
@@ -307,6 +320,10 @@ class AgentTaskQueue:
             if task_type is not None:
                 query += " AND task_type=?"
                 args.append(task_type)
+            excluded = sorted(set(exclude_task_ids))
+            if excluded:
+                query += " AND task_id NOT IN (" + ",".join("?" for _ in excluded) + ")"
+                args.extend(excluded)
             row = con.execute(query + " ORDER BY created_at,task_id LIMIT 1", args).fetchone()
             if row is None:
                 return None

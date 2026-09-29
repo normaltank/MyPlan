@@ -7,8 +7,10 @@
 设计要点（每一条都是踩过的坑）：
 
 1. **租约只有 300 秒，而侦察实测 28.7s（简单站）～187s（复杂站）。**
-   故心跳必须**在侦察开始前**就启动——`run_with_lease()` 复用现成实现
-   （`server/browser_batch_tool.py:499`），它原本只覆盖采集段。
+   故心跳必须**在侦察开始前**就启动，并一直覆盖到同步回后台结束。
+   worker 直接在 tasks.db 上续租（不经 Web 服务）：Web 重启或数据库短暂繁忙
+   只会让心跳重试，不会中断；只有确认失去租约才停止。
+   同一进程绝不重新认领自己仍在运行的工单。
 
 2. **`harness.run()` 是同步阻塞调用**，若直接在事件循环里跑，60 秒心跳一次都不会触发，
    300 秒后租约过期 → 第二个 worker 合法认领同一学院 → 两台 Chromium 同时打同一站点。
@@ -74,7 +76,11 @@ class AgentWorker:
         max_recon_repairs: int = 2,
         max_recon_calls: int = DEFAULT_MAX_RECON_CALLS,
         max_recon_tokens: int = DEFAULT_MAX_RECON_TOKENS,
+        lease_renew_seconds: float = 60,
     ) -> None:
+        if lease_renew_seconds <= 0:
+            raise ValueError("lease_renew_seconds must be positive")
+        self.lease_renew_seconds = lease_renew_seconds
         self.output_dir = Path(output_dir)
         self.base_url = base_url.rstrip("/")
         self.queue = AgentTaskQueue(db_path)
@@ -98,6 +104,7 @@ class AgentWorker:
         print(f"[worker] 输出目录 {self.output_dir} | 后台 {self.base_url}", flush=True)
         print("[worker] 全量并行派发：每学院独立 Harness 会话，无项目级并发上限", flush=True)
         active: set[asyncio.Task[None]] = set()
+        running_ids: set[str] = set()  # this process's colleges; never reclaimed here
         presence_id = uuid.uuid4().hex
         last_heartbeat = float('-inf')
         try:
@@ -105,16 +112,23 @@ class AgentWorker:
                 if time.monotonic() - last_heartbeat >= 5:
                     self.queue.touch_worker(presence_id)
                     last_heartbeat = time.monotonic()
-                task = self.queue.claim_task("server-worker", task_type="harvest")
+                task = self.queue.claim_task("server-worker", task_type="harvest",
+                                             exclude_task_ids=running_ids)
                 if task is None:
                     await asyncio.sleep(0.2)
                     continue
                 if once:
                     await self._execute_task(task)
                     return
+                running_ids.add(task.task_id)
                 job = asyncio.create_task(self._execute_task(task), name=f"college-{task.task_id[:8]}")
                 active.add(job)
-                job.add_done_callback(active.discard)
+
+                def finished(done: asyncio.Task[None], task_id: str = task.task_id) -> None:
+                    active.discard(done)
+                    running_ids.discard(task_id)
+
+                job.add_done_callback(finished)
                 # Let each claimed college start immediately; no application-level cap.
                 await asyncio.sleep(0)
         finally:
@@ -145,31 +159,33 @@ class AgentWorker:
         task_output_dir = self.output_dir / "tasks" / task.task_id
         task_output_dir.mkdir(parents=True, exist_ok=True)
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
-            from server.browser_batch_tool import run_with_lease
+        from server.browser_batch_tool import LEASE_SECONDS, lease_keepalive, run_with_lease
 
-            async def harvest() -> dict[str, Any]:
-                return await self._harvest_with_repair(task, task_output_dir)
+        renew = self._lease_renewer(task)
 
-            try:
-                report = await asyncio.wait_for(
-                    run_with_lease(
-                        harvest,
-                        task_id=task.task_id,
-                        worker_id=task.worker_id or "server-worker",
-                        lease_token=task.lease_token or "",
-                        client=client,
-                    ),
-                    timeout=self.max_task_seconds,
-                )
-            except asyncio.TimeoutError:
-                self._save_recon_audit(task_output_dir, None, "task_timeout", usage_unknown=True)
-                await self._mark_failed(
-                    task, f"超过最大运行时长 {self.max_task_seconds:.0f}s，判定卡死")
-                return
-            except (ReconError, PlanHygieneError) as exc:
-                await self._mark_failed(task, f"侦察失败：{exc}")
-                return
+        async def harvest() -> dict[str, Any]:
+            return await self._harvest_with_repair(task, task_output_dir)
+
+        try:
+            report = await asyncio.wait_for(
+                run_with_lease(
+                    harvest,
+                    task_id=task.task_id,
+                    worker_id=task.worker_id or "server-worker",
+                    lease_token=task.lease_token or "",
+                    renew=renew,
+                    interval_seconds=self.lease_renew_seconds,
+                ),
+                timeout=self.max_task_seconds,
+            )
+        except asyncio.TimeoutError:
+            self._save_recon_audit(task_output_dir, None, "task_timeout", usage_unknown=True)
+            await self._mark_failed(
+                task, f"超过最大运行时长 {self.max_task_seconds:.0f}s，判定卡死")
+            return
+        except (ReconError, PlanHygieneError) as exc:
+            await self._mark_failed(task, f"侦察失败：{exc}")
+            return
 
         elapsed = time.monotonic() - started
         ready = bool(report.get("delivery_ready"))
@@ -188,10 +204,28 @@ class AgentWorker:
 
         # Same-university reports may finish together. Serialize workbook writes
         # while keeping every college's recon and harvest fully concurrent.
+        # The lease stays renewed while waiting for the lock and during sync.
         lock = self._delivery_locks.setdefault(task.school, asyncio.Lock())
-        async with lock:
-            if await self._sync(task, report):
-                print(f"[worker]   学院成果已同步 {tag}（{elapsed:.0f}s）", flush=True)
+        async with lease_keepalive(renew, interval_seconds=self.lease_renew_seconds,
+                                   lease_seconds=LEASE_SECONDS) as lease:
+            async with lock:
+                if lease["error"]:
+                    print(f"[worker]   ⚠ {tag} 等待同步时失去租约（{lease['error']}），"
+                          "不提交结果；租约到期后将按断点重新接单", flush=True)
+                    return
+                if await self._sync(task, report):
+                    print(f"[worker]   学院成果已同步 {tag}（{elapsed:.0f}s）", flush=True)
+
+    def _lease_renewer(self, task: Any):
+        """Renew this task's lease in tasks.db without depending on the Web process."""
+        from server.browser_batch_tool import LEASE_SECONDS
+
+        async def renew() -> bool:
+            return await asyncio.to_thread(
+                self.queue.renew_lease, task.task_id, task.worker_id or "server-worker",
+                LEASE_SECONDS, lease_token=task.lease_token)
+
+        return renew
 
     async def _harvest_with_repair(self, task: Any, output_dir: Path) -> dict[str, Any]:
         feedback = None

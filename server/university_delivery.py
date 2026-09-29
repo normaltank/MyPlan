@@ -1,9 +1,11 @@
 """Scoped, immutable university deliveries and latest completed college snapshots."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
+import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -146,6 +148,32 @@ def _publish_current(exporter, root, safe_school, school, current):
             "current_snapshot_version": fingerprint}
 
 
+PUBLICATION_LOCK_TIMEOUT_SECONDS = 600
+
+
+@contextlib.contextmanager
+def _publication_lock(root: Path, school: str):
+    """Serialize one university's publication across threads and processes.
+
+    Publication used to hold a write transaction on tasks.db while building
+    workbooks, blocking claims, lease renewals and syncs for every college.
+    A small per-university lock file keeps publications ordered instead;
+    tasks.db is only read in a consistent snapshot and written briefly.
+    """
+    directory = root / ".publish-locks"
+    directory.mkdir(parents=True, exist_ok=True)
+    name = hashlib.sha256(school.encode("utf-8")).hexdigest()[:16]
+    lock = sqlite3.connect(directory / f"{name}.sqlite3",
+                           timeout=PUBLICATION_LOCK_TIMEOUT_SECONDS, isolation_level=None)
+    try:
+        lock.execute("BEGIN IMMEDIATE")
+        yield
+    finally:
+        with contextlib.suppress(sqlite3.Error):
+            lock.execute("ROLLBACK")
+        lock.close()
+
+
 def publish_delivery(queue, batch_id, school, output_root):
     """Serialize snapshot selection and file publication across queue processes."""
     from server.autonomous_agent import AutonomousBrowserAgent
@@ -153,14 +181,16 @@ def publish_delivery(queue, batch_id, school, output_root):
     root = Path(output_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     safe_school = re.sub(r'[\\/:*?"<>|]', "", school).strip() or "高校"
-    with queue._connect() as con:
-        con.execute("PRAGMA busy_timeout=30000")
-        con.execute("BEGIN IMMEDIATE")
-        scope = delivery_scope(con, batch_id, school)
-        if scope["state"] != "ready":
-            return {"delivery_scope": scope, "university_excel": None}
-        snapshot = university_snapshot(con, school, scope["task_ids"])
-        current = university_snapshot(con, school)
+    with _publication_lock(root, school):
+        # One read snapshot (WAL): scope and both university snapshots agree,
+        # and no write lock is held while workbooks are generated below.
+        with queue._connect() as con:
+            con.execute("BEGIN")
+            scope = delivery_scope(con, batch_id, school)
+            if scope["state"] != "ready":
+                return {"delivery_scope": scope, "university_excel": None}
+            snapshot = university_snapshot(con, school, scope["task_ids"])
+            current = university_snapshot(con, school)
         exporter = AutonomousBrowserAgent()
         if any(c["requires_review"] for c in snapshot["identity_conflicts"]):
             scope["state"] = "blocked"
@@ -200,8 +230,9 @@ def publish_delivery(queue, batch_id, school, output_root):
                 **current_status,
                 "colleges_count": len(scope["target_colleges"]),
                 **{k: manifest[k] for k in ("total", "with_email", "no_email")}}
-        con.execute("""INSERT OR IGNORE INTO university_deliveries
-            (version,batch_id,school,manifest_json,created_at) VALUES (?,?,?,?,?)""",
-            (version, batch_id, school, json.dumps(info, ensure_ascii=False), time.time()))
+        with queue._connect() as con:
+            con.execute("""INSERT OR IGNORE INTO university_deliveries
+                (version,batch_id,school,manifest_json,created_at) VALUES (?,?,?,?,?)""",
+                (version, batch_id, school, json.dumps(info, ensure_ascii=False), time.time()))
         # Keep college downloads distinct; batch API exposes this immutable scoped URL.
         return info
