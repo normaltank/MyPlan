@@ -59,6 +59,11 @@ except ImportError:
         L1_AVAILABLE = False
 
 try:
+    from server.titles import TITLE_KEYWORDS, resolve_title
+except ImportError:
+    from titles import TITLE_KEYWORDS, resolve_title
+
+try:
     from server.detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer
     DETAIL_MECC_AVAILABLE = True
 except ImportError:
@@ -91,13 +96,6 @@ PRUNE_CLASSES = [
     'col_path', 'col_menu', 'breadcrumb', 'breadcrumbs', 'left_nav', 'nav_left'
 ]
 
-
-# Sort by length descending so that '副教授' matches before '教授'
-TITLE_KEYWORDS = sorted(
-    ['教授', '副教授', '讲师', '助理教授', '研究员', '副研究员', '助理研究员', '师资博士后', '名誉教授', '特聘教授', '讲座教授', '高级实验师', '实验师'],
-    key=len,
-    reverse=True
-)
 
 FREE_MAIL_DOMAINS = {
     "163.com", "126.com", "yeah.net", "qq.com", "foxmail.com", "gmail.com",
@@ -694,46 +692,7 @@ class FacultyProfileExtractor:
                 name = re.sub(r'\s+', '', h1.get_text(strip=True))
 
         # Title resolution: earliest non-overlapping keyword in header/bio
-        title = "教师"
-        header_text = full_bio[:400]
-        matches = []
-        for kw in TITLE_KEYWORDS:
-            pos = 0
-            while True:
-                idx = header_text.find(kw, pos)
-                if idx == -1:
-                    break
-                matches.append((idx, len(kw), kw))
-                pos = idx + 1
-
-        # Check English academic titles if no Chinese keyword found
-        if not matches:
-            en_kw_map = {
-                'associate professor': '副教授',
-                'assistant professor': '讲师',
-                'lecturer': '讲师',
-                'professor': '教授'
-            }
-            low_header = header_text.lower()
-            for en_kw, zh_t in en_kw_map.items():
-                pos = 0
-                while True:
-                    idx = low_header.find(en_kw, pos)
-                    if idx == -1:
-                        break
-                    matches.append((idx, len(en_kw), zh_t))
-                    pos = idx + 1
-
-        if matches:
-            matches.sort(key=lambda x: (x[0], -x[1]))
-            last_end = -1
-            non_overlapping = []
-            for pos, length, kw in matches:
-                if pos >= last_end:
-                    non_overlapping.append(kw)
-                    last_end = pos + length
-            if non_overlapping:
-                title = non_overlapping[0]
+        title = resolve_title(full_bio[:400])
 
         return FacultyProfile(
             name=name,
