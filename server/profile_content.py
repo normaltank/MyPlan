@@ -33,6 +33,24 @@ def _inline_hidden(node: Tag) -> bool:
             or opacity_hidden)
 
 
+# Elements that never render text; an inline display:none on them is not hidden content.
+_NON_RENDERING = {'script', 'style', 'noscript', 'template'}
+_MEDIA_TAGS = ['img', 'picture', 'svg', 'canvas', 'iframe', 'object', 'embed', 'video', 'audio']
+_MEANINGFUL = re.compile(r'[\u4e00-\u9fff@\d]')
+TRIVIAL_HIDDEN_CHARS = 16
+
+
+def trivial_hidden(node: Tag) -> bool:
+    """A hidden editor placeholder (e.g. 'invisible'): no media, a few Latin letters only.
+
+    Anything that could be a name, e-mail, number or Chinese text is not trivial
+    and still blocks, because hidden profile content may be a collapsed section.
+    """
+    text = node.get_text(' ', strip=True)
+    return (not node.find(_MEDIA_TAGS) and len(text) <= TRIVIAL_HIDDEN_CHARS
+            and not _MEANINGFUL.search(text))
+
+
 def scope_profile_html(html: str, selector: str, url: str, *, start_selector: str | None = None
                        ) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
     """Return a complete selected subtree copy, evidence, or a blocking issue."""
@@ -81,8 +99,16 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
             child.extract()
             if is_marker:
                 break
-    if any(_inline_hidden(item) for item in node.find_all(True)):
-        return fail('profile_content_selector_hidden')
+    placeholders = []
+    for item in node.find_all(True):
+        if item.name in _NON_RENDERING or any(item in found.descendants for found in placeholders):
+            continue
+        if _inline_hidden(item):
+            if not trivial_hidden(item):
+                return fail('profile_content_selector_hidden')
+            placeholders.append(item)
+    for item in placeholders:  # never captured: a reader does not see them
+        item.decompose()
     text_copy = BeautifulSoup(str(node), 'html.parser')
     for non_content in text_copy(['script', 'style', 'noscript', 'template']):
         non_content.decompose()
@@ -98,5 +124,6 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
                 'original_html_sha256': hashlib.sha256(html.encode('utf-8')).hexdigest(),
                 'selected_html_sha256': hashlib.sha256(selected.encode('utf-8')).hexdigest(),
                 'attribution_scope': 'verified_profile_container',
+                'hidden_placeholders_removed': len(placeholders),
                 'image_only_candidate': not has_text and has_media}
     return '<html><body>' + selected + '</body></html>', evidence, None

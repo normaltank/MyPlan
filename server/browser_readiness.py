@@ -11,6 +11,7 @@ class RequestTracker:
     navigation_observed: bool = False
     failures: int = 0
     failed_requests: list[tuple[str, str, int | None]] = field(default_factory=list)
+    document_response: Any = None  # latest main-frame navigation response
 
 
 def install_request_tracking(page: Any) -> RequestTracker:
@@ -43,14 +44,25 @@ def install_request_tracking(page: Any) -> RequestTracker:
             tracker.activity += 1
         tracker.pending.discard(request)
 
+    answered = set()  # requests already recorded with their HTTP error status
+
     def failed(request):
-        tracker.failures += 1
-        tracker.failed_requests.append((getattr(request, "url", ""),
-                                        getattr(request, "resource_type", ""), None))
+        # Chromium aborts a 404 subresource after its response arrives; that is
+        # one failure, already recorded with its status, not a second one.
+        if request not in answered:
+            tracker.failures += 1
+            tracker.failed_requests.append((getattr(request, "url", ""),
+                                            getattr(request, "resource_type", ""), None))
         finished(request)
 
     def response_received(response):
+        try:
+            if response.request.is_navigation_request() and response.frame == page.main_frame:
+                tracker.document_response = response
+        except Exception:
+            pass
         if response.status >= 400:
+            answered.add(response.request)
             tracker.failures += 1
             tracker.failed_requests.append((response.url, response.request.resource_type, response.status))
 

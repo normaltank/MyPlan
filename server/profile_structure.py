@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from typing import Any
+from urllib.parse import urlsplit
 
 
 _FACTS = """args => {
@@ -22,9 +23,14 @@ _FACTS = """args => {
   let kept=root?[...root.children]:[];
   if(args.start && startValid) kept=kept.slice(kept.indexOf(starts[0])+1);
   const retained=kept.flatMap(n=>[n,...n.querySelectorAll('*')]);
+  const media='img,picture,svg,canvas,iframe,object,embed,video,audio';
   const relevant=retained.filter(n=>!n.matches('script,style,noscript,template')
-    && ((n.textContent||'').trim() || n.matches('img,picture,svg,canvas,iframe,object,embed,video,audio')));
-  const hidden=relevant.filter(n=>!visible(n)).length;
+    && ((n.textContent||'').trim() || n.matches(media)));
+  // Same rule as profile_content.trivial_hidden: an editor placeholder such as
+  // 'invisible' is not hidden profile content; names, numbers, e-mails or Chinese are.
+  const trivial=n=>!n.matches(media) && !n.querySelector(media)
+    && (n.textContent||'').trim().length<=args.trivialChars && !/[\u4e00-\u9fff@\d]/.test(n.textContent||'');
+  const hidden=relevant.filter(n=>!visible(n) && !trivial(n)).length;
   const active=root?root.getAnimations({subtree:true}).filter(a=>
     a.playState==='running' && (a.effect?.target===root || retained.includes(a.effect?.target))).length:0;
   const ancestors=[];
@@ -43,14 +49,18 @@ _FACTS = """args => {
 }"""
 
 
-_EXTERNAL_IMAGES = """args => {
+_CONTENT_IMAGES = """args => {
   const root=document.querySelector(args.selector);
-  if(!root) return args.urls.map(()=>false);
-  return args.urls.map(url=>{
-    const images=[...document.images].filter(img=>img.currentSrc===url || img.src===url);
-    return images.length>0 && images.every(img=>!root.contains(img));
-  });
+  if(!root) return args.urls.map(()=>true);
+  return args.urls.map(url=>[...root.querySelectorAll('img')].some(img=>img.currentSrc===url || img.src===url));
 }"""
+
+# Requests that cannot change the text or images inside a profile container.
+_PRESENTATION_TYPES = {"font", "media", "manifest", "texttrack"}
+# A stylesheet or script the server answers 404/410 is missing for every reader,
+# so the page as rendered is the page as published. Any other failure may be
+# transient (and could change what is hidden), so it still blocks.
+_GONE = (404, 410)
 
 
 _EXTERNAL_REQUESTS = """args => {
@@ -111,6 +121,15 @@ async def resolve_equivalent_profile_selectors(
     return ordered[index] if isinstance(index, int) and 0 <= index < len(ordered) else None
 
 
+def _profile_text(html: str, selector: str, start_selector: str | None, url: str) -> str:
+    from bs4 import BeautifulSoup
+    from server.profile_content import scope_profile_html
+    scoped, evidence, issue = scope_profile_html(html, selector, url, start_selector=start_selector)
+    if issue or not evidence:
+        return ""
+    return " ".join(BeautifulSoup(scoped, "html.parser").get_text(" ", strip=True).split())
+
+
 async def verify_profile_container(page: Any, selector: str, start_selector: str | None = None,
                                    *, local_capture: dict[str, str] | None = None) -> dict:
     """Return compact facts; an optional Python-only sink retains the bound HTML.
@@ -141,9 +160,10 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         html = await page.content()
         _, first_evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
         if issue:
-            result['scope_issue'] = issue['status']
+            result['scope_issue'] = result['reason'] = issue['status']
             return result
-        args = {"selector": selector, "start": start_selector}
+        from server.profile_content import TRIVIAL_HIDDEN_CHARS
+        args = {"selector": selector, "start": start_selector, "trivialChars": TRIVIAL_HIDDEN_CHARS}
         first_facts = await page.evaluate(_FACTS, args)
         await asyncio.sleep(0.3)
         html = await page.content()
@@ -153,13 +173,36 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                                and first_evidence['selected_html_sha256'] == evidence['selected_html_sha256'])
         visibility_stable = first_facts == facts and not facts['active_animation_count']
         stable = bool(selected_stable and visibility_stable)
-        missing_images = [(url, kind, status) for url, kind, status in tracker.failed_requests
-                          if kind == 'image' and status in (404, 410)]
-        ignored = 0
-        if missing_images and facts['container_count'] == 1:
-            outside = await page.evaluate(_EXTERNAL_IMAGES,
-                                          {'selector': selector, 'urls': [url for url, _, _ in missing_images]})
-            ignored = sum(bool(value) for value in outside)
+        # A failed stylesheet, font or an image that is not inside the container
+        # (theme icons, CSS backgrounds) cannot change the captured profile.
+        failed = list(tracker.failed_requests)
+        presentation = [item for item in failed if item[1] in _PRESENTATION_TYPES
+                        or (item[1] == 'stylesheet' and item[2] in _GONE)]
+        failed_images = [item for item in failed if item[1] == 'image']
+        ignored = len(presentation)
+        if failed_images and facts['container_count'] == 1:
+            inside = await page.evaluate(_CONTENT_IMAGES,
+                                         {'selector': selector, 'urls': [url for url, _, _ in failed_images]})
+            ignored += sum(not value for value in inside)
+        # A failed script can only matter when the page builds the profile in the
+        # browser. When the container reads the same in the server's HTML as on
+        # screen, the profile is server-rendered and script failures do not block.
+        failed_scripts = [item for item in failed if item[1] == 'script' and item[2] in _GONE]
+        other_blocking = [item for item in failed if item not in presentation and item not in failed_scripts
+                          and item[1] != 'image']
+        server_rendered = False
+        if failed_scripts and not other_blocking and evidence and tracker.document_response is not None:
+            try:
+                raw = await tracker.document_response.text()
+                _, raw_evidence, raw_issue = scope_profile_html(raw, selector, page.url,
+                                                                start_selector=start_selector)
+                server_rendered = bool(not raw_issue and raw_evidence
+                                       and _profile_text(raw, selector, start_selector, page.url)
+                                       == _profile_text(html, selector, start_selector, page.url))
+            except Exception:
+                server_rendered = False
+            if server_rendered:
+                ignored += len(failed_scripts)
         pending_requests = [
             (getattr(request, 'url', ''), getattr(request, 'resource_type', ''))
             for request in tracker.pending
@@ -179,6 +222,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         result.update(container_count=facts["container_count"], container_visible=facts["container_visible"],
                       dom_stable=stable, network_idle=idle,
                       ignored_external_image_failures=ignored,
+                      server_rendered_content=server_rendered,
                       ignored_external_image_pending=ignored_pending,
                       blocking_pending_request_count=blocking_pending,
                       blocking_failed_request_count=blocking_failures,
@@ -192,6 +236,21 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             result['scope_issue'] = issue['status']
         result["confirmed"] = (facts["container_count"] == 1 and facts["container_visible"]
                                and facts["start_valid"] and not facts['hidden_content_count'] and stable and idle)
+        if not result["confirmed"]:
+            # Say what failed, so a scout does not keep trying other selectors
+            # for a page condition no selector can change.
+            result["reason"] = ("container_not_unique" if facts["container_count"] != 1
+                                else "container_hidden" if not facts["container_visible"]
+                                else "start_invalid" if not facts["start_valid"]
+                                else "hidden_content" if facts['hidden_content_count']
+                                else "dom_unstable" if not stable
+                                else "network_not_idle")
+            if result["reason"] == "network_not_idle":
+                blocking = [item for item in failed if item not in presentation
+                            and not (item in failed_scripts and server_rendered)]
+                result["blocking_requests"] = [
+                    {"type": kind, "status": status, "path": urlsplit(url).path[-80:]}
+                    for url, kind, status in blocking[:3]]
     except Exception as exc:
         result["confirmed"] = False
         result['error_type'] = type(exc).__name__
