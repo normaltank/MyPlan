@@ -77,6 +77,8 @@ async def capture_profiles(
     import hashlib
     import time
 
+    from server.site_limits import site_slot
+
     if concurrency < 1:
         raise ValueError("profile concurrency must be positive")
 
@@ -93,7 +95,9 @@ async def capture_profiles(
             if saved is not None and not scoped:
                 pages[url] = saved
                 return
-        async with semaphore:
+        # Per-college fan-out first, then the site-wide slot shared with every
+        # other college of the same university running in this process.
+        async with semaphore, site_slot(url):
             for attempt in range(3):
                 page = None
                 retryable = True

@@ -29,7 +29,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 import yaml
@@ -46,13 +46,26 @@ class ReconBudgetExceeded(ReconError):
 
 
 class ReconBudget:
-    """Count actual SDK usage across every phase and repair of one college."""
+    """Count actual SDK usage across every phase and repair of one college.
 
-    def __init__(self, *, max_calls: int, max_tokens: int) -> None:
-        if max_calls <= 0 or max_tokens <= 0:
+    ``max_calls``/``max_tokens`` stop the session (both zero: never stop).
+    ``alert_calls``/``alert_tokens`` only report, once, through ``on_alert``:
+    a complex college keeps running while an operator sees the anomaly.
+    """
+
+    def __init__(self, *, max_calls: int = 0, max_tokens: int = 0,
+                 alert_calls: int = 0, alert_tokens: int = 0,
+                 on_alert: Callable[[dict[str, Any]], None] | None = None) -> None:
+        if min(max_calls, max_tokens, alert_calls, alert_tokens) < 0:
+            raise ValueError("recon budget limits must not be negative")
+        if (max_calls == 0) != (max_tokens == 0):
             raise ValueError("recon budget limits must be positive")
         self.max_calls = max_calls
         self.max_tokens = max_tokens
+        self.alert_calls = alert_calls
+        self.alert_tokens = alert_tokens
+        self.on_alert = on_alert
+        self.alerts: list[dict[str, Any]] = []
         self.calls = 0
         self.usage = {"uncached_input": 0, "cached_input": 0, "output": 0}
 
@@ -86,9 +99,21 @@ class ReconBudget:
                                ("cached_input", "cacheReadTokens"),
                                ("output", "outputTokens")):
             self.usage[target] += int(values.get(source) or 0)
-        if self.calls >= self.max_calls or sum(self.usage.values()) >= self.max_tokens:
+        total = sum(self.usage.values())
+        if not self.alerts and ((self.alert_calls and self.calls >= self.alert_calls)
+                                or (self.alert_tokens and total >= self.alert_tokens)):
+            alert = {"calls": self.calls, "total_tokens": total, "token_usage": self.usage.copy(),
+                     "alert_calls": self.alert_calls, "alert_tokens": self.alert_tokens,
+                     "at": time.time()}
+            self.alerts.append(alert)
+            if self.on_alert is not None:
+                try:
+                    self.on_alert(alert)
+                except Exception:  # an alert sink must never stop reconnaissance
+                    pass
+        if self.max_calls and (self.calls >= self.max_calls or total >= self.max_tokens):
             raise ReconBudgetExceeded(
-                f"侦察预算耗尽：{self.calls} 次请求、{sum(self.usage.values())} Token；"
+                f"侦察预算耗尽：{self.calls} 次请求、{total} Token；"
                 f"上限 {self.max_calls} 次、{self.max_tokens} Token")
 
 

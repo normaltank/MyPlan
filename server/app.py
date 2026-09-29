@@ -53,6 +53,23 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 agent = AutonomousBrowserAgent()
 account_store = AccountStore(agent_queue.db_path)
 
+DEFAULT_MAX_BATCH_COLLEGES = 30
+
+
+def _max_batch_colleges() -> int:
+    """Largest batch one submission may enqueue (server/config.json ``max_batch_colleges``).
+
+    Every queued college starts its own browser and Harness session at once,
+    so an accidental paste of hundreds of lines must not reach the queue.
+    """
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "config.json"), encoding="utf-8") as handle:
+            value = int(json.load(handle).get("max_batch_colleges", DEFAULT_MAX_BATCH_COLLEGES))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return DEFAULT_MAX_BATCH_COLLEGES
+    return value if value > 0 else DEFAULT_MAX_BATCH_COLLEGES
+
+
 SESSION_COOKIE = 'faculty_session'
 CSRF_COOKIE = 'faculty_csrf'
 
@@ -340,9 +357,14 @@ async def start_batch_collection(req: BatchCollectRequest, request: Request = No
     lines = [l.strip() for l in req.items_text.split('\n') if l.strip()]
     if not lines:
         raise HTTPException(status_code=400, detail="请输入院校名单")
+    limit = _max_batch_colleges()
+    if len(lines) > limit:
+        raise HTTPException(status_code=400,
+                            detail=f'单次最多提交 {limit} 个学院（本次 {len(lines)} 行），请分批提交')
     
     batch_id = str(uuid.uuid4())[:8]
     items = []
+    seen: dict[tuple[str, str], int] = {}
     for number, line in enumerate(lines, 1):
         parts = line.split()
         if len(parts) != 3:
@@ -351,6 +373,10 @@ async def start_batch_collection(req: BatchCollectRequest, request: Request = No
             entry = _verified_entry_url(parts[2])
         except HTTPException:
             raise HTTPException(status_code=400, detail=f'第 {number} 行需有效的学院官网入口') from None
+        first = seen.setdefault((parts[0], parts[1]), number)
+        if first != number:
+            raise HTTPException(status_code=400,
+                                detail=f'第 {number} 行与第 {first} 行是同一学院，请删除重复行')
         items.append((parts[0], parts[1], entry))
 
     agent_queue.submit_batch(items, batch_id, owner_user_id=_user(request).id)

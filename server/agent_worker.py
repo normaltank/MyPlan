@@ -60,6 +60,42 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_MAX_TASK_SECONDS = 45 * 60
 DEFAULT_MAX_RECON_CALLS = 0
 DEFAULT_MAX_RECON_TOKENS = 0
+# Report (never stop) a college whose reconnaissance crosses these totals.
+DEFAULT_RECON_ALERT_TOKENS = 1_000_000
+DEFAULT_RECON_ALERT_CALLS = 150
+# Every queued college still starts at once; a new one waits only while the
+# machine is short of memory and at least one college is already running.
+DEFAULT_MIN_FREE_MEMORY_MB = 1024
+
+
+def available_memory_mb() -> float | None:
+    """Physical memory currently available, or None when it cannot be read."""
+    if sys.platform == "win32":
+        import ctypes
+
+        class _MemoryStatus(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        status = _MemoryStatus()
+        status.dwLength = ctypes.sizeof(_MemoryStatus)
+        try:
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.ullAvailPhys / 2**20
+        except (AttributeError, OSError):
+            pass
+        return None
+    try:
+        with open("/proc/meminfo", encoding="ascii") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 
 class AgentWorker:
@@ -77,10 +113,18 @@ class AgentWorker:
         max_recon_calls: int = DEFAULT_MAX_RECON_CALLS,
         max_recon_tokens: int = DEFAULT_MAX_RECON_TOKENS,
         lease_renew_seconds: float = 60,
+        recon_alert_tokens: int = DEFAULT_RECON_ALERT_TOKENS,
+        recon_alert_calls: int = DEFAULT_RECON_ALERT_CALLS,
+        min_free_memory_mb: float = DEFAULT_MIN_FREE_MEMORY_MB,
     ) -> None:
         if lease_renew_seconds <= 0:
             raise ValueError("lease_renew_seconds must be positive")
+        if recon_alert_tokens < 0 or recon_alert_calls < 0 or min_free_memory_mb < 0:
+            raise ValueError("alert thresholds and memory floor must not be negative")
         self.lease_renew_seconds = lease_renew_seconds
+        self.recon_alert_tokens = recon_alert_tokens
+        self.recon_alert_calls = recon_alert_calls
+        self.min_free_memory_mb = min_free_memory_mb
         self.output_dir = Path(output_dir)
         self.base_url = base_url.rstrip("/")
         self.queue = AgentTaskQueue(db_path)
@@ -103,15 +147,31 @@ class AgentWorker:
         print(f"[worker] 已就绪，监听队列 {self.queue.db_path}", flush=True)
         print(f"[worker] 输出目录 {self.output_dir} | 后台 {self.base_url}", flush=True)
         print("[worker] 全量并行派发：每学院独立 Harness 会话，无项目级并发上限", flush=True)
+        if self.min_free_memory_mb:
+            print(f"[worker] 内存保护：可用内存低于 {self.min_free_memory_mb:.0f}MB 时暂缓接新单"
+                  "（已在运行的学院不受影响）", flush=True)
         active: set[asyncio.Task[None]] = set()
         running_ids: set[str] = set()  # this process's colleges; never reclaimed here
         presence_id = uuid.uuid4().hex
         last_heartbeat = float('-inf')
+        memory_paused = False
         try:
             while True:
                 if time.monotonic() - last_heartbeat >= 5:
                     self.queue.touch_worker(presence_id)
                     last_heartbeat = time.monotonic()
+                if active and self.min_free_memory_mb:
+                    free = available_memory_mb()
+                    if free is not None and free < self.min_free_memory_mb:
+                        if not memory_paused:
+                            print(f"[worker] 可用内存 {free:.0f}MB 低于 {self.min_free_memory_mb:.0f}MB，"
+                                  f"暂缓接新单（运行中 {len(active)} 个学院）", flush=True)
+                            memory_paused = True
+                        await asyncio.sleep(2)
+                        continue
+                if memory_paused:
+                    print("[worker] 内存已恢复，继续接单", flush=True)
+                    memory_paused = False
                 task = self.queue.claim_task("server-worker", task_type="harvest",
                                              exclude_task_ids=running_ids)
                 if task is None:
@@ -232,10 +292,11 @@ class AgentWorker:
         output_dir.mkdir(parents=True, exist_ok=True)
         resumed = self._resume_plan(task, output_dir)
         attempts = resumed.diagnostics.pop("prior_attempts", []) if resumed else []
-        budget = (ReconBudget(max_calls=self.max_recon_calls, max_tokens=self.max_recon_tokens)
-                  if self.max_recon_calls else None)
-        if budget:
-            budget.seed(attempts)
+        budget = ReconBudget(
+            max_calls=self.max_recon_calls, max_tokens=self.max_recon_tokens,
+            alert_calls=self.recon_alert_calls, alert_tokens=self.recon_alert_tokens,
+            on_alert=lambda alert: self._record_usage_alert(task, output_dir, alert))
+        budget.seed(attempts)
         verified_branches = None
         resume_discovery = None
         previous_contract_failure = None
@@ -310,12 +371,16 @@ class AgentWorker:
                 report = await self._run_browser_plan(recon.plan, attempt_dir)
             report["recon"] = attempts[-1]
             report["recon_attempts"] = attempts.copy()
+            if budget.alerts:
+                report["recon_usage_alerts"] = budget.alerts
             report["local_access_repairs"] = local_attempts
             audit = report.get("audit_path")
             if audit and Path(audit).is_file():
                 saved = json.loads(Path(audit).read_text(encoding="utf-8"))
                 saved.update(recon=report["recon"], recon_attempts=report["recon_attempts"],
                              local_access_repairs=local_attempts)
+                if budget.alerts:
+                    saved["recon_usage_alerts"] = budget.alerts
                 Path(audit).write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
             if report.get("delivery_ready") and not report.get("unresolved"):
                 from server.recon_plan_cache import ReconPlanCache
@@ -338,6 +403,25 @@ class AgentWorker:
                 print(f"[worker]   审计未通过，返回浏览器补缺（{len(feedback['issues'])} 项）", flush=True)
                 verified_branches = await self._unaffected_branches(recon.plan, feedback, attempt_dir)
         return report
+
+    @staticmethod
+    def _record_usage_alert(task: Any, root: Path, alert: dict[str, Any]) -> None:
+        """Report unusual reconnaissance spend without stopping the college.
+
+        Called from the Harness notification thread; it only prints and writes
+        a small file, so it is safe to run there.
+        """
+        limits = "、".join(part for part in (
+            f"{alert['alert_tokens']:,} Token" if alert.get("alert_tokens") else "",
+            f"{alert['alert_calls']} 次请求" if alert.get("alert_calls") else "") if part)
+        print(f"[worker]   ⚠ 侦察用量告警 {task.school}-{task.college}：已 {alert['calls']} 次请求、"
+              f"{alert['total_tokens']:,} Token（告警线 {limits}）；未中断，"
+              "详见任务目录 recon-usage-alert.json", flush=True)
+        root.mkdir(parents=True, exist_ok=True)
+        staging = root / f"recon-usage-alert.{uuid.uuid4().hex}.tmp"
+        staging.write_text(json.dumps({"task_id": getattr(task, "task_id", None), **alert},
+                                      ensure_ascii=False, indent=2), encoding="utf-8")
+        staging.replace(root / "recon-usage-alert.json")
 
     @staticmethod
     def _save_recon_audit(root: Path, attempts: list | None, status: str, *, usage_unknown: bool = False) -> None:
@@ -516,6 +600,10 @@ class AgentWorker:
             if path.is_file():
                 stats.update(recon_audit_path=str(path),
                              recon_audit_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            alert_path = path.with_name("recon-usage-alert.json")
+            if alert_path.is_file():
+                with contextlib.suppress(OSError, ValueError):
+                    stats["recon_usage_alerts"] = [json.loads(alert_path.read_text(encoding="utf-8"))]
             self.queue.sync_task_result(
                 task.task_id, [], stats,
                 "", reason,
@@ -544,6 +632,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-recon-repairs", type=int, default=2, help="审计失败后的浏览器补缺轮数")
     p.add_argument("--max-recon-calls", type=int, default=DEFAULT_MAX_RECON_CALLS)
     p.add_argument("--max-recon-tokens", type=int, default=DEFAULT_MAX_RECON_TOKENS)
+    p.add_argument("--recon-alert-tokens", type=int, default=DEFAULT_RECON_ALERT_TOKENS,
+                   help="单学院侦察累计 Token 超过此值时告警（不中断）；0 关闭")
+    p.add_argument("--recon-alert-calls", type=int, default=DEFAULT_RECON_ALERT_CALLS,
+                   help="单学院侦察累计模型请求超过此值时告警（不中断）；0 关闭")
+    p.add_argument("--min-free-memory-mb", type=float, default=DEFAULT_MIN_FREE_MEMORY_MB,
+                   help="可用内存低于此值时暂缓接新单（已有学院在跑时才生效）；0 关闭")
     p.add_argument("--once", action="store_true", help="处理一个工单后退出")
     return p
 
@@ -563,6 +657,9 @@ def main() -> None:
         max_recon_repairs=args.max_recon_repairs,
         max_recon_calls=args.max_recon_calls,
         max_recon_tokens=args.max_recon_tokens,
+        recon_alert_tokens=args.recon_alert_tokens,
+        recon_alert_calls=args.recon_alert_calls,
+        min_free_memory_mb=args.min_free_memory_mb,
     )
     try:
         asyncio.run(worker.run_forever(once=args.once))

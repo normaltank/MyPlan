@@ -141,6 +141,12 @@ worker 常驻轮询 `server/tasks.db`；使用锁定依赖中的 Harness 可执�
 
 侦察默认不按固定请求数或 Token 数截断正常学院。入口发现只提交实际承载名录的页面，避免把菜单页和个人详情页重复当成名录分支；分支验证失败后保留同一工单内已核实的其他分支，只补有问题的分支。补缺反馈只传给对应阶段；若连续两轮仍是同一问题且没有新增已核实分支，停止无进展的重试。运维如需额外费用保险，可同时设置 worker 参数 `--max-recon-calls` 与 `--max-recon-tokens`；两者默认均为 `0`（关闭）。启用后按学院累计计数，缓存输入也计入 Token，达到阈值时失败并保留用量审计。Token 在每次请求完成后检查，因此不是严格费用上限。
 
+**资源与用量保护（2026-09-29 起默认开启，均可关闭）**：全部学院仍同时开工，以下几项只限制共享资源：
+- 按站点限流：同一大学站点（如 `cs.x.edu.cn` 与 `law.x.edu.cn` 同属 `x.edu.cn`）上，本 worker 所有学院同时打开的详情页合计不超过 8 个。环境变量 `HARVEST_PER_SITE_CONCURRENCY` 可调，设为 `0` 关闭。单院 `profile_concurrency` 仍然有效。
+- 内存保护：已有学院在跑、且可用物理内存低于 1024MB 时，worker 暂缓领取新工单，内存恢复后继续；第一个学院不受影响。参数 `--min-free-memory-mb`，`0` 关闭。
+- 侦察用量告警：单学院侦察累计超过 100 万 Token 或 150 次模型请求时，只告警、不中断。告警写入 worker 日志和任务目录的 `recon-usage-alert.json`，并随工单统计保存为 `recon_usage_alerts`。参数 `--recon-alert-tokens`、`--recon-alert-calls`，`0` 关闭。需要硬性熔断时，仍使用上面的 `--max-recon-calls` 与 `--max-recon-tokens`。
+- 批量提交上限：单次最多 30 个学院（`server/config.json` 的 `max_batch_colleges`），同一学院重复出现的批次会整批拒绝。
+
 `server/recon_browser_mcp.py` 提供真实 Playwright 的精简 MCP 工具，文本按范围返回且单次最多 8000 UTF-8 字节；导航单次最多读取 64 个链接，超过返回预算仍明确给出未读范围。完整 HTML/JSON/截图保存到 `server/outputs/recon-evidence/<phase_session_id>/`。此预算只作用于侦察上下文，教师完整简介与 Excel 不受影响。运行时叠加 `server/recon_runtime.cordis.yml`，关闭无关技能目录、工程文件工具与通用指令注入，并保存每阶段及补缺轮次的真实 Token 元数据。实测结果见 `docs/audits/2026-09-26-harness-context-audit.md`；本次异常用量与修订见 `docs/audits/2026-09-29-nxist-recon-cost.md`。
 
 运行补丁用 `insert` 安装 `dsh-mcp-client`，默认独立 ID 为 `faculty-recon-browser`，无需事先手工配置浏览器插件。阶段与证据会话通过启动参数显式传递。每次模型运行前先检查实际合成配置：浏览器缺失/重复、无关工具或通用指令注入仍启用、补丁未生效时直接失败，不花 Token 试错。自定义 profile 也须通过此检查。先在该环境运行 `python -m playwright install chromium`。编辑侦察 MD 或 Python 后需重启常驻 worker。

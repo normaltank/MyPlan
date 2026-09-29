@@ -54,7 +54,8 @@ def build_payload(report_path: str | Path, worker_id: str, lease_token: str,
         "candidate_count": report["candidate_count"],
     }
     for field in ("coverage_scope", "eligibility", "excluded_count", "branches", "audit_path",
-                  "coverage", "coverage_path", "checkpoints", "recon_attempts", "local_access_repairs"):
+                  "coverage", "coverage_path", "checkpoints", "recon_attempts", "local_access_repairs",
+                  "recon_usage_alerts"):
         if field in report:
             stats[field] = report[field]
     if report.get("audit_path"):
