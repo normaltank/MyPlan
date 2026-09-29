@@ -441,6 +441,9 @@ class AgentWorker:
             if any(item.get("status") in {"distinct_profile_identity_unverified", "zero_person_delivery_requires_review"}
                    for item in report.get("unresolved", [])):
                 break  # Identity and zero-person delivery review are not structure repair.
+            from server.name_review import STATUS as NAME_REVIEW
+            if all(item.get("status") == NAME_REVIEW for item in report.get("unresolved") or [{}]):
+                break  # Only rare-surname names await a person; the model cannot decide them.
             feedback = build_repair_feedback(recon.plan, report)
             resume_discovery = None
             if not feedback["issues"]:

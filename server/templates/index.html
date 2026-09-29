@@ -246,7 +246,7 @@
                             <i id="resultStatusIcon" class="fa-solid fa-circle-check text-emerald-500 text-2xl"></i>
                         </div>
                         <div id="univDownloadBox" class="space-y-2"></div>
-                        <a id="reviewBtn" href="#" class="hidden w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm text-center">核对图片文字与邮箱</a>
+                        <a id="reviewBtn" href="#" class="hidden w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm text-center">人工复核：图片文字、邮箱与生僻姓名</a>
                         <a id="downloadBtn" href="#" 
                             class="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-600/20 flex items-center justify-center space-x-2 transition-all">
                             <i class="fa-solid fa-file-excel"></i>
@@ -717,7 +717,7 @@
                             if (st.status === 'completed') { badgeCls = st.counts_basis ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'; stText = st.counts_basis ? `待复核 (${st.stats?.total || 0}条观察)` : `完成 (${st.stats?.total || 0}人)`; }
                             if (st.status === 'failed') { badgeCls = 'bg-red-100 text-red-700'; stText = '失败'; }
                             const dlBtn = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download class="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-bold flex items-center space-x-1" title="下载该学院双Sheet Excel"><i class="fa-solid fa-download"></i><span>表格</span></a>` : '';
-                            const reviewBtn = st.review_url ? `<a href="${escapeHtml(st.review_url)}" class="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">图片复核</a>` : '';
+                            const reviewBtn = st.review_url ? `<a href="${escapeHtml(st.review_url)}" class="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">人工复核</a>` : '';
                             return `
                                 <div class="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-200/60 text-xs">
                                     <span class="font-medium text-slate-700 truncate max-w-[190px]">${escapeHtml(st.school)} - ${escapeHtml(st.college)}</span>

@@ -261,11 +261,43 @@ def observe_roster(
     }
 
 
+def _apply_name_decisions(
+    roster_url: str,
+    found: list[FacultyCandidate],
+    review: list[FacultyCandidate],
+    decisions: dict[str, dict[str, Any]],
+    unresolved: list[dict[str, Any]],
+) -> list[FacultyCandidate]:
+    """Admit rare-surname names a person confirmed; return those still undecided.
+
+    A name judged not a person is left out, so its card stays unaccounted and
+    the roster card count still has to be explained.
+    """
+    from server.name_review import pending_item
+
+    awaiting = []
+    for person in review:
+        item = pending_item(roster_url, person)
+        decision = decisions.get(item["id"])
+        if decision is None:
+            unresolved.append(item)
+            awaiting.append(person)
+        elif decision["verdict"] == "person":
+            found.append(FacultyCandidate(name=decision["verified_name"], url=person.url,
+                                          title=person.title, card_context=person.card_context))
+    return awaiting
+
+
 def reconcile_rosters(
     captured: Iterable[CapturedRosterPage],
     plan: dict[str, Any],
+    name_decisions: dict[str, dict[str, Any]] | None = None,
 ) -> RosterReconciliation:
-    """Extract and reconcile roster pages without applying domain eligibility."""
+    """Extract and reconcile roster pages without applying domain eligibility.
+
+    ``name_decisions`` are a person's verdicts on rare-surname names
+    (server/name_review.py); names without one block delivery until reviewed.
+    """
 
     candidates: list[FacultyCandidate] = []
     candidate_sources: dict[tuple[str, str], set[str]] = {}
@@ -301,7 +333,10 @@ def reconcile_rosters(
             continue
         if "profile_content_start_selector" in page.branch and "profile_content_selector" not in page.branch:
             unresolved.append({"url": page.url, "status": "profile_content_start_selector_without_container"})
-        found = FacultyDirectoryExtractor.extract(page.html, page.url)
+        found, review = FacultyDirectoryExtractor.extract_with_review(page.html, page.url)
+        # Undecided names still account for their cards: the review item, not a
+        # card-count mismatch, is what blocks delivery until a person decides.
+        awaiting = _apply_name_decisions(page.url, found, review, name_decisions or {}, unresolved)
         source_kind = page.branch.get("source_kind") or default_source
         for person in found:
             candidate_sources.setdefault((person.name, person.url), set()).add(source_kind)
@@ -330,7 +365,7 @@ def reconcile_rosters(
             from server.empty_roster import empty_roster_proof_valid
             verified_empty = empty_roster_proof_valid(page.empty_roster_evidence, page.branch,
                                                      page.html, url=page.url)
-            if found:
+            if found or awaiting:
                 unresolved.append({"url": page.url, "status": "empty_roster_conflict"})
                 verified_empty = False
             elif not verified_empty:
@@ -338,7 +373,7 @@ def reconcile_rosters(
         if not selector:
             unresolved.append({"url": page.url, "status": "card_selector_missing"})
         else:
-            observation = observe_roster(page.html, page.url, selector, found)
+            observation = observe_roster(page.html, page.url, selector, found + awaiting)
             observations.append(observation)
             verified_empty = verified_empty and observation["visible_cards"] == 0
             if verified_empty:
@@ -359,7 +394,7 @@ def reconcile_rosters(
                         "extracted_candidates": observation["extracted_candidates"],
                     }
                 )
-        if not found and not verified_empty:
+        if not found and not awaiting and not verified_empty:
             unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
         candidates.extend(found)
 

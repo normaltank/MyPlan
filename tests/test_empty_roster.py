@@ -64,7 +64,7 @@ def test_proof_binding_and_reconciliation_only_exempt_verified_empty_page(monkey
     assert result.observations[0]["status"] == "confirmed_empty"
     missing = reconcile_rosters([CapturedRosterPage(BRANCH["url"], HTML, BRANCH)], {})
     assert missing.unresolved
-    monkeypatch.setattr("server.harvest_workflow.FacultyDirectoryExtractor.extract", lambda *_: [
+    monkeypatch.setattr("server.harvest_workflow.FacultyDirectoryExtractor.extract", lambda *_, **__: [
         SimpleNamespace(name="真实教师", url="https://example.edu/person")])
     conflicting = reconcile_rosters([page], {})
     assert len(conflicting.candidates) == 1

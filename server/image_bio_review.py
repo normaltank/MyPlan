@@ -159,11 +159,38 @@ def _segment_name_items(audit: dict, root: Path, listed: set) -> list[dict]:
     return items
 
 
+def _page_link(url: str) -> str:
+    if url.startswith(("http://", "https://")):
+        return ('<a href="' + escape(url, quote=True) + '" target="_blank" rel="noopener noreferrer">'
+                + escape(url) + '</a>')
+    return escape(url)
+
+
+def _name_cards(name_items: list[dict]) -> list[str]:
+    cards = []
+    for item in name_items:
+        profile = item.get("profile_url") or ""
+        cards.append(
+            '<section class="card name-card" data-id="' + escape(item["id"]) + '">'
+            '<h2>生僻姓氏待确认：' + escape(item["name"]) + '</h2>'
+            '<p class="meta">名录页 ' + _page_link(item["url"])
+            + ('' if profile == item["url"] else ' · 个人页 ' + _page_link(profile)) + '</p>'
+            '<p>卡片原文：</p><blockquote>' + escape(item.get("card_text", "")[:300]) + '</blockquote>'
+            '<label>教师姓名（可改正）<input type="text" maxlength="40" value="'
+            + escape(item["name"], quote=True) + '"></label>'
+            '<button type="button" data-verdict="person">是教师，按此姓名采集</button> '
+            '<button type="button" data-verdict="not_person" class="secondary">不是教师姓名</button>'
+            '<p class="status" role="status"></p></section>')
+    return cards
+
+
 def render_review_page(items: list[dict], email_items: list[dict] | None = None, *,
                        decision_url: str = '/decision',
                        email_decision_url: str = '/email-decision',
                        csrf_token: str = '', retry_url: str = '',
-                       return_url: str = '/') -> str:
+                       return_url: str = '/',
+                       name_items: list[dict] | None = None,
+                       name_decision_url: str = '') -> str:
     cards = []
     for item in items:
         crop = base64.b64encode(item["crop_bytes"]).decode("ascii")
@@ -196,10 +223,15 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                            + '</section>')
     if email_cards:
         body += '<h2>邮箱冲突</h2>' + "\n".join(email_cards)
+    name_cards = _name_cards(name_items or [])
+    if name_cards:
+        body += ('<h2>生僻姓氏</h2><p>这些名字的姓不在常用姓氏表里，也可能是普通词语。'
+                 '请打开名录页核对。</p>' + "\n".join(name_cards))
     if not body:
-        body = '<p>当前没有需要人工复核的图片文字或邮箱。</p>'
+        body = '<p>当前没有需要人工复核的图片文字、邮箱或姓名。</p>'
     decision_js = json.dumps(decision_url).replace('<', '\\u003c')
     email_js = json.dumps(email_decision_url).replace('<', '\\u003c')
+    name_js = json.dumps(name_decision_url).replace('<', '\\u003c')
     retry_js = json.dumps(retry_url).replace('<', '\\u003c')
     csrf_js = json.dumps(csrf_token).replace('<', '\\u003c')
     footer = ('<p><a href="' + escape(return_url, quote=True) + '">返回采集平台</a></p>')
@@ -208,7 +240,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                    '<p id="retry-status" role="status"></p>')
     return ("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<title>图片简介 OCR 复核</title><style>"
+            "<title>人工复核</title><style>"
             "body{font:16px system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;background:#f7f9fc;color:#172033}"
             ".card{background:white;border:1px solid #d6dce6;border-radius:12px;padding:1.25rem;margin:1rem 0}"
             "img{max-width:100%;display:block;margin:1rem 0;border:1px solid #ddd}"
@@ -216,10 +248,23 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "button{border:0;border-radius:8px;background:#1956ba;color:white;padding:.7rem 1rem;cursor:pointer}"
             ".meta{color:#5d6675;font-size:.9rem}.status{min-height:1rem}"
             ".email-option{display:block;margin:1rem 0;padding:.8rem;border:1px solid #ddd;border-radius:8px}"
+            ".name-card input{display:block;width:100%;box-sizing:border-box;margin:.5rem 0;padding:.75rem;font:inherit}"
+            "blockquote{margin:.5rem 0;padding:.5rem .75rem;background:#f1f4f9;border-radius:8px}"
+            "button.secondary{background:#6b7280}"
             "</style>"
-            "<h1>图片简介 OCR 复核</h1><p>对照原图局部，确认或更正这一行。决定仅对完全相同的原图和 OCR 行生效。</p>"
+            "<h1>人工复核</h1><p>对照原图或名录页，确认或更正。决定仅对完全相同的证据生效。</p>"
             + body + footer + "<script>const reviewCsrf=" + csrf_js + ";"
-            "document.querySelectorAll('.card:not(.email-card)').forEach(card=>{"
+            "document.querySelectorAll('.name-card').forEach(card=>{"
+            "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
+            "const status=card.querySelector('.status');"
+            "const verdict=button.dataset.verdict;const verified_name=card.querySelector('input').value;"
+            "try{const response=await fetch(" + name_js + ",{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
+            "body:JSON.stringify({id:card.dataset.id,verdict,verified_name})});"
+            "if(!response.ok)throw new Error(await response.text());"
+            "status.textContent=verdict==='person'?'已确认为教师':'已标记为不是教师姓名';}"
+            "catch(error){status.textContent='保存失败：'+error.message;}});});"
+            "document.querySelectorAll('.card:not(.email-card):not(.name-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
             "const verified_text=card.querySelector('textarea').value;"
             "try{const response=await fetch(" + decision_js + ",{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"

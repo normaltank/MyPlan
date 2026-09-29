@@ -49,6 +49,7 @@ import re
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Iterable, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -220,6 +221,31 @@ def name_prob(s: str) -> float:
     if _LATIN.match(s):
         return 0.6
     return 0.03
+
+
+def _load_rare_surnames() -> tuple[frozenset[str], frozenset[str]]:
+    text = Path(__file__).with_name("rare_surnames.txt").read_text(encoding="utf-8")
+    entries = [line.strip() for line in text.splitlines()
+               if line.strip() and not line.startswith("#")]
+    return (frozenset(e for e in entries if len(e) == 1),
+            frozenset(e for e in entries if len(e) == 2))
+
+
+_RARE_SINGLE, _RARE_COMPOUND = _load_rare_surnames()
+
+
+def rare_surname_name(s: str) -> bool:
+    """A 2-4 Han string below the name gate whose surname is a rare one.
+
+    name_prob deliberately keeps these below 0.5: many rare surnames are also
+    everyday characters (宿舍, 学院, 天气), so admitting them would put words
+    into the roster silently. They go to human review instead of being dropped."""
+    s = _collapse_han(s or "").strip()
+    if not _HAN.match(s) or name_prob(s) >= 0.5:
+        return False
+    if len(s) >= 3 and s[:2] in _RARE_COMPOUND:
+        return True
+    return s[0] in _RARE_SINGLE
 
 
 def record_text(nodes: Iterable[Tag]) -> str:

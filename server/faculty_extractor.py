@@ -27,7 +27,8 @@ _OPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 if _OPUS_DIR not in sys.path:
     sys.path.insert(0, _OPUS_DIR)
 try:
-    from iso_mining import VirtualNode, first_href, mine_records, primary_tokens, strip_invisible
+    from iso_mining import (VirtualNode, first_href, mine_records, primary_tokens,
+                            rare_surname_name, strip_invisible)
     from email_matching import DomainConventionModel
     from text_lists import email_spans, _AT as _AT_PATTERN
     _AT_RE = re.compile(_AT_PATTERN)
@@ -35,6 +36,7 @@ try:
 except ImportError as _ex:                          # never silently: log it
     log.error("L2 algorithm layer unavailable: %s", _ex)
     mine_records = DomainConventionModel = VirtualNode = first_href = primary_tokens = email_spans = None
+    rare_surname_name = None
     L2_AVAILABLE = False
 
     # _clean_name is called on every extraction path, including this degraded
@@ -246,9 +248,12 @@ class FacultyDirectoryExtractor:
         return name, title_found
 
     @classmethod
-    def _l2_candidates(cls, html: str, base_url: str) -> List[FacultyCandidate]:
+    def _l2_candidates(cls, html: str, base_url: str,
+                       review: Optional[list] = None) -> List[FacultyCandidate]:
         """Contract with iso_mining:
         - low-prior names need repeated linked-card evidence from trusted peers
+        - without it, a name with a rare surname goes to ``review`` (when given),
+          never to the result: a person must confirm it
         - VirtualNode records (text lists) are first-class
         - records without a link are kept: url = list page (profile-less faculty)
         - dedupe key preserves homonyms: if profile link is missing, identity of head node prevents collapse"""
@@ -299,6 +304,7 @@ class FacultyDirectoryExtractor:
         pairs = [(grp, r, p) for grp in groups for r, p in zip(grp.records, grp.record_probs)]
         out, seen = [], set()
         for idx, (grp, r, p) in enumerate(pairs):
+            needs_review = False
             if p < 0.5:
                 # A closed surname list cannot decide whether an otherwise
                 # ordinary-looking string is a person. Repeated linked cards
@@ -316,7 +322,9 @@ class FacultyDirectoryExtractor:
                     and first_href(r, base_url) is not None
                 )
                 if not structural_proof:
-                    continue
+                    if review is None:
+                        continue
+                    needs_review = True
             head = r[0]
             if isinstance(head, VirtualNode):
                 if not head.shape_ok:
@@ -333,6 +341,9 @@ class FacultyDirectoryExtractor:
             name, title = cls._clean_name(raw)
             if not name:
                 continue
+            # The title vocabulary only identifies a title standing in the name slot.
+            if needs_review and (name in TITLE_KEYWORDS or not rare_surname_name(name)):
+                continue
             if title == "教师":
                 ctx = f"{section} {card}"
                 title = next((kw for kw in TITLE_KEYWORDS if kw in ctx), "教师")
@@ -341,8 +352,16 @@ class FacultyDirectoryExtractor:
             if (name, node_key) in seen:
                 continue
             seen.add((name, node_key))
-            out.append(FacultyCandidate(name=name, url=url, title=title, card_context=card))
+            candidate = FacultyCandidate(name=name, url=url, title=title, card_context=card)
+            (review if needs_review else out).append(candidate)
         return out
+
+    @classmethod
+    def extract_with_review(cls, html: str,
+                            base_url: str) -> Tuple[List[FacultyCandidate], List[FacultyCandidate]]:
+        """Admitted candidates, and rare-surname names a person must confirm first."""
+        review: List[FacultyCandidate] = []
+        return cls.extract(html, base_url, review=review), review
 
     @classmethod
     def extract(
@@ -350,7 +369,9 @@ class FacultyDirectoryExtractor:
         html: str,
         base_url: str,
         executor: Optional[L1RuntimeExecutor] = None,
-        emit_ticket: bool = False
+        emit_ticket: bool = False,
+        *,
+        review: Optional[list] = None,
     ) -> List[FacultyCandidate]:
         if not html:
             return []
@@ -395,7 +416,7 @@ class FacultyDirectoryExtractor:
         # Tier 1: L2 isomorphic mining (the only path that honours the charter)
         if L2_AVAILABLE:
             try:
-                l2 = cls._l2_candidates(html, base_url)
+                l2 = cls._l2_candidates(html, base_url, review=review)
             except Exception:
                 log.exception("L2 failed on %s", base_url)   # visible, then fall back
                 l2 = None

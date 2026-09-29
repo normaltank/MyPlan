@@ -29,7 +29,8 @@ if __package__:
     from .access_control import AccountStore, Account
     from .task_image_review import (task_review_audit, has_image_review, review_items,
                                     review_complete, prepare_review_resume,
-                                    legacy_review_audits)
+                                    legacy_review_audits, name_items)
+    from . import name_review
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
@@ -37,7 +38,8 @@ else:
     from access_control import AccountStore, Account
     from task_image_review import (task_review_audit, has_image_review, review_items,
                                    review_complete, prepare_review_resume,
-                                   legacy_review_audits)
+                                   legacy_review_audits, name_items)
+    import name_review
     from image_bio_review import (render_review_page, save_review_decision,
                                   save_email_decision)
 
@@ -225,6 +227,12 @@ class OcrReviewRequest(BaseModel):
 class EmailReviewRequest(BaseModel):
     id: str
     selected_email: str
+
+
+class NameReviewRequest(BaseModel):
+    id: str
+    verdict: str
+    verified_name: str = ''
 
 
 @app.post('/api/auth/login')
@@ -422,10 +430,10 @@ def _review_task(task_id: str, request: Request):
     if not task or not _can_view(_user(request), task.owner_user_id):
         raise HTTPException(status_code=404, detail='Task not found')
     if task.status != 'failed':
-        raise HTTPException(status_code=409, detail='该工单当前不在图片复核状态')
+        raise HTTPException(status_code=409, detail='该工单当前不在人工复核状态')
     audit = task_review_audit(OUTPUT_DIR, task)
     if audit is None or not has_image_review(audit):
-        raise HTTPException(status_code=404, detail='没有该工单的图片复核材料')
+        raise HTTPException(status_code=404, detail='没有该工单的人工复核材料')
     return task, audit
 
 
@@ -434,13 +442,15 @@ async def task_image_review_page(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
         ocr_items, email_items = review_items(audit)
+        names = name_items(audit)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据不完整，请管理员检查审计文件') from exc
     return render_review_page(ocr_items, email_items,
         decision_url=f'/api/task/{task_id}/review/ocr',
         email_decision_url=f'/api/task/{task_id}/review/email',
         retry_url=f'/api/task/{task_id}/review/retry',
-        csrf_token=request.cookies.get(CSRF_COOKIE, ''), return_url='/')
+        csrf_token=request.cookies.get(CSRF_COOKIE, ''), return_url='/',
+        name_items=names, name_decision_url=f'/api/task/{task_id}/review/name')
 
 
 @app.post('/api/task/{task_id}/review/ocr', status_code=204)
@@ -470,13 +480,27 @@ async def save_task_email_review(task_id: str, payload: EmailReviewRequest, requ
     return Response(status_code=204)
 
 
+@app.post('/api/task/{task_id}/review/name', status_code=204)
+async def save_task_name_review(task_id: str, payload: NameReviewRequest, request: Request):
+    _, audit = _review_task(task_id, request)
+    try:
+        item = next((item for item in name_items(audit) if item['id'] == payload.id), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail='复核证据不存在')
+        name_review.save_decision(audit.parent / name_review.DECISIONS_FILE, item,
+                                  payload.verdict, payload.verified_name)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail='姓名复核无效') from exc
+    return Response(status_code=204)
+
+
 @app.post('/api/task/{task_id}/review/retry')
 async def retry_task_after_image_review(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
         ocr_items, email_items = review_items(audit)
-        if not review_complete(audit, ocr_items, email_items):
-            raise HTTPException(status_code=409, detail='请先完成全部图片文字和邮箱复核')
+        if not review_complete(audit, ocr_items, email_items, name_items(audit)):
+            raise HTTPException(status_code=409, detail='请先完成全部图片文字、邮箱和姓名复核')
         prepare_review_resume(audit, task_id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据无效') from exc

@@ -7,12 +7,13 @@ from pathlib import Path
 import shutil
 import time
 
+from . import name_review
 from .image_bio_review import (collect_email_conflict_items, collect_review_items,
                                resolve_email_conflict)
 
 
 IMAGE_REVIEW_STATUSES = {'image_bio_low_confidence', 'image_bio_email_conflict',
-                         'segment_name_needs_review'}
+                         'segment_name_needs_review', name_review.STATUS}
 
 
 def task_review_audit(output_dir: str | Path, task) -> Path | None:
@@ -49,12 +50,21 @@ def review_items(audit_path: Path) -> tuple[list[dict], list[dict]]:
     return collect_review_items(audit_path), collect_email_conflict_items(audit_path)
 
 
-def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[dict]) -> bool:
-    if not ocr_items and not email_items:
+def name_items(audit_path: Path) -> list[dict]:
+    return name_review.collect_items(audit_path)
+
+
+def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[dict],
+                    names: list[dict] | None = None) -> bool:
+    names = names or []
+    if not ocr_items and not email_items and not names:
         return False
     issues = {item.get('status') for item in json.loads(audit_path.read_text(encoding='utf-8')).get('unresolved', [])}
     if ((issues & {'image_bio_low_confidence', 'segment_name_needs_review'} and not ocr_items)
-            or ('image_bio_email_conflict' in issues and not email_items)):
+            or ('image_bio_email_conflict' in issues and not email_items)
+            or (name_review.STATUS in issues and not names)):
+        return False
+    if not name_review.review_complete(audit_path, names):
         return False
     try:
         payload = json.loads((audit_path.parent / 'image_bio_reviews.json').read_text(encoding='utf-8'))
@@ -101,7 +111,7 @@ def carry_review_decisions(task_root: str | Path, target_attempt: str | Path) ->
         return
     source = source_audit.parent
     target.mkdir(parents=True, exist_ok=True)
-    for filename in ('image_bio_reviews.json', 'image_bio_email_reviews.json'):
+    for filename in ('image_bio_reviews.json', 'image_bio_email_reviews.json', name_review.DECISIONS_FILE):
         path = source / filename
         if path.is_file() and path.resolve().is_relative_to(root) and path.resolve() != (target / filename).resolve():
             shutil.copyfile(path, target / filename)
