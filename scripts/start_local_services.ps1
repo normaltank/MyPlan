@@ -77,12 +77,28 @@ try {
         } finally {
             Remove-Item Env:DEEPSEEK_API_KEY -ErrorAction SilentlyContinue
         }
-        Start-Sleep -Seconds 2
-        $worker.Refresh()
-        if ($worker.HasExited) {
-            throw "后台接单服务启动后立即退出，请查看 .runtime\local-worker.err.log。"
+        # The worker runs a dependency self-check before claiming any ticket and
+        # prints an ASCII marker once it passes; a failed check exits the process.
+        $workerLog = Join-Path $runtimeDir 'local-worker.out.log'
+        $selfCheckPassed = $false
+        for ($attempt = 0; $attempt -lt 120; $attempt++) {
+            Start-Sleep -Milliseconds 500
+            $worker.Refresh()
+            if ($worker.HasExited) { break }
+            if ((Test-Path -LiteralPath $workerLog) -and
+                (Select-String -LiteralPath $workerLog -SimpleMatch 'self-check passed' -Quiet)) {
+                $selfCheckPassed = $true
+                break
+            }
         }
-        Write-Host "后台接单服务已启动（PID $($worker.Id)）。"
+        if ($worker.HasExited) {
+            throw "后台接单服务启动后退出（多为启动自检未通过，例如缺少依赖或浏览器），请查看 .runtime\local-worker.err.log。"
+        }
+        if ($selfCheckPassed) {
+            Write-Host "后台接单服务已通过启动自检并启动（PID $($worker.Id)）。"
+        } else {
+            Write-Warning "后台接单服务仍在启动自检（PID $($worker.Id)），请稍后在网页顶部确认是否在线。"
+        }
     }
 
     if (Test-LocalPort 8000) {

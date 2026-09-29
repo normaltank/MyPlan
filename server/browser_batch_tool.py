@@ -254,46 +254,89 @@ def _native_chrome_executable() -> Path | None:
     return None
 
 
-def _fetch_page_via_native_chrome(url: str, port: int = 9550) -> str | None:
-    import subprocess, tempfile, time
+_NATIVE_CHROME_FLAGS = ("--headless=new", "--no-first-run", "--no-default-browser-check",
+                        "--disable-search-engine-choice-screen", "--remote-debugging-port=0")
+
+
+def _launch_native_chrome(chrome_exe: Path, urls: list[str]) -> tuple[Any, Path, int | None]:
+    """Start a private headless Chrome and return (process, profile dir, CDP port).
+
+    Port 0 lets Chrome pick a free port and report it in DevToolsActivePort, so
+    concurrent colleges never attach to each other's browser (fixed ports did).
+    """
+    import subprocess
+    import tempfile
+
+    user_dir = Path(tempfile.mkdtemp(prefix="chrome_native_"))
+    proc = subprocess.Popen([str(chrome_exe), *_NATIVE_CHROME_FLAGS, f"--user-data-dir={user_dir}", *urls],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    port_file = user_dir / "DevToolsActivePort"
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and proc.poll() is None:
+        with contextlib.suppress(OSError, ValueError, IndexError):
+            return proc, user_dir, int(port_file.read_text(encoding="ascii").splitlines()[0])
+        time.sleep(0.1)
+    return proc, user_dir, None
+
+
+def _stop_native_chrome(proc: Any, user_dir: Path) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        with contextlib.suppress(Exception):
+            proc.kill()
+            proc.wait(timeout=5)
+    shutil.rmtree(user_dir, ignore_errors=True)
+
+
+def _collect_native_pages(port: int, started: float, settle_seconds: float) -> dict[str, str]:
+    """Read every tab after it loads and at least ``settle_seconds`` after launch."""
     from playwright.sync_api import sync_playwright
+
+    pages: dict[str, str] = {}
+    with sync_playwright() as pw:
+        browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        try:
+            for context in browser.contexts:
+                for page in context.pages:
+                    with contextlib.suppress(Exception):
+                        page.wait_for_load_state("load", timeout=15000)
+            # Keep the previous fixed post-launch settle time as a lower bound for
+            # script-rendered content.
+            remaining = settle_seconds - (time.monotonic() - started)
+            if remaining > 0:
+                time.sleep(remaining)
+            for context in browser.contexts:
+                for page in context.pages:
+                    pages[page.url] = page.content()
+        finally:
+            with contextlib.suppress(Exception):
+                browser.close()
+    return pages
+
+
+def _fetch_page_via_native_chrome(url: str) -> str | None:
     if _native_chrome_fallback_disabled():
         # Offline/fixture runs must never launch a browser against a live site.
         return None
-    user_dir = tempfile.mkdtemp(prefix="chrome_native_")
     chrome_exe = _native_chrome_executable()
     if chrome_exe is None:
         return None
-    p = subprocess.Popen([
-        str(chrome_exe),
-        "--headless=new",
-        f"--user-data-dir={user_dir}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-search-engine-choice-screen",
-        f"--remote-debugging-port={port}",
-        url
-    ])
-    time.sleep(5)
-    html = None
+    started = time.monotonic()
+    proc, user_dir, port = _launch_native_chrome(chrome_exe, [url])
     try:
-        with sync_playwright() as pw:
-            browser = pw.chromium.connect_over_cdp(f"http://localhost:{port}")
-            if browser.contexts and browser.contexts[0].pages:
-                html = browser.contexts[0].pages[0].content()
-            browser.close()
+        if port is None:
+            return None
+        pages = _collect_native_pages(port, started, settle_seconds=5)
+        return next(iter(pages.values()), None)
     except Exception:
-        pass
+        return None
     finally:
-        p.terminate()
-        with contextlib.suppress(Exception):
-            p.wait(timeout=3)
-    return html
+        _stop_native_chrome(proc, user_dir)
 
 
-def _batch_fetch_profiles_via_native_chrome(urls: list[str], batch_size: int = 8, start_port: int = 9560) -> dict[str, str]:
-    import subprocess, tempfile, time
-    from playwright.sync_api import sync_playwright
+def _batch_fetch_profiles_via_native_chrome(urls: list[str], batch_size: int = 8) -> dict[str, str]:
     if _native_chrome_fallback_disabled():
         # A fixture-backed context has no profiles to recover; launching real
         # Chrome here used to open visible windows against live hospital pages.
@@ -301,35 +344,18 @@ def _batch_fetch_profiles_via_native_chrome(urls: list[str], batch_size: int = 8
     chrome_exe = _native_chrome_executable()
     if chrome_exe is None:
         return {}
-    results = {}
-    port = start_port
+    results: dict[str, str] = {}
     for i in range(0, len(urls), batch_size):
         chunk = urls[i:i + batch_size]
-        port += 1
-        user_dir = tempfile.mkdtemp(prefix=f"chrome_pbatch_{port}_")
-        p = subprocess.Popen([
-            str(chrome_exe),
-            "--headless=new",
-            f"--user-data-dir={user_dir}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-search-engine-choice-screen",
-            f"--remote-debugging-port={port}",
-            *chunk
-        ])
-        time.sleep(6)
+        started = time.monotonic()
+        proc, user_dir, port = _launch_native_chrome(chrome_exe, chunk)
         try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.connect_over_cdp(f"http://localhost:{port}")
-                for page in browser.contexts[0].pages:
-                    results[page.url] = page.content()
-                browser.close()
+            if port is not None:
+                results.update(_collect_native_pages(port, started, settle_seconds=6))
         except Exception:
             pass
         finally:
-            p.terminate()
-            with contextlib.suppress(Exception):
-                p.wait(timeout=3)
+            _stop_native_chrome(proc, user_dir)
     return results
 
 
@@ -1037,80 +1063,6 @@ async def run_with_lease(harvest: Callable[[], Awaitable[dict[str, Any]]], task_
     return report
 
 
-async def _setup_waf_proxy_if_needed(context: Any, plan: dict[str, Any]) -> None:
-    if _native_chrome_fallback_disabled():
-        # Third native-Chrome launcher in this module: no headed window in
-        # offline/fixture runs either.
-        return
-    domain_hosts = {urlparse(b["url"]).netloc for b in plan.get("branches", [])}
-    if not any("gszy.edu.cn" in h for h in domain_hosts):
-        return
-
-    import socket, subprocess, tempfile, shutil
-    from playwright.async_api import async_playwright
-    import httpx
-
-    def _get_free_port():
-        with socket.socket() as s:
-            s.bind(("", 0))
-            return s.getsockname()[1]
-
-    port = _get_free_port()
-    user_data = tempfile.mkdtemp()
-    target_url = plan["branches"][0]["url"]
-    chrome_exe = _native_chrome_executable()
-    if chrome_exe is None:
-        raise RuntimeError("WAF browser requires CHROME_PATH pointing to a Chrome executable")
-    proc = subprocess.Popen([
-        str(chrome_exe),
-        f"--remote-debugging-port={port}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        f"--user-data-dir={user_data}",
-        target_url
-    ])
-    await asyncio.sleep(6)
-    cookies = []
-    async with async_playwright() as p:
-        try:
-            b = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-            cookies = await b.contexts[0].cookies()
-            await b.close()
-        except Exception:
-            pass
-    proc.terminate()
-    proc.wait()
-    shutil.rmtree(user_data, ignore_errors=True)
-
-    cookie_dict = {c["name"]: c["value"] for c in cookies}
-    if not cookie_dict:
-        return
-
-    client = httpx.AsyncClient(
-        verify=False,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        },
-        cookies=cookie_dict,
-        timeout=25.0
-    )
-
-    async def route_handler(route):
-        req = route.request
-        if not req.url.startswith("http"):
-            await route.continue_()
-            return
-        try:
-            r = await client.get(req.url, headers={"Referer": req.headers.get("referer", target_url)})
-            headers = {k: v for k, v in r.headers.items() if k.lower() not in ["transfer-encoding", "content-encoding", "content-length"]}
-            await route.fulfill(status=r.status_code, headers=headers, body=r.content)
-        except Exception:
-            await route.abort()
-
-    await context.route("**/*", route_handler)
-
-
 async def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
     from playwright.async_api import async_playwright
     import httpx
@@ -1122,7 +1074,6 @@ async def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
         try:
             from server.browser_context import new_browser_context
             context = await new_browser_context(browser)
-            await _setup_waf_proxy_if_needed(context, plan)
             try:
                 harvest = lambda: run_plan(plan, context, args.output_dir)
                 if args.task_id:

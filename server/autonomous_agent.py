@@ -158,6 +158,23 @@ def extract_scholars_from_poster_images(html: str, page_url: str) -> list:
 
     return extracted
 
+def _excel_safe_text(value):
+    """Drop characters an .xlsx file cannot hold; keep every visible character."""
+    if isinstance(value, str):
+        from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    return value
+
+
+def _store_formulas_as_text(workbook) -> None:
+    """Harvested text is data: a value like ``=HYPERLINK(...)`` stays literal text."""
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
+
+
 class AutonomousBrowserAgent:
     def __init__(self, config_path: str = None):
         if not config_path:
@@ -793,8 +810,14 @@ class AutonomousBrowserAgent:
 
 
     def export_dual_sheet_excel(self, records: list, output_filepath: str) -> dict:
-        """Export styled dual-sheet standard Excel file adhering to strict invariants."""
-        df = pd.DataFrame(records)
+        """Export styled dual-sheet standard Excel file adhering to strict invariants.
+
+        Every value is harvested website text and is written as text: a value
+        starting with ``=`` is never stored as a formula, and XML control
+        characters (which openpyxl cannot store) are removed instead of failing
+        the whole university workbook.
+        """
+        df = pd.DataFrame(records).map(_excel_safe_text) if records else pd.DataFrame(records)
         columns = ['序号', '姓名', '职称', '邮箱', '学校', '学院', '采集人', '采集日期', '简介', '主页']
         if df.empty:
             empty_df = pd.DataFrame(columns=columns)
@@ -841,9 +864,11 @@ class AutonomousBrowserAgent:
             df_with_email.to_excel(writer, sheet_name='教师列表', index=False)
             df_no_email.to_excel(writer, sheet_name='无邮箱教师列表', index=False)
 
+        wb = openpyxl.load_workbook(output_filepath)
+        _store_formulas_as_text(wb)  # must persist even if styling below fails
+
         # Style Excel Sheets with openpyxl
         try:
-            wb = openpyxl.load_workbook(output_filepath)
             header_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
             header_font = Font(name="Microsoft YaHei", size=11, bold=True, color="1E293B")
             data_font = Font(name="Microsoft YaHei", size=10, color="334155")
@@ -877,10 +902,9 @@ class AutonomousBrowserAgent:
                         val_str = str(cell.value or '')
                         max_len = max(max_len, len(val_str.encode('gbk', 'ignore')))
                     ws.column_dimensions[col_letter].width = min(max(max_len + 4, 12), 48)
-
-            wb.save(output_filepath)
         except Exception:
             pass
+        wb.save(output_filepath)
 
         return {
             "total": len(df),

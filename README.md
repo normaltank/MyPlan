@@ -147,6 +147,8 @@ worker 常驻轮询 `server/tasks.db`；使用锁定依赖中的 Harness 可执�
 - 侦察用量告警：单学院侦察累计超过 100 万 Token 或 150 次模型请求时，只告警、不中断。告警写入 worker 日志和任务目录的 `recon-usage-alert.json`，并随工单统计保存为 `recon_usage_alerts`。参数 `--recon-alert-tokens`、`--recon-alert-calls`，`0` 关闭。需要硬性熔断时，仍使用上面的 `--max-recon-calls` 与 `--max-recon-tokens`。
 - 批量提交上限：单次最多 30 个学院（`server/config.json` 的 `max_batch_colleges`），同一学院重复出现的批次会整批拒绝。
 
+**启动自检**：常驻 worker 领取工单前，会检查算法层、pypinyin、OCR、PyMuPDF、Harness 运行时、`DEEPSEEK_API_KEY` 和 Playwright Chromium 是否齐全。任一缺失时，worker 在 `.runtime/local-worker.err.log` 写明原因并退出（退出码 2），不会带着降级的依赖继续采集；双击启动脚本会等待自检结果并提示。排障时可加 `--skip-self-check` 跳过。Excel 导出时，抓取到的文本一律按文本写入（以 `=` 开头的内容不会变成公式），xlsx 无法保存的控制字符会被去掉，不再导致整份大学表导出失败。
+
 `server/recon_browser_mcp.py` 提供真实 Playwright 的精简 MCP 工具，文本按范围返回且单次最多 8000 UTF-8 字节；导航单次最多读取 64 个链接，超过返回预算仍明确给出未读范围。完整 HTML/JSON/截图保存到 `server/outputs/recon-evidence/<phase_session_id>/`。此预算只作用于侦察上下文，教师完整简介与 Excel 不受影响。运行时叠加 `server/recon_runtime.cordis.yml`，关闭无关技能目录、工程文件工具与通用指令注入，并保存每阶段及补缺轮次的真实 Token 元数据。实测结果见 `docs/audits/2026-09-26-harness-context-audit.md`；本次异常用量与修订见 `docs/audits/2026-09-29-nxist-recon-cost.md`。
 
 运行补丁用 `insert` 安装 `dsh-mcp-client`，默认独立 ID 为 `faculty-recon-browser`，无需事先手工配置浏览器插件。阶段与证据会话通过启动参数显式传递。每次模型运行前先检查实际合成配置：浏览器缺失/重复、无关工具或通用指令注入仍启用、补丁未生效时直接失败，不花 Token 试错。自定义 profile 也须通过此检查。先在该环境运行 `python -m playwright install chromium`。编辑侦察 MD 或 Python 后需重启常驻 worker。

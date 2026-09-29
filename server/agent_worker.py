@@ -639,6 +639,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-free-memory-mb", type=float, default=DEFAULT_MIN_FREE_MEMORY_MB,
                    help="可用内存低于此值时暂缓接新单（已有学院在跑时才生效）；0 关闭")
     p.add_argument("--once", action="store_true", help="处理一个工单后退出")
+    p.add_argument("--skip-self-check", action="store_true",
+                   help="跳过启动自检（仅排障用；缺依赖时采集质量会静默下降）")
     return p
 
 
@@ -648,6 +650,18 @@ def main() -> None:
             sys.stdout.reconfigure(encoding="utf-8")
 
     args = _build_parser().parse_args()
+    if args.skip_self_check:
+        print("[worker] self-check skipped (--skip-self-check)", flush=True)
+    else:
+        from server.worker_selfcheck import run_self_check
+        problems = run_self_check()
+        if problems:
+            print("[worker] 启动自检未通过，未领取任何工单：", file=sys.stderr, flush=True)
+            for problem in problems:
+                print(f"[worker]   {problem}", file=sys.stderr, flush=True)
+            sys.exit(2)
+        # ASCII marker read by scripts/start_local_services.ps1.
+        print("[worker] self-check passed", flush=True)
     worker = AgentWorker(
         output_dir=args.output_dir,
         base_url=args.base_url,
