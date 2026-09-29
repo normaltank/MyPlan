@@ -28,7 +28,6 @@ import pandas as pd
 if __package__:
     from .agent_queue import agent_queue, AgentTask, LeaseConflictError
     from .access_control import AccountStore, Account
-    from .autonomous_agent import AutonomousBrowserAgent
     from .task_image_review import (task_review_audit, has_image_review, review_items,
                                     review_complete, prepare_review_resume,
                                     legacy_review_audits)
@@ -37,7 +36,6 @@ if __package__:
 else:
     from agent_queue import agent_queue, AgentTask, LeaseConflictError
     from access_control import AccountStore, Account
-    from autonomous_agent import AutonomousBrowserAgent
     from task_image_review import (task_review_audit, has_image_review, review_items,
                                    review_complete, prepare_review_resume,
                                    legacy_review_audits)
@@ -50,7 +48,6 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 LEGACY_REVIEW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scratch')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-agent = AutonomousBrowserAgent()
 account_store = AccountStore(agent_queue.db_path)
 
 DEFAULT_MAX_BATCH_COLLEGES = 30

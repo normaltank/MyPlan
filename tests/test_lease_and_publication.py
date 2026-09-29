@@ -174,7 +174,7 @@ def _record(college, name="Person", url="https://example.edu/p/1"):
 
 
 def test_publication_does_not_write_lock_the_task_queue(tmp_path, monkeypatch):
-    from server.autonomous_agent import AutonomousBrowserAgent
+    from server import excel_export
     from server.university_delivery import publish_delivery
 
     queue = AgentTaskQueue(tmp_path / "queue.db")
@@ -183,10 +183,10 @@ def test_publication_does_not_write_lock_the_task_queue(tmp_path, monkeypatch):
     queue.complete_task(task.task_id, [_record("A")], {"total": 1, "with_email": 0, "no_email": 1},
                         worker_id="fixture", lease_token=claimed.lease_token)
     other = queue.submit_task("University", "B")
-    original = AutonomousBrowserAgent.export_dual_sheet_excel
+    original = excel_export.export_dual_sheet_excel
     probes = []
 
-    def exporting(self, records, path):
+    def exporting(records, path):
         # While a workbook is being generated, other colleges must still be
         # able to claim, renew and sync without waiting for publication.
         writer = sqlite3.connect(queue.db_path, timeout=0.2)
@@ -197,9 +197,9 @@ def test_publication_does_not_write_lock_the_task_queue(tmp_path, monkeypatch):
             probes.append("write-ok")
         finally:
             writer.close()
-        return original(self, records, path)
+        return original(records, path)
 
-    monkeypatch.setattr(AutonomousBrowserAgent, "export_dual_sheet_excel", exporting)
+    monkeypatch.setattr(excel_export, "export_dual_sheet_excel", exporting)
     delivery = publish_delivery(queue, task.batch_id, "University", tmp_path / "outputs")
 
     assert delivery["university_excel"]

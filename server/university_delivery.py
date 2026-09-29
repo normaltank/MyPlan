@@ -176,7 +176,7 @@ def _publication_lock(root: Path, school: str):
 
 def publish_delivery(queue, batch_id, school, output_root):
     """Serialize snapshot selection and file publication across queue processes."""
-    from server.autonomous_agent import AutonomousBrowserAgent
+    from server import excel_export
 
     root = Path(output_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -191,7 +191,7 @@ def publish_delivery(queue, batch_id, school, output_root):
                 return {"delivery_scope": scope, "university_excel": None}
             snapshot = university_snapshot(con, school, scope["task_ids"])
             current = university_snapshot(con, school)
-        exporter = AutonomousBrowserAgent()
+        exporter = excel_export  # module exposing export_dual_sheet_excel
         if any(c["requires_review"] for c in snapshot["identity_conflicts"]):
             scope["state"] = "blocked"
             scope["identity_conflicts"] = snapshot["identity_conflicts"]

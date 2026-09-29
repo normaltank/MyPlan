@@ -329,7 +329,9 @@ async def test_roster_inside_misused_header_is_still_captured(tmp_path):
 async def test_hospital_snapshot_accounts_for_cards_but_still_requires_eligibility(tmp_path):
     """Structural recall accounts for cards; hospital employment still needs proof."""
     snapshot = next((Path(__file__).parents[1] / "server" / "outputs" /
-                     "甘肃中医药大学_第二临床医学院_snapshots").glob("directory_001*.html"))
+                     "甘肃中医药大学_第二临床医学院_snapshots").glob("directory_001*.html"), None)
+    if snapshot is None:  # production capture, not versioned (contains live hospital data)
+        pytest.skip("local production snapshot for this regression is not present")
     url = "http://www.lzsdyyy.cn/html/doctors-list-lingjunrenwu.html"
     plan = {"school": "甘肃中医药大学", "college": "第二临床医学院", "branches": [
         {"url": url, "single_page": True, "card_selector": "ul.expert-list > li"}

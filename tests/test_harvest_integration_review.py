@@ -168,9 +168,10 @@ async def test_exhausted_rejected_plans_persist_each_usage_without_raw_response(
     audit_path = root / "recon-attempts.json"
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert audit["status"] == "plan_contract_rejected" and audit["usage_unknown"] is False
-    assert len(audit["attempts"]) == calls == 3
-    assert sum(attempt["model_calls"] for attempt in audit["attempts"]) == 3
-    assert sum(attempt["token_usage"]["uncached_input"] for attempt in audit["attempts"]) == 600
+    # The same rejection twice with no newly verified branch stops early (2026-09-29 rule).
+    assert len(audit["attempts"]) == calls == 2
+    assert sum(attempt["model_calls"] for attempt in audit["attempts"]) == 2
+    assert sum(attempt["token_usage"]["uncached_input"] for attempt in audit["attempts"]) == 300
     for path in root.rglob("*.json"):
         text = path.read_text(encoding="utf-8")
         assert "王拒绝原文" not in text and "forbidden.person@example.edu" not in text

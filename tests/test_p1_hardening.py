@@ -9,7 +9,7 @@ import openpyxl
 import pytest
 
 import server.browser_batch_tool as browser_batch_tool
-from server.autonomous_agent import AutonomousBrowserAgent
+from server import excel_export
 
 
 def _record(name, bio, email=""):
@@ -20,7 +20,7 @@ def _record(name, bio, email=""):
 # ── Excel cells are text ─────────────────────────────────────────────────────
 def test_harvested_text_is_never_stored_as_a_formula(tmp_path):
     path = tmp_path / "u.xlsx"
-    AutonomousBrowserAgent().export_dual_sheet_excel(
+    excel_export.export_dual_sheet_excel(
         [_record("甲", '=HYPERLINK("http://evil.example","点我")'),
          _record("乙", "=1+1", "b@u.edu")], str(path))
     cells = [row[8] for ws in openpyxl.load_workbook(path).worksheets
@@ -31,7 +31,7 @@ def test_harvested_text_is_never_stored_as_a_formula(tmp_path):
 
 def test_control_characters_no_longer_abort_the_university_workbook(tmp_path):
     path = tmp_path / "u.xlsx"
-    AutonomousBrowserAgent().export_dual_sheet_excel(
+    excel_export.export_dual_sheet_excel(
         [_record("乙", "履历\x0b第二段\x01完整")], str(path))
     bio = openpyxl.load_workbook(path)["无邮箱教师列表"]["I2"].value
     assert bio == "履历第二段完整"

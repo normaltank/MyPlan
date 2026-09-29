@@ -24,7 +24,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from server.autonomous_agent import AutonomousBrowserAgent
+from server import excel_export
 from server.faculty_extractor import (
     FacultyCandidate, FacultyDirectoryExtractor, FacultyHarvestPipeline, FacultyProfileExtractor,
     find_emails, is_personal_email_for_scholar,
@@ -913,7 +913,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         excel_path = commit_records(
             records,
             str(excel),
-            exporter=AutonomousBrowserAgent().export_dual_sheet_excel,
+            exporter=excel_export.export_dual_sheet_excel,
         )
 
     report = {

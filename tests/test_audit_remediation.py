@@ -105,7 +105,7 @@ def test_zero_candidates_not_delivery_ready():
 
 # 4. Homonyms without homepages are both preserved
 def test_homonyms_without_links_both_preserved(tmp_path):
-    from server.autonomous_agent import AutonomousBrowserAgent
+    from server.excel_export import export_dual_sheet_excel
     # Two distinct li cards with the same name "王伟", no links
     html = """<html><body>
     <div class="roster">
@@ -132,9 +132,8 @@ def test_homonyms_without_links_both_preserved(tmp_path):
 
     # Export to Excel and assert no rows were dropped
     out_file = str(tmp_path / "homonyms_test.xlsx")
-    agent = AutonomousBrowserAgent()
     records = pipeline_result["sheet1_with_email"] + pipeline_result["sheet2_no_email"]
-    stats = agent.export_dual_sheet_excel(records, out_file)
+    stats = export_dual_sheet_excel(records, out_file)
     assert stats["total"] == 2
     assert stats["no_email"] == 2
 

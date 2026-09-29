@@ -123,9 +123,9 @@ async def sync_report(task_id: str, report_path: str | Path, worker_id: str,
                 ORDER BY t.created_at,r.seq""", (school, task_id)).fetchall()
         combined = [json.loads(row[0]) for row in rows] + combined
 
-    from server.autonomous_agent import AutonomousBrowserAgent
+    from server.excel_export import export_dual_sheet_excel
 
-    AutonomousBrowserAgent().export_dual_sheet_excel(combined, str(pending_path))
+    export_dual_sheet_excel(combined, str(pending_path))
     payload["download_url"] = f"/download/{final_path.name}"
     try:
         response = await client.post(f"/api/task/{quote(task_id, safe='')}/sync", json=payload)
@@ -139,7 +139,7 @@ async def sync_report(task_id: str, report_path: str | Path, worker_id: str,
                     ORDER BY t.created_at,r.seq""", (school,)).fetchall()
                 if fresh_rows:
                     fresh_records = [json.loads(row[0]) for row in fresh_rows]
-                    AutonomousBrowserAgent().export_dual_sheet_excel(fresh_records, str(pending_path))
+                    export_dual_sheet_excel(fresh_records, str(pending_path))
                 pending_path.replace(final_path)
         else:
             pending_path.replace(final_path)

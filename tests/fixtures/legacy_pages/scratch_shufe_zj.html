@@ -1,0 +1,465 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>教授名录-人事处、教师发展中心</title><meta name="pageType" content="2">
+<meta name="pageTitle" content="教授名录">
+<META Name="keywords" Content="人事处、教师发展中心,教授名录" />
+
+<link rel="stylesheet" href="css/style.css" type="text/css">
+<link rel="stylesheet" href="css/publice.css" type="text/css">
+<script type="text/javascript" src="js/bd.js"></script>
+<script type="text/javascript" src="js/soChange.js"></script>
+<script type="text/javascript">
+$(function(){
+    $(".mainmenu dl").hide();
+    $("li.mainmenu").hover(function(){
+        $(this).find("dl").stop(true,true);
+        $(this).find("dl").slideDown();
+    },function(){
+        $(this).find("dl").stop(true,true);
+        $(this).find("dl").slideUp();
+    });
+})
+</script>
+<!--Announced by Visual SiteBuilder 9-->
+<script language="javascript" src="_sitegray/_sitegray.js"></script>
+<!-- CustomerNO:77656262657232307b76475253555742000500094650 -->
+<link rel="stylesheet" type="text/css" href="jsml.vsb.css" />
+<script type="text/javascript" src="/system/resource/js/counter.js"></script>
+<script type="text/javascript">_jsq_(1056,'/jsml.jsp',-1,1598132071)</script>
+</head>
+<body>
+<!--top s-->    
+<div class="topWrap clearfix">
+    <div class="topDiv">
+        
+<!-- 网站logo图片地址请在本组件"内容配置-网站logo"处填写 -->
+<div class="logo">
+<a href="index.htm"><img src="images/logo.jpg" style="width: 650px;"></a>
+</div>
+        <div class="topR fr">
+            <script language="javascript" src="/system/resource/js/dynclicks.js"></script><script language="javascript" src="/system/resource/js/openlink.js"></script><div class="topR_t fr">
+    <a href="http://www.shufe-zj.edu.cn/" target="_blank" title="" onclick="_addDynClicks(&#34;wburl&#34;, 1598132071, 50646)">学校首页</a>
+     
+</div>
+
+
+
+            <!-- 3.1.3版本 -->
+
+
+
+<script language="javascript" src="/system/resource/js/base64.js"></script><script language="javascript" src="/system/resource/vue/vue.js"></script><script language="javascript" src="/system/resource/vue/bluebird.min.js"></script><script language="javascript" src="/system/resource/vue/axios.js"></script><script language="javascript" src="/system/resource/vue/polyfill.js"></script><script language="javascript" src="/system/resource/vue/token.js"></script><LINK href="/system/resource/vue/static/element/index.css" type="text/css" rel="stylesheet"><script language="javascript" src="/system/resource/vue/static/element/index.js"></script><script language="javascript" src="/system/resource/vue/static/public.js"></script><script language="javascript" src="/system/resource/openapp/search/js/containsHtmlTags.js"></script><script language="javascript" src="/system/resource/openapp/search/layui/layui.js"></script><div class="Search">
+<div id="divu2"></div>
+<script type="text/html" id="htmlu2">
+    <div id="appu2">
+        <div v-if="!isError">
+        
+        <input  type="text" placeholder="请输入关键字搜索" class="search_text" autocomplete=off v-model=query.keyWord @keyup.enter="onSubmit" />
+                <div class="fdj fr"> <input type="submit" class="button pngFix" value="" style="cursor: hand" v-on:click="onSubmit()"></div>
+        
+          
+        </div>
+        <div v-if="isError" style="color: #b30216; font-size:18px;text-align: center;padding:20px;">
+            应用维护中！
+        </div>
+    </div>
+</script>
+</div>
+<script>
+    $("#divu2").html($("#htmlu2").text());
+</script>
+<script>
+    var appOwner = "1598132071";
+    var token = gettoken(10);
+    var urlPrefix = "/aop_component/";
+
+    jQuery.support.cors = true;
+    $.ajaxSetup({
+        beforeSend: function (request, settings) {
+            request.setRequestHeader("Authorization", token);
+            request.setRequestHeader("owner", appOwner);
+        }
+    });
+
+    new Vue({
+        el: "#appu2",
+        data: function () {
+            return {
+                query: {
+                    keyWord: "",//搜索关键词
+                    owner: appOwner,
+                    token: token,
+                    urlPrefix: urlPrefix,
+                    lang:"i18n_zh_CN"
+                },
+                isError: false
+            }
+        },
+        mounted: function () {
+            var _this = this;
+            // _this.init();
+        },
+        methods: {
+            init: function(){
+                $.ajax({
+                    url: "/aop_component//webber/search/test",
+                    type: "get",
+                    success: function (response) {
+                        if (response.code == "0000") {
+                        } else if (response.code == "220") {
+                            _this.isError = true;
+                            console.log(response);
+                        } else if (!response.code) {
+                            _this.isError = true;
+                            console.log(response);
+                        }
+                    },
+                    error: function (response) {
+                        _this.isError = true;
+                    }
+                });
+            },
+            onSubmit: function (e) {
+                var url = "/aop_views/search/modules/resultpc/soso.html";
+                if ("10" == "1" || "10" == "2") {
+                    url = "" + url;
+                }
+                var _this = this;
+                var query = _this.query;
+                if (url.indexOf("?") > -1) {
+                    url = url.split("?")[0];
+                }
+                if (query.keyWord) {
+                    var query = new Base64().encode(JSON.stringify(query));
+                    window.open(url + "?query=" + query);
+                } else {
+                    alert("请填写搜索内容")
+                }
+            },
+        }
+    })
+</script>
+
+<script>
+   var appElementu2 = document.querySelector("#appu2");
+   if (appElementu2 && appElementu2.__vue__) {
+
+   } else {
+      $("#divu2").html($("#htmlu2").text());
+      var appOwner = "1598132071";   
+      var urlPrefix = "/aop_component/";
+      var ifLogin="";
+      var token = ifLogin=='true'?gettoken(10, true).trim():'tourist';
+      if (containsHtmlTags(token) || !token) { 
+         token = 'tourist';
+      }
+      jQuery.support.cors = true;
+      $.ajaxSetup({
+        beforeSend: function (request, settings) {
+            request.setRequestHeader("Authorization", token);
+            request.setRequestHeader("owner", appOwner);
+        }
+      });
+      var queryInfou2 = {
+        query: {
+            keyWord: "",//搜索关键词
+            owner: appOwner,
+            token: token,
+            urlPrefix: urlPrefix,
+            lang:"i18n_zh_CN"
+        },
+        isError: false
+      };
+      function keyUpFunu2(e){
+        var theEvent = e || window.event;
+        var keyCode = theEvent.keyCode || theEvent.which || theEvent.charCode;
+        if(keyCode == 13){
+          onSubmitu2();
+        }
+      };
+
+      function onSubmitu2(e) {
+        queryInfou2.query.keyWord= $("#appu2  .qwss").val();
+        
+        var url = "/aop_views/search/modules/resultpc/soso.html";      
+        if ("10" == "1" || "10" == "2") {
+           url = "" + url;
+        }
+        var query = queryInfou2.query;
+        if (url.indexOf("?") > -1) {
+            url = url.split("?")[0];
+        }
+        if (query.keyWord) {
+            var query = new Base64().encode(JSON.stringify(query));
+            window.open(url + "?query=" + query);
+        } else {
+            alert("请填写搜索内容")
+        }
+      };
+   }
+</script>
+        </div>
+    </div>
+</div>
+<!--nav-->
+<div class="navWrap  clearfix">
+    <div class="nav">
+    <ul>
+			<li>
+			<a class="link" href="index.htm">首页</a>
+						
+		</li>
+		<li class="mainmenu">
+		    <a class="link" href="jsml.htm">教授名录</a>
+		</li>
+		<li class="mainmenu">
+		    <a class="link" href="rcxq.htm">人才需求</a>
+		</li>
+		<li class="mainmenu">
+		    <a class="link" href="rstz.htm">人事通知</a>
+		</li>
+		<li class="mainmenu">
+		    <a class="link" href="pxtz.htm">培训通知</a>
+		</li>
+		<li class="mainmenu">
+		    <a class="link" href="zczl.htm">职称专栏</a>
+		</li>
+		<li class="mainmenu">
+		    <a class="link" href="clxz.htm">材料下载</a>
+		</li>
+     
+    </ul>
+</div>
+</div>
+<script type="text/javascript">
+
+	$(".mainmenu dl").hide();
+
+</script>
+        <!--banner-->
+<div class="vsb-box">
+    
+    
+    <div class="vsb-container a" containerid="1" columns="6">
+        <!--banner3-->
+        <div class="vsb-space banner_three" columns="6">
+                <div class="eachBox">
+<div class="changeBox_a1" id="change_32">
+
+
+<div class="changeDiv">
+<h3><a href="images/xiaoyuandamen.png" target="_blank"></a></h3>
+<a href="images/xiaoyuandamen.png" onclick="_addDynClicks(&#34;wbimage&#34;, 1598132071, 54352)"><img width="1000" height="335" src="images/xiaoyuandamen.png" /></a>
+</div>
+
+
+<ul class="ul_change_a2">
+<li><span></span></li>
+</ul>
+
+
+</div>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        </div>
+        
+    </div>
+</div>
+<div class="mainWrap clearfix" style="min-height:300px;">
+    <div class="main_tit">
+        <div class="main_titT main_titTa">
+            <img src="img/bri_icon1.png">
+
+<a href="index.htm">首页</a>>
+<a href="jsml.htm" class="cur">教授名录</a>
+        </div>
+</div>
+
+    <div class="main_con">
+        <div class="main_conL">
+            <div class="main_conLT">
+                <dl>
+                    
+<dt>教授名录</dt>
+                    
+                </dl>
+            </div>
+            <div class="informBox informBoxb informBoxb1" style="display:none">
+                
+                    <div class="zp_pic">
+
+                </div>
+        </div>
+        </div>
+        <style>
+
+        .js_js{
+       overflow:hidden;
+    width: 180px;
+    font-size: 18px;
+    padding: 9px 0;
+    line-height: 24px;
+    text-align: center;
+    color: #fcfcfc;
+    background: #0B6CB8;
+    margin: 7px 10px;
+    border-radius: 8px;}
+    .js_ul{
+    overflow:hidden;
+    width: 98%;
+    _width: 840px;
+    margin: 5px 10px 10px 10px;
+    float: left;
+    border: 1px solid #eee;
+    height: auto;}
+    
+    .js_s{
+        float: left;
+    text-align: center;
+    width: 20%;transition: all 0.3s ease-in;
+    border-bottom: 1px dashed #eee;padding: 14px 0;
+    cursor: pointer;}
+    .js_s .tit{    color: #666;
+    font-size: 16px;
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;}
+
+        </style>
+        <div class="main_conR">
+   <div class="js_js">教授名录</div>
+            <ul class="js_ul">
+
+<script language="javascript" src="/system/resource/js/centerCutImg.js"></script><script language="javascript" src="/system/resource/js/ajax.js"></script><li class="js_s"><a href="info/1062/1490.htm" class="tit">王建新</a></li>
+<li class="js_s"><a href="info/1062/2232.htm" class="tit">江晓东</a></li>
+<li class="js_s"><a href="info/1062/2352.htm" class="tit">曾庆丰</a></li>
+<li class="js_s"><a href="info/1062/2482.htm" class="tit">徐玉芳</a></li>
+<li class="js_s"><a href="info/1062/2242.htm" class="tit">武斌</a></li>
+<li class="js_s"><a href="info/1062/2522.htm" class="tit">刘丽君</a></li>
+<li class="js_s"><a href="info/1062/2512.htm" class="tit">姜艳艳</a></li>
+<li class="js_s"><a href="info/1062/2502.htm" class="tit">朱国华</a></li>
+<li class="js_s"><a href="info/1062/2492.htm" class="tit">胡志明</a></li>
+<li class="js_s"><a href="info/1062/2008.htm" class="tit">曹灵美</a></li>
+<li class="js_s"><a href="info/1062/1841.htm" class="tit">沈炳良</a></li>
+<li class="js_s"><a href="info/1062/1832.htm" class="tit">左文进</a></li>
+<li class="js_s"><a href="info/1062/1613.htm" class="tit">池水明</a></li>
+<li class="js_s"><a href="info/1062/2009.htm" class="tit">顾卫星</a></li>
+<li class="js_s"><a href="info/1062/1882.htm" class="tit">贺小刚</a></li>
+<li class="js_s"><a href="info/1062/1851.htm" class="tit">魏航</a></li>
+<li class="js_s"><a href="info/1062/1852.htm" class="tit">应望江</a></li>
+<li class="js_s"><a href="info/1062/1853.htm" class="tit">韩松乔</a></li>
+<li class="js_s"><a href="info/1062/1854.htm" class="tit">崔丽丽</a></li>
+<li class="js_s"><a href="info/1062/1855.htm" class="tit">郝晓玲</a></li>
+<li class="js_s"><a href="info/1062/1856.htm" class="tit">黄海量</a></li>
+<li class="js_s"><a href="info/1062/1857.htm" class="tit">张涛</a></li>
+<li class="js_s"><a href="info/1062/1858.htm" class="tit">杨国静</a></li>
+<li class="js_s"><a href="info/1062/1859.htm" class="tit">赵珂</a></li>
+<li class="js_s"><a href="info/1062/1860.htm" class="tit">赵海兵</a></li>
+<li class="js_s"><a href="info/1062/1861.htm" class="tit">吴纯杰</a></li>
+<li class="js_s"><a href="info/1062/1862.htm" class="tit">靳玉英</a></li>
+<li class="js_s"><a href="info/1062/1863.htm" class="tit">李劲松</a></li>
+<li class="js_s"><a href="info/1062/1865.htm" class="tit">董静</a></li>
+<li class="js_s"><a href="info/1062/1866.htm" class="tit">刘志阳</a></li>
+<li class="js_s"><a href="info/1062/1867.htm" class="tit">鲍晓华</a></li>
+<li class="js_s"><a href="info/1062/1868.htm" class="tit">丁浩员</a></li>
+<li class="js_s"><a href="info/1062/1869.htm" class="tit">范宝舟</a></li>
+<li class="js_s"><a href="info/1062/1870.htm" class="tit">郝云</a></li>
+<li class="js_s"><a href="info/1062/1871.htm" class="tit">李宏</a></li>
+<li class="js_s"><a href="info/1062/1873.htm" class="tit">金洪飞</a></li>
+<li class="js_s"><a href="info/1062/1874.htm" class="tit">朱小能</a></li>
+<li class="js_s"><a href="info/1062/1875.htm" class="tit">胡乃红</a></li>
+<li class="js_s"><a href="info/1062/1876.htm" class="tit">曹啸</a></li>
+<li class="js_s"><a href="info/1062/1877.htm" class="tit">朱凯</a></li>
+<li class="js_s"><a href="info/1062/1878.htm" class="tit">曾庆生</a></li>
+<li class="js_s"><a href="info/1062/1879.htm" class="tit">黄俊</a></li>
+<li class="js_s"><a href="info/1062/1880.htm" class="tit">刘浩</a></li>
+<li class="js_s"><a href="info/1062/1881.htm" class="tit">薛爽</a></li>
+<script>_showDynClickBatch(['dynclicks_u9_1490','dynclicks_u9_2232','dynclicks_u9_2352','dynclicks_u9_2482','dynclicks_u9_2242','dynclicks_u9_2522','dynclicks_u9_2512','dynclicks_u9_2502','dynclicks_u9_2492','dynclicks_u9_2008','dynclicks_u9_1841','dynclicks_u9_1832','dynclicks_u9_1613','dynclicks_u9_2009','dynclicks_u9_1882','dynclicks_u9_1851','dynclicks_u9_1852','dynclicks_u9_1853','dynclicks_u9_1854','dynclicks_u9_1855','dynclicks_u9_1856','dynclicks_u9_1857','dynclicks_u9_1858','dynclicks_u9_1859','dynclicks_u9_1860','dynclicks_u9_1861','dynclicks_u9_1862','dynclicks_u9_1863','dynclicks_u9_1865','dynclicks_u9_1866','dynclicks_u9_1867','dynclicks_u9_1868','dynclicks_u9_1869','dynclicks_u9_1870','dynclicks_u9_1871','dynclicks_u9_1873','dynclicks_u9_1874','dynclicks_u9_1875','dynclicks_u9_1876','dynclicks_u9_1877','dynclicks_u9_1878','dynclicks_u9_1879','dynclicks_u9_1880','dynclicks_u9_1881'],[1490,2232,2352,2482,2242,2522,2512,2502,2492,2008,1841,1832,1613,2009,1882,1851,1852,1853,1854,1855,1856,1857,1858,1859,1860,1861,1862,1863,1865,1866,1867,1868,1869,1870,1871,1873,1874,1875,1876,1877,1878,1879,1880,1881],"wbnews", 1598132071)</script>
+</ul>
+
+
+   
+            
+            
+              <!-- <div class="js_js">母体学校学科带头人</div> -->
+           <!--<ul class="js_ul">-->
+
+
+<!--</ul>-->
+            
+               
+
+           
+
+        </div>
+    </div>
+</div>
+<!--foot-->
+<div class="footWrap clearfix">
+
+<div class="footDiv_three">
+<div class="foot_three">
+
+<div class="foot-left">
+<script type="text/javascript">document.write(unescape("%3Cspan id='_ideConac' %3E%3C/span%3E%3Cscript src='http://dcs.conac.cn/js/12/192/0000/60919047/CA121920000609190470003.js' type='text/javascript'%3E%3C/script%3E"));</script>
+<!-- 版权内容请在本组件"内容配置-版权"处填写 -->
+<p style="text-align: center;"><span style="color: rgb(0, 0, 0);">版权所有：上海财经大学浙江学院人事处、教师发展中心 &nbsp; 地址：金华市环城南路99号 &nbsp;邮编：321013</span></p><p style="text-align: center;"><span style="color: rgb(0, 0, 0);">备案号：<a href="https://beian.miit.gov.cn/" target="_blank" style="color: rgb(0, 0, 0);">浙ICP备12031395号-1 </a></span><a href="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=33070302100009" target="_self"><img width="20" height="20" src="/virtual_attach_file.vsb?afc=5L8lCbUmN4LN-4oQzVVM4WRUlVfn7CqYozl8oRW2MlQkL4U0gihFp2hmCIa0nkyaL1yZoSh7U4ffMRQ2U4rkLzrkL4LDL8Q2UzvZU8CDU46FU4-DM8-4oRQFM7-4okbaptveo4Oe_jXYvDMZgDTJQty0gzL0gzLJqdpnx&oid=1598132071&e=.png" style="display: inline-block;" /></a><span style="color: rgb(0, 0, 0);">浙公网安备 33070302100009号</span></p>
+<p></p></div>
+
+
+</div>
+</div></div>
+
+</body>
+</html>
+<script type="text/javascript">
+$(function () {
+
+//切换对象为其他，这里为包含图片和标题的层
+    $('#change_32 div.changeDiv').soChange({//对象指向层，层内包含图片及标题
+        thumbObj:'#change_32 .ul_change_a2 span',
+        thumbNowClass:'on'//自定义导航对象当前class为on
+    });
+
+});
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

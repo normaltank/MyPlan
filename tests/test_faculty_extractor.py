@@ -3,6 +3,8 @@ TDD Tests for FacultyExtractor: Slice 1 - FacultyDirectoryExtractor
 Verifies DOM Isomorphic Clustering without keyword blacklists.
 """
 
+import os
+
 import pytest
 from server.faculty_extractor import FacultyDirectoryExtractor, FacultyCandidate
 
@@ -94,6 +96,8 @@ SAMPLE_DIRECTORY_HTML = """
 </body>
 </html>
 """
+
+_LEGACY_PAGES = os.path.join(os.path.dirname(__file__), "fixtures", "legacy_pages")
 
 def test_extract_directory_isomorphic_clustering():
     """
@@ -387,8 +391,8 @@ def test_real_world_boda_and_shufe_pages():
     from server.faculty_extractor import FacultyDirectoryExtractor
 
     # 1. SISU Law
-    if os.path.exists("scratch_law.html"):
-        with open("scratch_law.html", "r", encoding="utf-8") as f:
+    if os.path.exists(os.path.join(_LEGACY_PAGES, "scratch_law.html")):
+        with open(os.path.join(_LEGACY_PAGES, "scratch_law.html"), "r", encoding="utf-8") as f:
             html_law = f.read()
         candidates_law = FacultyDirectoryExtractor.extract(html_law, "https://law.shisu.edu.cn/zrjs/list.htm")
         names_law = [c.name for c in candidates_law]
@@ -397,8 +401,8 @@ def test_real_world_boda_and_shufe_pages():
         assert "蔡嘉伟" in names_law
 
     # 2. SHUFE Zhejiang
-    if os.path.exists("scratch_shufe_zj.html"):
-        with open("scratch_shufe_zj.html", "r", encoding="utf-8") as f:
+    if os.path.exists(os.path.join(_LEGACY_PAGES, "scratch_shufe_zj.html")):
+        with open(os.path.join(_LEGACY_PAGES, "scratch_shufe_zj.html"), "r", encoding="utf-8") as f:
             html_shufe = f.read()
         candidates_shufe = FacultyDirectoryExtractor.extract(html_shufe, "https://zjxy.sufe.edu.cn/szdw/list.htm")
         assert len(candidates_shufe) == 44, f"Expected 44 scholars, got {len(candidates_shufe)}"
