@@ -1,28 +1,6 @@
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
-> **2026-09-29 侦察异常用量根因修订**：宁夏理工学院机械工程学院工单 `51ffad482ce3460eb41ccaac631197a3` 在侦察阶段人工停止，Harness 记录合计 177 次模型请求、3,145,129 Token，未进入批量采集或 OCR。根因复核发现入口发现把目录页与所指名录正文重复列为分支，浏览器又把目录卡片链接误标为个人页样例，首分支未能提交个人正文证明而反复补缺。已改为 `linkedSamples`，明确目录型导航分支及子名录浏览器证明；结构失败保留已验证分支、反馈只传对应阶段，连续同一问题无新增证明即停止。导航一次读取上限由 24 增至 64，同时保留 8 KB 返回预算和未读范围；固定 80 次/100 万 Token 默认熔断已撤销，管理员可选开启。相关 108 项测试通过；服务已切换，未付费复跑该站，不能声称其采集成功或 Token 降幅已实测。证据及后续边界见 [本次审计](docs/audits/2026-09-29-nxist-recon-cost.md)。以下 PID、队列、测试数均为各自记录时状态。
-
-> **2026-09-28 已登录图片复核与三账号验收**：新员工工单的低置信图片 OCR 和邮箱冲突在主 Web 中按工单归属复核；完成后可使同一失败工单重新入队，决定随各轮采集继续接受原图证据校验。管理员网页同时归档无员工归属的 `scratch` 验收材料，并区分已复核/待复核。旧独立 `8765` 服务已关闭，既有 OCR/邮箱决定文件保留。隔离数据库的真实 Chromium 管理员与两员工三会话验收覆盖网页建号、提单、跨账号拒绝、复核、重试、版本下载和每日统计；虚拟记录仅检验流程，不代表官网采集质量，0 DeepSeek 调用。正式 `tests/` 全量 **440 passed、1 skipped**，随后 6 项 API 专项与 1 项真实浏览器专项通过；正式库仍 1 管理员、112 工单、0 活动工单，worker 在线，主网页 200。未做 Linux/HTTPS 部署。见 [本轮审计](docs/audits/2026-09-28-authenticated-image-review.md)。以下旧记录均为当时状态。
-
-> **2026-09-28 员工账号、工单隔离与每日统计**：已按用户确认的方案增加平台内账号密码登录；管理员在本机网页完成首个 `admin` 账号创建。新工单绑定提交人，员工只能访问本人历史、工单、批次和获准的大学版本下载；管理员可查看全部。旧工单无可信提交人，仅管理员可见。网页当前工单指针按账号隔离；每日统计按台北时间显示提交/完成学院数及通过审计的教师记录行数，管理员可查看各员工。记录行数包含复采工作量，不是跨工单去重人数。密码变更、会话撤销、登录失败限制和变更请求校验已实现。默认 Web 只监听 `127.0.0.1:8000`；跨电脑使用仍需配置 HTTPS 入口，不能直接开放明文 HTTP。`8765` 图片复核页仍是独立本机页面，不属于此次员工权限改造。固定环境全量回归 **436 passed、1 skipped**；其后分页/登录页调整的专项回归 **22 passed**，最终会话过期/禁用账号专项 **10 passed**。当前本机 Web 首页 200，匿名历史 401，复核页 200；未新建采集工单、未调用 DeepSeek。设计和实施记录见 [员工隔离设计](docs/superpowers/specs/2026-09-28-employee-isolation-design.md) 与 [实施计划](docs/superpowers/plans/2026-09-28-employee-isolation.md)。下列旧测试数及服务状态均为当时记录。
-
-> **2026-09-28 前台提单无进度排障**：用户通过双击批处理提交内蒙古大学马克思主义学院后，worker 实际已认领并运行 Harness；旧 Web 启动路径以顶层 `app` 加载，任务/批次状态接口因找不到 `server` 包返回 500。已统一包导入与固定环境启动，安全切换仅 Web 进程；当前状态接口 200，浏览器显示“自动采集中”和官网结构侦察提示，worker 仍在线，用户工单尚未交付。入口回归及相关前端/worker测试 18 passed。排障中的一次测试工单误入正式队列，已停止并清理，审计留存；确实发生过测试 DeepSeek 侦察。见 [启动入口排障](docs/audits/2026-09-28-live-web-launcher.md)。
-
-> **2026-09-28 前端当前任务与接单状态**：修正网页默认误显示绍兴文理学院 11 院历史待复核批次；右侧默认“待提交”，仅自动恢复本浏览器的活动工单，历史须主动打开且待复核用黄色警示。新增只读历史摘要与 worker 心跳，单院/批量官网入口提交前校验。固定环境全量 376 passed、1 skipped；真实浏览器确认默认/历史/重置与后台在线；旧问题版本下载仍 409。生产队列 108 条空闲，未提交新工单、未调用 DeepSeek。Windows 当前进程在线不代表开机自启。见 [前端审计](docs/audits/2026-09-28-web-current-request.md)。下面旧 PID 与测试数都是当时的历史记录。
-
-> **2026-09-27 随机新学院追加**：固定环境全量 **365 passed、1 skipped**，独立复核无剩余 P1/P2。教育部名单先排除历史样本，再冻结六个不同地区学校及随机学院，真实测试不换失败样本：宁夏药学院 62 条独立通过；中传 23 条详情全部验证、两空分支阻断；四川工商 17 条观察保留、资源失败/超时和同名身份阻断；武汉城市无完整公开名录、深圳职大学院校内限制、河北地质学院入口连接失败。修复实际正文范围、逐详情/缓存可见性证明、官网旧 Map 污染、正文外动画误阻断，保留全部原 HTML 及负证明。19:43:21 worker PID 91352/Web PID 84096 已更新；主页 200，108 工单空闲（88 completed/20 failed），旧问题版本仍 409。0 新生产工单、0 DeepSeek 请求；本次 Codex 子智能体侦察不能等同 Harness 自主验收，六校不是全国适配率。见 [随机验证审计](docs/audits/2026-09-27-random-college-validation.md)。下列测试数、服务 PID 和结论均为发生时历史记录。
-
-> **2026-09-27 分页续采与空态追加**：最新全量 **306 passed、1 skipped**。普通 URL 分页中断可重新核验最后成功页并续采，保留原时间及页数预算；不可靠前沿回入口。普通单页明确空态须侦察和独立采集双重证明，隐藏 DOM/伪元素、媒体、请求活动及其它内容阻断，全部零人进入复核且不重复结构模型补缺。两项独立复核已闭合。本轮为本地真实 Playwright 回放，0 模型请求/0 Token/0 新生产工单；未宣称历史法学系或图片工单解决。侦察 MD 更新使旧契约方案需重新侦察，永久历史仍保留。12:29:54 固定环境服务更新，worker PID 62360/Web PID 25700；主页 200，旧身份待复核下载仍 409，队列 108（88 completed/20 failed），无待处理。见 [最新审计](docs/audits/2026-09-27-verifiable-harvest.md)。下列记录为各阶段历史结果。
-
-> **2026-09-27 永久方案库追加**：最新全量 **284 passed、1 skipped**。结构方案现保存在 `server/outputs/plan-cache/plans.sqlite3`，无默认到期，保留去重历史版本与验证状态；旧 JSON 幂等导入、原文件及时间保留。每次复用仍须本轮真实浏览器导航/卡片/分页核验，当前实际数据库复用已验证 0 模型/0 Token。教师详情新采集、覆盖与身份门禁保持，页面快照 24 小时规则保持。固定环境 worker/Web 已更新，生产队列空闲；不存在全站零 Token 或身份问题已全部解决的结论。见 [最新审计](docs/audits/2026-09-27-verifiable-harvest.md)。
-
-> **2026-09-27 实时复核补充**：此阶段全量 **271 passed、1 skipped**。修复实际 Harness 没有加载浏览器、通用 workflow/jobs/ralph 误用：默认当前 SDK bundled runtime/项目专用 home、正式插入 MCP、CLI 阶段/会话、模型请求前检查实际合成配置。国际汉语文化学院真实冷/缓存工单核实 6 分支；缓存复采 0 模型/0 Token。45 是页面观察数，不是教师人数：14 组同名双主页必须身份复核，不能直接删为 31 人。现导出、收据、大学汇总及历史版本下载均阻断，完整正文保留，旧版本 URL 返回 409；下载审核绑定文件自身原始工单，后续正常快照不能放行未替换的旧文件；批次显示待复核并停止轮询。余额中断续接后 Web/worker 已更新，主页 200，无新增模型请求；修复后实时复采仍零模型消费，45 条观察/14 组问题、无 Excel。空名录、服务器图片核验与身份来源裁决未完成，不能宣称全网站自动交付。失败消费均见任务目录审计；失败收据现保存审计引用。最新队列 108（88 completed/20 failed），无待处理；completed 历史工单仍可在大学范围重新判为 blocked。见 [更新审计](docs/audits/2026-09-27-verifiable-harvest.md)。下文早期状态保留为当时记录。
-
-> **2026-09-27 可验证工作流实施**：全量回归 **250 passed、1 skipped**。覆盖账本、任务内逐页断点、经过本轮浏览器验证的结构缓存、访问局部补缺与分支重侦察、大学范围版本交付已接入。实际正文模板误删、共享主页误阻断、跨分支证据污染、跨工单/跨计划错误恢复及失败 Token 审计缺失均有修复与回归。保存的真实 89 人页面通过 Playwright 拦截回放，身份集合与基线一致（5 + 84）；同任务恢复 0 页面访问、0 模型调用。本轮实时官网连接关闭/重置，未通过实时缓存验证，不能将回放当成新的官网覆盖。Web 与 worker 已在空闲队列切换固定环境，主页 200；生产工单仍 86 完成、17 失败，无待采集/运行，未重排历史任务。实施、证据与边界见 [本日审计](docs/audits/2026-09-27-verifiable-harvest.md) 与 [运行说明](docs/architecture/verifiable-harvest-runtime.md)。下文旧运行记录保留为发生时状态。
-
-> **2026-09-26 Harness 工作流与上下文更新**：当前完整回归 **165 passed、1 skipped**。服务器由代码执行“发现全部入口 → 每分支新上下文验证 → 确定性采集 → 最多两轮补缺 → 大学双 Sheet 交付”，所有待采集学院同时派发，无项目并发上限。已阻断补缺删除既有分支、同 URL AJAX 误判单页及非法 URL 回放，真实重定向须有浏览器证据。本地 worker 已切换到 `.runtime/worker-venv` 固定环境。同站两次分阶段实测累计 Token 比基线下降 41.9%/53.9%，均采集 89 人（5 + 84）；收尾代码重放仍一致，收尾改动未重测 Token。真实选择器故障经过 Harness 补缺恢复 89 人。未重跑历史失败工单，未验证 Linux 常驻部署。详情见 [本日审计](docs/audits/2026-09-26-harness-context-audit.md)。下文旧测试数与阻塞项保留为发生时的记录。
-
-> **2026-09-24 可靠性加固状态**：下文的首批真实工单失败与 A3「当前阻塞」是发生时的历史记录。现已加入服务器模型计划严格契约、单页分页探查、缺少卡片选择器的阻断、同构卡片生僻姓结构证据、交付成功日志修正，并补齐 `pypinyin` 与 Python 3.12 依赖锁定。隔离环境全量测试 **137 passed、1 skipped**；尚未重跑首批真实工单，也未验证 Linux 常驻部署，不能据此宣称这些工单已自动交付。
+> 按日期追加的状态说明已移到 [CHANGELOG.md](CHANGELOG.md)（最新在前）。本文件描述系统本身；§九、§十中 2026-09-24 的“当前阻塞”等表述是当时的记录。
 
 > **致接手本项目的智能体（主控与 Subagent）**：  
 > 本文档是项目的系统级知识库与业务交接权威指南。明确定义了业务使命、核心工作流 SOP、底层计算机科学架构（CS Deep Module）、业务经验规则库、当前系统运行状态与历史交付总表。请完整阅读并在操作中严格遵循。
@@ -39,7 +17,7 @@
 
 ## 二、 核心业务闭环工作流（5 步 SOP）
 
-> 💡 **SOP 技能封装**：该五步工作流已被完整封装为专属技能 [`faculty-browser-harvest`](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/skills/faculty-browser-harvest/SKILL.md)，遵循渐进式披露原则，在执行采集任务时按需读取。
+> 💡 **SOP 技能封装**：该五步工作流已被完整封装为专属技能 [`faculty-browser-harvest`](.agents/skills/faculty-browser-harvest/SKILL.md)，遵循渐进式披露原则，在执行采集任务时按需读取。
 
 ```
 1.【前端提交】用户或同事在本地 Web 网页端 (http://localhost:8000) 输入 1 所或批量 10-20 所高校学院
@@ -98,7 +76,7 @@
 `commit_records(records, destination, exporter)` 只提交已经通过审计的记录。
 聘任资格属于独立的 `server/harvest_eligibility.py` 领域策略。具体院校的入口、选择器、快照和任职证据是计划或验收夹具，不得写成通用采集器中的域名分支。
 
-系统核心抽取引擎基于严格的计算机科学与编译器/排版原理实现（位于 [`server/faculty_extractor.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/faculty_extractor.py)），并通过 TDD 测试防护网（[`tests/test_faculty_extractor.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/tests/test_faculty_extractor.py)）锁死质量保障：
+系统核心抽取引擎基于严格的计算机科学与编译器/排版原理实现（位于 [`server/faculty_extractor.py`](server/faculty_extractor.py)），并通过 TDD 测试防护网（[`tests/test_faculty_extractor.py`](tests/test_faculty_extractor.py)）锁死质量保障：
 
 1. **DOM 同构子树聚类 (Isomorphic Subtree Clustering)**：
    - 从树论与结构熵出发，将列表页中的教师卡片识别为具有相同 DOM 结构指纹（Structural Tag Sequence, STS）的同胞子树最大簇；
@@ -142,7 +120,7 @@
 ## 六、 当前系统运行环境与接口矩阵
 
 1. **本地 Web 后台服务**：
-   - 入口文件：[`server/app.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/app.py)（启动脚本：`server/start_server.py`）
+   - 入口文件：[`server/app.py`](server/app.py)（启动脚本：`server/start_server.py`）
    - 监听地址：`http://0.0.0.0:8000`（本地访问：`http://localhost:8000`）
    - 核心 API 矩阵：
      - `GET /api/queue/stats`：实时队列指标（待处理/运行中/已完成/失败）
@@ -153,22 +131,22 @@
      - `GET /download/{filename}`：前台同事一键下载生成的 Excel 表格
 
 2. **核心代码库定位**：
-   - 工单只读巡检器：[`server/auto_dispatcher.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/auto_dispatcher.py)（启动脚本：`启动自动巡检接单.bat`）；不会认领工单
-   - 旧脚本调度器：[`server/ide_dispatch_runner.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/ide_dispatch_runner.py)；采集入口已阻断，不用于当前工单履约
-   - 工单队列管理：[`server/agent_queue.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/agent_queue.py)
-   - 核心 CS 提取引擎：[`server/faculty_extractor.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/faculty_extractor.py)
-   - Subagent 按需浏览器批量工具：[`server/browser_batch_tool.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/browser_batch_tool.py)
-   - 图片截图与本地 OCR：[`server/browser_poster_tool.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/browser_poster_tool.py)
-   - 本地工单同步：[`server/browser_batch_sync.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/browser_batch_sync.py)
-   - 历史 HTTP 批量提取器（不用于工单履约）：[`.agents/skills/faculty-browser-harvest/scripts/batch_browser_extractor.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/skills/faculty-browser-harvest/scripts/batch_browser_extractor.py)
-   - 浏览器智能体基座：[`server/autonomous_agent.py`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/autonomous_agent.py)
-   - 交付产物输出目录：[`server/outputs/`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/)
+   - 工单只读巡检器：[`server/auto_dispatcher.py`](server/auto_dispatcher.py)（启动脚本：`启动自动巡检接单.bat`）；不会认领工单
+   - 旧脚本调度器：[`server/ide_dispatch_runner.py`](server/ide_dispatch_runner.py)；采集入口已阻断，不用于当前工单履约
+   - 工单队列管理：[`server/agent_queue.py`](server/agent_queue.py)
+   - 核心 CS 提取引擎：[`server/faculty_extractor.py`](server/faculty_extractor.py)
+   - Subagent 按需浏览器批量工具：[`server/browser_batch_tool.py`](server/browser_batch_tool.py)
+   - 图片截图与本地 OCR：[`server/browser_poster_tool.py`](server/browser_poster_tool.py)
+   - 本地工单同步：[`server/browser_batch_sync.py`](server/browser_batch_sync.py)
+   - 历史 HTTP 批量提取器（不用于工单履约）：[`.agents/skills/faculty-browser-harvest/scripts/batch_browser_extractor.py`](.agents/skills/faculty-browser-harvest/scripts/batch_browser_extractor.py)
+   - 浏览器智能体基座：[`server/autonomous_agent.py`](server/autonomous_agent.py)
+   - 交付产物输出目录：[`server/outputs/`](server/outputs/)
 
 ---
 
 ## 七、 Subagent 提示词规范与派发模板 (黄金提示词)
 
-当前派发模板以 [faculty-browser-harvest/SKILL.md](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/skills/faculty-browser-harvest/SKILL.md) 为准。主控将变量 `{school}`, `{college}`, `{url}`, `{task_id}` 替换后注入最小提示词；具体工具说明只在命中对应页面形态时读取 [TOOLS.md](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/skills/faculty-browser-harvest/TOOLS.md)：
+当前派发模板以 [faculty-browser-harvest/SKILL.md](.agents/skills/faculty-browser-harvest/SKILL.md) 为准。主控将变量 `{school}`, `{college}`, `{url}`, `{task_id}` 替换后注入最小提示词；具体工具说明只在命中对应页面形态时读取 [TOOLS.md](.agents/skills/faculty-browser-harvest/TOOLS.md)：
 
 ```markdown
 /browser
@@ -188,19 +166,19 @@
 ## 八、 交付总表与主知识库资产清册 (Master Delivery Ledger)
 
 ### 1. 全量师资总库规模
-根目录核心知识库 [`教师列表.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/%E6%95%99%E5%B8%88%E5%88%97%E8%A1%A8.xlsx) 全量师资总库去重合并后达到 **5,761 位** 真实在职专任学者，100% 严格满足双 Sheet 守恒公理。
+根目录核心知识库 [`教师列表.xlsx`](%E6%95%99%E5%B8%88%E5%88%97%E8%A1%A8.xlsx) 全量师资总库去重合并后达到 **5,761 位** 真实在职专任学者，100% 严格满足双 Sheet 守恒公理。
 
 ### 2. 重点批次交付清单
 
 | 批次 ID | 目标高校 | 学院/单位数 | 实收学者数 | 邮箱覆盖率 | 批次合并总表交付件 |
 | :---: | :--- | :---: | :---: | :---: | :--- |
-| `1a62151d` | **湖南师范大学 (Hunan Normal University)** | 8 所（7 交付 + 1 覆盖缺口） | **238** | 21.0% (50人有邮箱) | [`湖南师范大学.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/湖南师范大学.xlsx) |
-| `gszy-batch` | **甘肃中医药大学 (Gansu University of Chinese Medicine)** | 12 所 | **953** | 30.6% (292人有邮箱) | [`甘肃中医药大学.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/甘肃中医药大学.xlsx) |
-| `ec535c3f` | **西安音乐学院 (Xi'an Conservatory of Music)** | 10 所 | **562** | 0.0% (562人无邮箱) | [`西安音乐学院.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/西安音乐学院.xlsx) |
-| `6de5e7cd` / `f466f13d` | **绍兴文理学院 (Shaoxing University)** | 11 所 | **449** | 2.4% (11人) | [`绍兴文理学院.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/绍兴文理学院.xlsx) |
-| `4f0dee1a` | **南京林业大学 & 江苏大学** | 18 所 | **1,355** | 61.3% (831人) | [`批量采集教师列表_合集_南京林业大学_江苏大学_18学院_20260922.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/批量采集教师列表_合集_南京林业大学_江苏大学_18学院_20260922.xlsx) |
-| `a01cf3d1` | **河海大学 & 江南大学** | 14 所 | **630** | 91.7% (578人) | [`批量采集教师列表_合集_河海大学_江南大学_14学院_20260922.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/批量采集教师列表_合集_河海大学_江南大学_14学院_20260922.xlsx) |
-| `04d85c4d` | **上海外国语大学** | 6 所 | **204** | 22.5% (46人) | [`批量采集教师列表_合集_20260921_101228.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/批量采集教师列表_合集_20260921_101228.xlsx) |
+| `1a62151d` | **湖南师范大学 (Hunan Normal University)** | 8 所（7 交付 + 1 覆盖缺口） | **238** | 21.0% (50人有邮箱) | [`湖南师范大学.xlsx`](server/outputs/湖南师范大学.xlsx) |
+| `gszy-batch` | **甘肃中医药大学 (Gansu University of Chinese Medicine)** | 12 所 | **953** | 30.6% (292人有邮箱) | [`甘肃中医药大学.xlsx`](server/outputs/甘肃中医药大学.xlsx) |
+| `ec535c3f` | **西安音乐学院 (Xi'an Conservatory of Music)** | 10 所 | **562** | 0.0% (562人无邮箱) | [`西安音乐学院.xlsx`](server/outputs/西安音乐学院.xlsx) |
+| `6de5e7cd` / `f466f13d` | **绍兴文理学院 (Shaoxing University)** | 11 所 | **449** | 2.4% (11人) | [`绍兴文理学院.xlsx`](server/outputs/绍兴文理学院.xlsx) |
+| `4f0dee1a` | **南京林业大学 & 江苏大学** | 18 所 | **1,355** | 61.3% (831人) | [`批量采集教师列表_合集_南京林业大学_江苏大学_18学院_20260922.xlsx`](server/outputs/批量采集教师列表_合集_南京林业大学_江苏大学_18学院_20260922.xlsx) |
+| `a01cf3d1` | **河海大学 & 江南大学** | 14 所 | **630** | 91.7% (578人) | [`批量采集教师列表_合集_河海大学_江南大学_14学院_20260922.xlsx`](server/outputs/批量采集教师列表_合集_河海大学_江南大学_14学院_20260922.xlsx) |
+| `04d85c4d` | **上海外国语大学** | 6 所 | **204** | 22.5% (46人) | [`批量采集教师列表_合集_20260921_101228.xlsx`](server/outputs/批量采集教师列表_合集_20260921_101228.xlsx) |
 | 标杆名校群 | **清华、北大、复旦、浙大、人大、武大、中山、南大** | 12 所重点院系 | **650+** | >95% (标杆满覆盖) | 各学院独立双 Sheet 交付表已全量归档于 `server/outputs/` |
 | 工科与环境群 | **同济大学、华东师大、上海师范大学** | 3 所重点学院 | **424** | 88.4% (375人) | 同济环境(197人)、华东师大地理(146人)、上师大环地(81人) |
 
@@ -216,7 +194,7 @@
   8. 现代音乐学院 (40 位学者，通过本地 RapidOCR 视觉降级流水线与百家姓先验切词 100% 还原海报名单)
   9. 舞蹈学院 (21 位学者)
   10. 马克思主义学院 (1 位学者)
-- **双 Sheet 守恒校验与大学表交付**：$0(\text{有邮箱}) + 562(\text{无邮箱}) = 562(\text{总人数})$，100% 严格守恒。以大学命名的全校双 Sheet 总表 [`西安音乐学院.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/西安音乐学院.xlsx) 涵盖全校 562 位专任学者，已同步回传至 Web 前台。
+- **双 Sheet 守恒校验与大学表交付**：$0(\text{有邮箱}) + 562(\text{无邮箱}) = 562(\text{总人数})$，100% 严格守恒。以大学命名的全校双 Sheet 总表 [`西安音乐学院.xlsx`](server/outputs/西安音乐学院.xlsx) 涵盖全校 562 位专任学者，已同步回传至 Web 前台。
 
 ### 4. 最新批次细分（甘肃中医药大学 12 学院全量履约）
 - **甘肃中医药大学**（全校 12 院系全量采集交付，涵盖 953 位在职专任学者）：
@@ -232,7 +210,7 @@
   10. 医学信息工程学院 (43 位学者：0 有邮箱，43 无邮箱；4 大教研室文本名录“妥、喜”姓氏全量解析)
   11. 马克思主义学院 (14 位学者：0 有邮箱，14 无邮箱)
   12. 继续教育学院 (0 位学者：经核查无独立在职专任教师编制，依 0 编制规则规范交付)
-- **双 Sheet 守恒校验与大学表交付**：$292(\text{有邮箱}) + 661(\text{无邮箱}) = 953(\text{总人数})$，100% 严格守恒。以大学命名的全校双 Sheet 总表 [`甘肃中医药大学.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/甘肃中医药大学.xlsx) 涵盖全校 953 位专任学者，已同步回传至 Web 前台。
+- **双 Sheet 守恒校验与大学表交付**：$292(\text{有邮箱}) + 661(\text{无邮箱}) = 953(\text{总人数})$，100% 严格守恒。以大学命名的全校双 Sheet 总表 [`甘肃中医药大学.xlsx`](server/outputs/甘肃中医药大学.xlsx) 涵盖全校 953 位专任学者，已同步回传至 Web 前台。
 
 ### 5. 最新批次细分（湖南师范大学 8 学院，批次 1a62151d）
 
@@ -245,10 +223,10 @@
   6. 创新创业学院 (0 位：全站 260 页核查，授课教师由各学院推荐入校级教师库，按 0 编制规则交付)
   7. 教师教育学院 (0 位：全站 700 页核查，教师教育课程由教育科学学院/文学院等开设，本院为统筹管理服务机构)
   8. 树达学院 (**未交付，覆盖缺口**：官网穷尽核查无任何在职专任教师名录；该院 2024-05 已获教育部同意转设为长沙工业学院，工单待同事确认改派或撤单，队列中如实记为 failed)
-- **双 Sheet 守恒校验与大学表交付**：$50(\text{有邮箱}) + 188(\text{无邮箱}) = 238(\text{总人数})$，100% 严格守恒。以大学命名的双 Sheet 总表 [`湖南师范大学.xlsx`](file:///d:/Agent%20Workspace/Intern/MyPlan/server/outputs/湖南师范大学.xlsx) 已同步生成，各已完成学院的下载链接均指向该表。
+- **双 Sheet 守恒校验与大学表交付**：$50(\text{有邮箱}) + 188(\text{无邮箱}) = 238(\text{总人数})$，100% 严格守恒。以大学命名的双 Sheet 总表 [`湖南师范大学.xlsx`](server/outputs/湖南师范大学.xlsx) 已同步生成，各已完成学院的下载链接均指向该表。
 
 ### 6. 关键架构修复与可靠性加固
-1. **纯本地离线 OCR 视觉降级流水线（Zero-API Local Vision Fallback）**：针对艺术/音乐等院校常见的“全海报展板型无文本师资名录”，集成本地轻量 `rapidocr_onnxruntime` 引擎。结合中国百家姓先验概率与 BFS 拓扑切词算法，纯 CPU 离线计算（0 商业 API、0 Token、1.5 秒/图），彻底攻克了图片名录漏采难题，并在 [`requirements.txt`](file:///d:/Agent%20Workspace/Intern/MyPlan/requirements.txt) 锁定无头服务器环境规范。
+1. **纯本地离线 OCR 视觉降级流水线（Zero-API Local Vision Fallback）**：针对艺术/音乐等院校常见的“全海报展板型无文本师资名录”，集成本地轻量 `rapidocr_onnxruntime` 引擎。结合中国百家姓先验概率与 BFS 拓扑切词算法，纯 CPU 离线计算（0 商业 API、0 Token、1.5 秒/图），彻底攻克了图片名录漏采难题，并在 [`requirements.txt`](requirements.txt) 锁定无头服务器环境规范。
 2. **高校 CMS 分页末页平滑收敛**：针对 WebPlus 等高校常见 CMS 在末页点击下一页（`javascript:void(0)`）造成内容不变的场景，将其作为分页遍历的自然终结条件，彻底根除了误判为“分页停滞未刷新”并注入 `crawl_errors` 导致交付阻断的顽疾。
 3. **非师资专栏与安全上限解耦**：在分支专栏识别中严格过滤“新闻/通知/党建/概况”等非师资栏目，并将分支专栏容纳量提升至 60 个，单专栏 8 页安全上限转为自然收录提示而非致命阻断，保护全院合法学者产出。
 4. **工单同步与错误状态闭环**：修复 `ide_dispatch_runner.py` 在任务失败时不发送错误载荷且未校验 HTTP 状态码的缺陷，确保任务无论成功还是失败都能准确同步 SQLite 状态，彻底消除了任务死锁在 `running` 状态导致队列显示无待处理任务的竞态故障。
@@ -287,8 +265,8 @@
      python -m server.agent_worker --once     # 处理一个工单后退出（排障用）
      ```
    - ⚠️ **必须常驻**：`--once` 只处理一个工单就退出；用它跑生产会导致"提单后一直没人接单"。
-   - **当前阻塞**：两条首批真实工单均被交付门禁拦下（`roster_card_mismatch`），根因是 A3 硬编码姓氏表，
-     详见 [`docs/audits/2026-09-24-five-perspective-review.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/docs/audits/2026-09-24-five-perspective-review.md) §A3。
+   - **当时阻塞（2026-09-24，已由后续加固处理，见 CHANGELOG）**：两条首批真实工单均被交付门禁拦下（`roster_card_mismatch`），根因是 A3 硬编码姓氏表，
+     详见 [`docs/audits/2026-09-24-five-perspective-review.md`](docs/audits/2026-09-24-five-perspective-review.md) §A3。
 
 4. **Web 入队到 IDE 会话唤醒的真实技术缺口（仅对轨 A 成立）**
    - **客观现状**：前台同事在 Web 网页端（`http://localhost:8000`）点击提交工单后，任务仅写入本地 SQLite `tasks.db`。
@@ -335,7 +313,7 @@
 ```
 
 ### 资产 100% 复用与继承保障：
-1. **技能协议无缝平移**：当前编写的 [`SKILL.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/skills/faculty-browser-harvest/SKILL.md) 与 [`AGENTS.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/AGENTS.md) 规则，直接作为 Agent 运行时的系统指令。
+1. **技能协议无缝平移**：当前编写的 [`SKILL.md`](.agents/skills/faculty-browser-harvest/SKILL.md) 与 [`AGENTS.md`](AGENTS.md) 规则，直接作为 Agent 运行时的系统指令。
 2. **工具层的真实状况**：`faculty_extractor.py`、RapidOCR 等是**本地 Python 模块**，由采集内核直接调用（不经过模型）；Agent 侧真正需要挂载的 MCP **只有 Playwright MCP**，用于浏览器侦察。这些模块**尚未封装为 MCP 工具**。
    ⚠️ **更正**：**不要走 dsh 自带的 experimental `browser-use` 提供方**——实测在 pip SDK 0.1.5rc1 与源码 0.1.7-rc.1 上**均静默失败**（Cordis 的 `inject` 有一项服务缺失即不激活：配置树组装成功、零报错，但工具就是不下发）。
    **正确做法**是用随 profile 交付的正式组件 `dsh-mcp-client` 直挂 Playwright MCP，见同目录的 `dsh-agent-runtime.cordis.yml`。
@@ -344,7 +322,7 @@
 ### 当前落地状态（截至 2026-09-24 深夜，经代码级核查 + 端到端实测）
 
 **服务器端端到端闭环已打通**：前台提单 → 常驻 worker 取单 → dsh 侦察 → 确定性采集 → 审计 → 落库。
-**但真实工单尚不能自动交付**——被交付门禁按 A3 姓氏表缺陷正确拦下（见下）。
+**但当时真实工单尚不能自动交付**——被交付门禁按 A3 姓氏表缺陷正确拦下（见下；2026-09-24 可靠性加固后已处理，见 CHANGELOG）。
 
 | 环节 | 状态 |
 | :--- | :--- |
@@ -361,7 +339,7 @@
 | **进程守护（systemd）** | ❌ 无。worker 目前需手工常驻 |
 | **Linux 部署产物** | ❌ 无 Dockerfile / systemd / .sh |
 
-#### 🔴 头号阻塞项：A3 硬编码姓氏表（`Opus/iso_mining.py: _SURNAMES`）
+#### 🔴 当时的头号阻塞项（2026-09-24，历史记录）：A3 硬编码姓氏表（`Opus/iso_mining.py: _SURNAMES`）
 
 常驻 worker 首批两条真实工单**全部**卡在同一处：
 
@@ -378,7 +356,7 @@
 **性质**：不修它，服务器无人值守路线**一步都走不动**——采集能跑，交付永远被拦。
 已试过 4 种修法全部失败并回退（见审计 A3）。**正解方向是把"同构兄弟的置信度"作为证据并入打分，而非继续调词法参数。**
 
-**已交付的三个新模块**（详见 [`docs/superpowers/plans/2026-09-24-server-agent-runtime.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/docs/superpowers/plans/2026-09-24-server-agent-runtime.md) §二·补二）：
+**已交付的三个新模块**（详见 [`docs/superpowers/plans/2026-09-24-server-agent-runtime.md`](docs/superpowers/plans/2026-09-24-server-agent-runtime.md) §二·补二）：
 
 | 模块 | 作用 |
 | :--- | :--- |
@@ -386,7 +364,7 @@
 | `server/agent_worker.py` | 常驻队列消费者，整条链在同一租约覆盖下 |
 | `tests/test_agent_recon_hygiene.py` | 13 条测试，专测红线 1 卫生判据 |
 
-**配置文件**：浏览器工具挂载见 [`.agents/plugins/faculty_harvest_tools/dsh-agent-runtime.cordis.yml`](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/plugins/faculty_harvest_tools/dsh-agent-runtime.cordis.yml)
+**配置文件**：浏览器工具挂载见 [`.agents/plugins/faculty_harvest_tools/dsh-agent-runtime.cordis.yml`](.agents/plugins/faculty_harvest_tools/dsh-agent-runtime.cordis.yml)
 （内含三个必须遵守的坑：用 `dsh-mcp-client` 而非 experimental 的 `browser-use`、`insert:` 包裹层必需、`--executable-path` 必须显式给）。
 
 **迁移到 Linux 必须先处理的平台阻塞点**（均已经代码级核实）：
@@ -400,7 +378,7 @@
 6. Linux 需额外安装：Node.js（MCP server 运行时）、Playwright Chromium + 系统依赖、**CJK 字体**（缺字体将导致截图 OCR 整体失效）、Xvfb。
 
 > **📋 另有 1 份审计记录**：五方对抗性审查挖出的**守恒级缺陷**（`single_page` 静默截断、`_validate_plan` 无法证明选择器、硬编码姓氏表已致 7 人漏采）与**红线 2 活体违规**（`dom_dehydrator.py` 的 `PUBLIC_EMAILS`、`is_noise_element` 的 `PRUNE_CLASSES`）见
-> [`docs/audits/2026-09-24-five-perspective-review.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/docs/audits/2026-09-24-five-perspective-review.md)。
+> [`docs/audits/2026-09-24-five-perspective-review.md`](docs/audits/2026-09-24-five-perspective-review.md)。
 
 ---
 

@@ -2,7 +2,7 @@
 
 > ⚠️ **Status: SUPERSEDED / HISTORICAL REFERENCE ONLY**  
 > **Status Date**: 2026-09-24  
-> **Superseded by**: **College-Level Subagent and Browser Batch Tool Workflow** (documented in [`AGENTS.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/AGENTS.md) and [`faculty-browser-harvest/SKILL.md`](file:///d:/Agent%20Workspace/Intern/MyPlan/.agents/skills/faculty-browser-harvest/SKILL.md)).  
+> **Superseded by**: **College-Level Subagent and Browser Batch Tool Workflow** (documented in [`AGENTS.md`](../../AGENTS.md) and [`faculty-browser-harvest/SKILL.md`](../../.agents/skills/faculty-browser-harvest/SKILL.md)).  
 > **Note**: This ADR records an earlier experimental architecture that attempted to use a Tier 1 static HTTP batch script (`batch_browser_extractor.py`) prior to browser interaction. **This document is preserved strictly for historical engineering reference and MUST NOT be used to guide current agent dispatching or harvesting behavior.**  
 > Under the current active workflow:
 > 1. Harvesting is conducted per college by dedicated browser Subagents where the host provides that capability.

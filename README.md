@@ -25,8 +25,8 @@
 ## 三条红线
 
 1. **模型只做结构侦察**：计划里只允许 URL 与 CSS 选择器；姓名、职称、邮箱、简介一律由确定性代码从页面提取。
-2. **不写关键词黑名单，不用 AI 总结简介**：靠 DOM 结构聚类和正文容器定位去噪，简介保留原文全文。
-3. **双 Sheet 守恒**：有邮箱表 + 无邮箱表 = 该大学已采集专任教师总数；两表 10 列相同、行互斥、一人不漏。
+2. **不写关键词黑名单，不用 AI 总结简介**：靠 DOM 结构聚类和正文容器定位去噪，简介保留原文全文。职称词表、姓氏先验只用来识别字段，不用来删改页面内容。
+3. **双 Sheet 守恒**：工作表 `教师列表`（有邮箱）+ `无邮箱教师列表` = 该大学已采集的专任教师总数；两表 10 列相同、行互斥。这只证明分表正确；有没有漏人，要看覆盖账本对名录分支、翻页终点和卡片数的核对。
 
 完整条文见 [AGENTS.md](AGENTS.md)，算法术语见 [CONTEXT.md](CONTEXT.md)。
 
@@ -93,4 +93,5 @@ uv run --no-project --with-requirements requirements.lock --python 3.12 python -
 - 架构决策：[ADR 0002](docs/adr/0002-two-tier-hybrid-harvesting-and-reconciliation.md)、[ADR 0003](docs/adr/0003-cs-principled-deep-module-extraction.md)
 - [服务器端 Agent 运行时接入计划](docs/superpowers/plans/2026-09-24-server-agent-runtime.md)
 - 审计记录：[docs/audits/](docs/audits/)
+- [CHANGELOG.md](CHANGELOG.md)：按日期的变更记录
 - 历史：[2026-09-29 清理清单](docs/cleanup-2026-09-29.md)、[2026-09-22 数据资产快照](docs/history/2026-09-22-data-assets.md)
