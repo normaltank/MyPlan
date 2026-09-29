@@ -25,7 +25,7 @@ from urllib.parse import urljoin
 import lxml.html
 from bs4 import BeautifulSoup
 
-from iso_mining import (Signer, VirtualNode, css_path, element_children, first_href,
+from iso_mining import (VirtualNode, css_path, element_children, first_href,
                         mine_records, name_prob, primary_tokens, url_template,
                         utility_from_items, _TOKEN_SPLIT)
 from template_infer import infer_template_nodes_robust

@@ -1,6 +1,5 @@
 """Remaining P1 review items: queue polling, task deadline, self-check status, proxy-safe local checks."""
 
-import asyncio
 import sqlite3
 import sys
 import time

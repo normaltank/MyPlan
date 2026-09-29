@@ -7,6 +7,7 @@ import threading
 from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
+import pytest
 import uvicorn
 
 from server import app as web
@@ -14,6 +15,8 @@ from server.agent_queue import AgentTaskQueue
 from server.access_control import AccountStore
 from server.university_delivery import publish_delivery
 from test_authenticated_image_review import _sample_audit
+
+pytestmark = pytest.mark.browser
 
 
 def _login(page, base, username, password):

@@ -9,10 +9,8 @@ Comprehensive Regression Test Suite for Codex Round 3 Audit Remediation:
 
 import time
 import pytest
-from bs4 import BeautifulSoup
 
 from server.agent_queue import AgentTaskQueue, LeaseConflictError
-from server.detail_mecc import DetailMECCExtractor, is_personal_email_for_scholar
 from server.faculty_extractor import (
     FacultyCandidate,
     FacultyDirectoryExtractor,

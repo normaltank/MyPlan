@@ -1,0 +1,24 @@
+# 目前只放工具配置；包元数据留给 P2-12（见 docs/review-backlog.md）。
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "browser: 启动真实 Chromium（需先运行 python -m playwright install chromium）；用 -m \"not browser\" 可跳过",
+]
+
+[tool.ruff]
+target-version = "py312"
+extend-exclude = [".agents", ".claude", "docs"]
+
+[tool.ruff.lint]
+# 只查会出错的问题（未定义名、未用导入/变量、语法级问题），不强制代码风格。
+select = ["E4", "E7", "E9", "F"]
+ignore = [
+    "E731",  # 赋值 lambda
+    "E741",  # 变量名 l / O / I
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 包内 sys.path 拼接之后才能导入；P2-12 改成正式包后去掉。
+"Opus/__init__.py" = ["E402"]

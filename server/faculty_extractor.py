@@ -27,7 +27,8 @@ _OPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 if _OPUS_DIR not in sys.path:
     sys.path.insert(0, _OPUS_DIR)
 try:
-    from iso_mining import VirtualNode, first_href, mine_records, primary_tokens, strip_invisible
+    from iso_mining import (VirtualNode, first_href, mine_records, primary_tokens,
+                            rare_surname_name, strip_invisible)
     from email_matching import DomainConventionModel
     from text_lists import email_spans, _AT as _AT_PATTERN
     _AT_RE = re.compile(_AT_PATTERN)
@@ -35,6 +36,7 @@ try:
 except ImportError as _ex:                          # never silently: log it
     log.error("L2 algorithm layer unavailable: %s", _ex)
     mine_records = DomainConventionModel = VirtualNode = first_href = primary_tokens = email_spans = None
+    rare_surname_name = None
     L2_AVAILABLE = False
 
     # _clean_name is called on every extraction path, including this degraded
@@ -57,6 +59,11 @@ except ImportError:
         log.warning("L1 runtime layer unavailable: %s", _ex)
         L1RuntimeExecutor = SQLiteWrapperRegistry = cluster_key_for = AgentTaskQueue = None
         L1_AVAILABLE = False
+
+try:
+    from server.titles import TITLE_KEYWORDS, resolve_title
+except ImportError:
+    from titles import TITLE_KEYWORDS, resolve_title
 
 try:
     from server.detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer
@@ -92,13 +99,6 @@ PRUNE_CLASSES = [
 ]
 
 
-# Sort by length descending so that '副教授' matches before '教授'
-TITLE_KEYWORDS = sorted(
-    ['教授', '副教授', '讲师', '助理教授', '研究员', '副研究员', '助理研究员', '师资博士后', '名誉教授', '特聘教授', '讲座教授', '高级实验师', '实验师'],
-    key=len,
-    reverse=True
-)
-
 FREE_MAIL_DOMAINS = {
     "163.com", "126.com", "yeah.net", "qq.com", "foxmail.com", "gmail.com",
     "sina.com", "sina.cn", "sohu.com", "hotmail.com", "outlook.com",
@@ -122,8 +122,7 @@ def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
                 dcm = DomainConventionModel()
                 if dcm._pinyin_match(clean_local, scholar_name) or dcm._pinyin_match(local_part, scholar_name):
                     return True
-                syl = dcm.to_pinyin(scholar_name) if dcm.to_pinyin else None
-                if syl:
+                for syl in dcm.readings(scholar_name):
                     initials = "".join(s[0] for s in syl if s).lower()
                     if len(initials) >= 2 and clean_local.startswith(initials):
                         return True
@@ -249,9 +248,12 @@ class FacultyDirectoryExtractor:
         return name, title_found
 
     @classmethod
-    def _l2_candidates(cls, html: str, base_url: str) -> List[FacultyCandidate]:
+    def _l2_candidates(cls, html: str, base_url: str,
+                       review: Optional[list] = None) -> List[FacultyCandidate]:
         """Contract with iso_mining:
         - low-prior names need repeated linked-card evidence from trusted peers
+        - without it, a name with a rare surname goes to ``review`` (when given),
+          never to the result: a person must confirm it
         - VirtualNode records (text lists) are first-class
         - records without a link are kept: url = list page (profile-less faculty)
         - dedupe key preserves homonyms: if profile link is missing, identity of head node prevents collapse"""
@@ -302,6 +304,7 @@ class FacultyDirectoryExtractor:
         pairs = [(grp, r, p) for grp in groups for r, p in zip(grp.records, grp.record_probs)]
         out, seen = [], set()
         for idx, (grp, r, p) in enumerate(pairs):
+            needs_review = False
             if p < 0.5:
                 # A closed surname list cannot decide whether an otherwise
                 # ordinary-looking string is a person. Repeated linked cards
@@ -319,7 +322,9 @@ class FacultyDirectoryExtractor:
                     and first_href(r, base_url) is not None
                 )
                 if not structural_proof:
-                    continue
+                    if review is None:
+                        continue
+                    needs_review = True
             head = r[0]
             if isinstance(head, VirtualNode):
                 if not head.shape_ok:
@@ -336,6 +341,9 @@ class FacultyDirectoryExtractor:
             name, title = cls._clean_name(raw)
             if not name:
                 continue
+            # The title vocabulary only identifies a title standing in the name slot.
+            if needs_review and (name in TITLE_KEYWORDS or not rare_surname_name(name)):
+                continue
             if title == "教师":
                 ctx = f"{section} {card}"
                 title = next((kw for kw in TITLE_KEYWORDS if kw in ctx), "教师")
@@ -344,8 +352,16 @@ class FacultyDirectoryExtractor:
             if (name, node_key) in seen:
                 continue
             seen.add((name, node_key))
-            out.append(FacultyCandidate(name=name, url=url, title=title, card_context=card))
+            candidate = FacultyCandidate(name=name, url=url, title=title, card_context=card)
+            (review if needs_review else out).append(candidate)
         return out
+
+    @classmethod
+    def extract_with_review(cls, html: str,
+                            base_url: str) -> Tuple[List[FacultyCandidate], List[FacultyCandidate]]:
+        """Admitted candidates, and rare-surname names a person must confirm first."""
+        review: List[FacultyCandidate] = []
+        return cls.extract(html, base_url, review=review), review
 
     @classmethod
     def extract(
@@ -353,7 +369,9 @@ class FacultyDirectoryExtractor:
         html: str,
         base_url: str,
         executor: Optional[L1RuntimeExecutor] = None,
-        emit_ticket: bool = False
+        emit_ticket: bool = False,
+        *,
+        review: Optional[list] = None,
     ) -> List[FacultyCandidate]:
         if not html:
             return []
@@ -398,7 +416,7 @@ class FacultyDirectoryExtractor:
         # Tier 1: L2 isomorphic mining (the only path that honours the charter)
         if L2_AVAILABLE:
             try:
-                l2 = cls._l2_candidates(html, base_url)
+                l2 = cls._l2_candidates(html, base_url, review=review)
             except Exception:
                 log.exception("L2 failed on %s", base_url)   # visible, then fall back
                 l2 = None
@@ -695,46 +713,7 @@ class FacultyProfileExtractor:
                 name = re.sub(r'\s+', '', h1.get_text(strip=True))
 
         # Title resolution: earliest non-overlapping keyword in header/bio
-        title = "教师"
-        header_text = full_bio[:400]
-        matches = []
-        for kw in TITLE_KEYWORDS:
-            pos = 0
-            while True:
-                idx = header_text.find(kw, pos)
-                if idx == -1:
-                    break
-                matches.append((idx, len(kw), kw))
-                pos = idx + 1
-
-        # Check English academic titles if no Chinese keyword found
-        if not matches:
-            en_kw_map = {
-                'associate professor': '副教授',
-                'assistant professor': '讲师',
-                'lecturer': '讲师',
-                'professor': '教授'
-            }
-            low_header = header_text.lower()
-            for en_kw, zh_t in en_kw_map.items():
-                pos = 0
-                while True:
-                    idx = low_header.find(en_kw, pos)
-                    if idx == -1:
-                        break
-                    matches.append((idx, len(en_kw), zh_t))
-                    pos = idx + 1
-
-        if matches:
-            matches.sort(key=lambda x: (x[0], -x[1]))
-            last_end = -1
-            non_overlapping = []
-            for pos, length, kw in matches:
-                if pos >= last_end:
-                    non_overlapping.append(kw)
-                    last_end = pos + length
-            if non_overlapping:
-                title = non_overlapping[0]
+        title = resolve_title(full_bio[:400])
 
         return FacultyProfile(
             name=name,
@@ -844,8 +823,7 @@ class FacultyHarvestPipeline:
                 clean_local = re.sub(r'[-_.]', '', local_part)
                 # Disallow surname-only matching when multiple peers share this surname
                 if same_sur_count > 1 and dcm is not None:
-                    syl = dcm.to_pinyin(cand.name) if dcm.to_pinyin else None
-                    if syl and len(syl) > 1 and clean_local == syl[0].lower():
+                    if any(len(syl) > 1 and clean_local == syl[0] for syl in dcm.readings(cand.name)):
                         unresolved.append({
                             "姓名": cand.name, "主页": page_url,
                             "status": "ambiguous_surname_email",
@@ -896,8 +874,7 @@ class FacultyHarvestPipeline:
                     clean_local = re.sub(r'[-_.]', '', local_part)
                     same_sur_count = surname_counts.get(mc.name[0], 1) if mc.name else 1
                     if same_sur_count > 1 and dcm is not None:
-                        syl = dcm.to_pinyin(mc.name) if dcm.to_pinyin else None
-                        if syl and len(syl) > 1 and clean_local == syl[0].lower():
+                        if any(len(syl) > 1 and clean_local == syl[0] for syl in dcm.readings(mc.name)):
                             unresolved.append({
                                 "姓名": mc.name, "主页": page_url,
                                 "status": "ambiguous_surname_email",

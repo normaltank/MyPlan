@@ -12,18 +12,13 @@ Enforces:
 """
 import pytest
 import time
-import uuid
 from bs4 import BeautifulSoup
-from lxml import etree
 
 from server.faculty_extractor import (
-    FacultyCandidate,
     FacultyDirectoryExtractor,
-    FacultyProfileExtractor,
     FacultyHarvestPipeline,
     LayoutAwareTokenizer,
     is_noise_element,
-    is_institutional_email,
 )
 from server.detail_mecc import DetailMECCExtractor
 from server.agent_queue import AgentTaskQueue, LeaseConflictError

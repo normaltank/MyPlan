@@ -8,16 +8,13 @@ Tests for Codex Fourth-Round Adversarial Audit Remediation:
 6. Free mail domains require naming affinity (anti-office/service address leakage).
 """
 
-import time
 import pytest
 from server.faculty_extractor import (
     FacultyCandidate,
     FacultyHarvestPipeline,
-    is_personal_email_for_scholar,
-    find_emails
+    is_personal_email_for_scholar
 )
 from server.agent_queue import AgentTaskQueue, LeaseConflictError
-from server.detail_mecc import DetailMECCExtractor
 
 
 # Item 1: Distinct homonyms on roster pages are both preserved

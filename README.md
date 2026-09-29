@@ -43,7 +43,7 @@
 
 - **提交**：单个或批量学院，每个学院都要填官网入口 URL；一次最多 30 个学院。
 - **进度**：网页右侧显示本浏览器当前的请求；旧批次在“历史工单”里查看。
-- **被挡住的工单**：提示“核对图片文字与邮箱”时，对照原图确认或改正，再点“重新采集此工单”。
+- **被挡住的工单**：提示“人工复核”时，对照原图或名录页确认或改正（图片文字、邮箱归属、生僻姓氏的人名），再点“重新采集此工单”。
 - **下载**：一所大学的目标学院全部通过审计后，生成该大学的交付表。
 
 ## 页面类型
@@ -62,13 +62,22 @@
 ## 开发与测试
 
 ```powershell
+# 运行环境（worker 与网页）
 uv venv .runtime/worker-venv --python 3.12
 uv pip sync --python .runtime/worker-venv/Scripts/python.exe requirements.lock
 .runtime/worker-venv/Scripts/python.exe -m playwright install chromium
-uv run --no-project --with-requirements requirements.lock --python 3.12 python -m pytest tests/ -q
+
+# 测试与检查（开发依赖另装，不进运行环境）
+uv run --no-project --with-requirements requirements-dev.lock --python 3.12 python -m pytest -q
+uv run --no-project --with-requirements requirements-dev.lock --python 3.12 python -m pytest -q -m "not browser"   # 跳过启动浏览器的测试，约 1 分钟
+uv run --no-project --with-requirements requirements-dev.lock --python 3.12 ruff check .
 ```
 
-依赖版本锁定在 `requirements.lock`（Python 3.12）。改了 `requirements.txt` 后，用 `uv pip compile requirements.txt --output-file requirements.lock --python-version 3.12` 重建。
+- 运行依赖在 `requirements.txt`，测试与检查工具在 `requirements-dev.txt`。两者分别锁定为 `requirements.lock`、`requirements-dev.lock`（Python 3.12，Windows 与 Linux 通用）。改了依赖后重建：
+  `uv pip compile requirements.txt --universal --python-version 3.12 -o requirements.lock`
+  `uv pip compile requirements-dev.txt --universal --python-version 3.12 -o requirements-dev.lock`
+- 启动真实 Chromium 的测试标记为 `@pytest.mark.browser`；新写的浏览器测试也要加这个标记，否则 CI 的单元测试任务会失败。
+- 推送到 `main` 或提 PR 时，GitHub Actions（`.github/workflows/tests.yml`）运行 ruff、单元测试和浏览器测试。ruff 只查未定义名、未用导入等会出错的问题，不强制代码风格。
 
 ## 目录
 
@@ -76,6 +85,7 @@ uv run --no-project --with-requirements requirements.lock --python 3.12 python -
 | :--- | :--- |
 | `server/` | 网页、队列、worker、侦察、采集、审计与 Excel 导出 |
 | `server/recon_discovery.md`、`server/recon_instructions.md` | 两个侦察阶段的指令，由代码直接读取 |
+| `server/templates/` | 网页的主页、登录页、创建管理员页（静态 HTML，改后刷新即生效） |
 | `Opus/` | 名录挖掘、邮箱匹配等算法层 |
 | `tests/` | 自动化测试 |
 | `scripts/` | 本机启动与重启脚本 |

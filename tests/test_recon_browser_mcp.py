@@ -27,6 +27,7 @@ def test_oversized_ranges_keep_explicit_remaining_range_and_complete_local_evide
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_mcp_protocol_drives_real_browser_navigation_and_verification(tmp_path):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):

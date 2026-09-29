@@ -1,6 +1,5 @@
 import json
 
-import pytest
 
 from server import agent_recon
 

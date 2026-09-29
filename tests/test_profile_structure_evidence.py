@@ -55,6 +55,7 @@ def test_actual_personal_samples_require_scope_but_profileless_roster_does_not()
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_browser_profile_tool_reports_structural_proof_without_teacher_fields(tmp_path):
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -80,6 +81,7 @@ async def test_browser_profile_tool_reports_structural_proof_without_teacher_fie
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_profile_probe_rejects_stylesheet_hidden_retained_content_but_ignores_before_boundary(tmp_path):
     from server.browser_context import new_browser_context
     async with async_playwright() as pw:
@@ -106,6 +108,7 @@ async def test_profile_probe_rejects_stylesheet_hidden_retained_content_but_igno
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_profile_samples_include_anchor_cards_and_deduplicate_before_budget(tmp_path):
     from server.browser_context import new_browser_context
     async with async_playwright() as pw:
@@ -126,6 +129,7 @@ async def test_profile_samples_include_anchor_cards_and_deduplicate_before_budge
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_missing_stylesheet_cannot_confirm_a_visible_profile(tmp_path):
     from server.browser_context import new_browser_context
     async with async_playwright() as pw:

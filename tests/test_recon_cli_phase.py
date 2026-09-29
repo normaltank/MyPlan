@@ -1,5 +1,11 @@
 """MCP stage isolation must survive a host filtering child environment variables."""
-import asyncio,json,os,subprocess,sys,threading,uuid
+import asyncio
+import json
+import os
+import subprocess
+import sys
+import threading
+import uuid
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import pytest
@@ -17,6 +23,7 @@ def test_runtime_patch_passes_stage_and_namespace_as_process_arguments(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_actual_mcp_process_honors_cli_stage_and_saves_discovery_namespace():
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):

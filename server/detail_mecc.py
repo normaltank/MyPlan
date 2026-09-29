@@ -8,16 +8,18 @@ Zero keyword blacklists. Zero AI summarization. Based on:
 """
 from __future__ import annotations
 
-import os
 import re
 import sys
-from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
+
+try:
+    from server.titles import resolve_title
+except ImportError:
+    from titles import resolve_title
 
 _OPUS = str(Path(__file__).resolve().parent.parent / "Opus")
 if _OPUS not in sys.path:
@@ -44,13 +46,6 @@ EMAIL_REGEX = re.compile(
     r'(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])'
 )
 
-TITLE_KEYWORDS = sorted(
-    ['教授', '副教授', '讲师', '助理教授', '研究员', '副研究员', '助理研究员',
-     '师资博士后', '名誉教授', '特聘教授', '讲座教授', '高级实验师', '实验师'],
-    key=len,
-    reverse=True
-)
-
 PRUNE_TAGS = {'script', 'style', 'noscript', 'svg', 'iframe', 'header', 'footer', 'nav'}
 
 
@@ -62,49 +57,6 @@ def find_emails(text: str) -> List[str]:
             for a, b, _ in email_spans(text)
         ]
     return [m.lower() for m in EMAIL_REGEX.findall(text)]
-
-
-def resolve_title(header_text: str) -> str:
-    """Earliest non-overlapping academic title keyword in header/bio snippet."""
-    matches = []
-    for kw in TITLE_KEYWORDS:
-        pos = 0
-        while True:
-            idx = header_text.find(kw, pos)
-            if idx == -1:
-                break
-            matches.append((idx, len(kw), kw))
-            pos = idx + 1
-
-    if not matches:
-        en_kw_map = {
-            'associate professor': '副教授',
-            'assistant professor': '讲师',
-            'lecturer': '讲师',
-            'professor': '教授'
-        }
-        low_header = header_text.lower()
-        for en_kw, zh_t in en_kw_map.items():
-            pos = 0
-            while True:
-                idx = low_header.find(en_kw, pos)
-                if idx == -1:
-                    break
-                matches.append((idx, len(en_kw), zh_t))
-                pos = idx + 1
-
-    if matches:
-        matches.sort(key=lambda x: (x[0], -x[1]))
-        last_end = -1
-        non_overlapping = []
-        for pos, length, kw in matches:
-            if pos >= last_end:
-                non_overlapping.append(kw)
-                last_end = pos + length
-        if non_overlapping:
-            return non_overlapping[0]
-
-    return "教师"
 
 
 def clean_email(email_str: str) -> str:
@@ -143,8 +95,7 @@ def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
                 dcm = DomainConventionModel()
                 if dcm._pinyin_match(clean_local, scholar_name) or dcm._pinyin_match(local_part, scholar_name):
                     return True
-                syl = dcm.to_pinyin(scholar_name) if dcm.to_pinyin else None
-                if syl:
+                for syl in dcm.readings(scholar_name):
                     initials = "".join(s[0] for s in syl if s).lower()
                     if len(initials) >= 2 and clean_local.startswith(initials):
                         return True

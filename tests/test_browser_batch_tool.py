@@ -773,6 +773,7 @@ def test_pagination_polling_does_not_mutate_cached_wrapper_registry(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_real_playwright_browser_handles_ajax_pagination(tmp_path):
     playwright_api = pytest.importorskip("playwright.async_api")
     first = [(1, "张富有"), (2, "刘圣洁"), (3, "孙洁")]

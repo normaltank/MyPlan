@@ -5,9 +5,10 @@
 - [x] **侦察 Token 消耗**：已完成第一轮，见 [实验记录](audits/2026-09-29-recon-token-experiment.md)。
 - [ ] **空的系所名录页**：博达列表"共0条"加分页按钮的页面无法满足严格空名录证明，需要定规则。
 - [ ] **无主页名录的同名教师**：同一人出现在多个无主页名录时被"同名不同主页"阻断，需要合并规则。
-- [ ] **P2-14 姓氏与多音字**：姓氏表换成完整数据文件；邮箱与姓名匹配改用全部多音字读音（单、曾、解、仇、区、查、朴等）。
-- [ ] **P2-13 职称词表与大函数**：`TITLE_KEYWORDS` 只保留一份并补充主任医师、正高级工程师等；`run_plan`（约 400 行）按"采集 → 对账 → 详情页 → 媒体 → 身份 → 导出"拆分；`app.py` 内嵌 HTML/JS 移到模板文件。
+- [x] **P2-14 姓氏与多音字**：邮箱与姓名匹配改用每个字的全部读音（默认读音在前，最多 64 种拼法），ü 另试 u/yu。姓氏表按用户决定补全为“常用自动采信、生僻送人工复核”：`Opus/rare_surnames.txt` 收 748 个生僻姓（公开语料，去掉错字），名录人名位置上的生僻姓名字在复核页由人确认，见运维手册 §3。
+- [ ] **P2-13 职称词表与大函数**：已完成两项——职称词表与职称识别只剩 `server/titles.py` 一份，补充了主任医师、副主任医师、主治医师、主任/副主任护师与药师、正高级工程师、教授级高级工程师、高级工程师、高级讲师；`app.py` 的主页、登录页、创建管理员页移到 `server/templates/`，输出逐字节不变。剩余：`run_plan`（约 460 行）按"采集 → 对账 → 详情页 → 媒体 → 身份 → 导出"拆分。
 - [ ] **P2-15 侦察计划格式**：提供带 JSON Schema 的 `submit_plan` 工具，当场校验、当场报错；提示词加完整示例、长段落改清单；写明"选择器不含中文"是有意限制。
-- [ ] **P2-16 测试与工具链**：用 marker 区分单元/浏览器/实网测试；接入 ruff 与 CI；`requirements.txt` 拆分运行与测试依赖；lock 文件跨平台；评估升级 Playwright。
-- [ ] **P2-12 包结构**：加 `pyproject.toml`，去掉 5 处 `sys.path` 拼接与 `app.py` 的双套 import，`Opus/` 改为正式模块名。
-- [ ] **其他**：`.agents/skills` 与 `.claude/skills` 中 38 个重复技能只保留一份；AGENT_HANDOVER 继续瘦身，只描述当前系统。
+- [x] **P2-16 测试与工具链**：启动真实 Chromium 的 66 项测试标记为 `browser`；现有测试都不访问实网（在访问不到高校官网的云端环境中全量通过），所以不设实网标记。接入 ruff（只查会出错的问题）与 GitHub Actions CI（ruff、单元、浏览器三个任务）；运行与开发依赖拆成 `requirements.txt` / `requirements-dev.txt`，两个 lock 都改为 `--universal`，版本号未变。
+- [ ] **Playwright 升级（待决定）**：当前锁定 1.47.0。1.56.0 下全量测试通过（只有一条断言写死了旧版报错原文，已改为两版通用）；最新 1.63.0 的浏览器在云端下载不到，未验证。升级后本机 worker 环境须重新运行 `python -m playwright install chromium`，否则启动自检不通过。
+- [ ] **P2-12 包结构**：`pyproject.toml` 已建（目前只有 pytest/ruff 配置），补包元数据，去掉 5 处 `sys.path` 拼接与 `app.py` 的双套 import，`Opus/` 改为正式模块名。
+- [ ] **其他**：`.agents/skills` 与 `.claude/skills` 中 38 个重复技能只保留一份——两份逐字相同，正是 `skills-lock.json` 里的 38 个 mattpocock/skills 技能，由技能安装工具分别写给 Antigravity/Codex 与 Claude Code；直接删一份会让其中一个工具看不到技能，需先定方案（例如两份都不入库、按 lock 文件安装）。`.agents/skills/faculty-browser-harvest/scripts/dom_dehydrator.py` 仍有一份旧职称表和审计点名的邮箱黑名单，无生产引用，可删。AGENT_HANDOVER 继续瘦身，只描述当前系统。

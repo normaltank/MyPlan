@@ -24,7 +24,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from server import excel_export
+from server import excel_export, name_review
 from server.faculty_extractor import (
     FacultyCandidate, FacultyDirectoryExtractor, FacultyHarvestPipeline, FacultyProfileExtractor,
     find_emails, is_personal_email_for_scholar,
@@ -652,7 +652,9 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         if count != review["expected_count"]:
             unresolved.append({"url": source_url, "status": "poster_coverage_mismatch",
                                "expected_count": review["expected_count"], "verified_count": count})
-    roster_reconciliation = reconcile_rosters(source_capture.roster_pages, plan)
+    roster_reconciliation = reconcile_rosters(
+        source_capture.roster_pages, plan,
+        name_decisions=name_review.load_decisions(out / name_review.DECISIONS_FILE))
     candidates.extend(roster_reconciliation.candidates)
     candidate_sources.update(roster_reconciliation.candidate_sources)
     segment_naming = {"admitted": [], "unresolved": [], "evidence": []}

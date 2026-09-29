@@ -1,8 +1,7 @@
 """
 Regression tests for server.detail_mecc (Minimum Enclosing Content Container).
 """
-import pytest
-from server.detail_mecc import DetailMECCExtractor, ProfileDetail
+from server.detail_mecc import DetailMECCExtractor
 
 
 HEADER = """

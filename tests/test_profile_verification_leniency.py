@@ -58,6 +58,7 @@ def test_non_rendering_and_placeholder_elements_are_not_hidden_content():
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_live_verification_accepts_style_and_placeholder_but_not_hidden_text(tmp_path):
     ok = await verify(tmp_path, f'<article><style style="display:none">p{{}}</style>{BODY}'
                                 '<div style="display:none">invisible</div></article>')
@@ -67,6 +68,7 @@ async def test_live_verification_accepts_style_and_placeholder_but_not_hidden_te
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_missing_theme_assets_do_not_block_a_server_rendered_profile(tmp_path):
     html = ('<link rel="stylesheet" href="/theme.css"><script src="/_sitegray.js"></script>'
             f'<div style="background:url(/bg.png)">x</div><article>{BODY}</article>')
@@ -76,6 +78,7 @@ async def test_missing_theme_assets_do_not_block_a_server_rendered_profile(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_transient_failures_and_script_built_content_still_block(tmp_path):
     aborted = await verify(tmp_path, f'<link rel="stylesheet" href="/theme.css"><article>{BODY}</article>',
                            {"https://scope.example.edu/theme.css": ("abort", "", "text/css")})

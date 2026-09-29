@@ -35,13 +35,15 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
+from itertools import product
 from typing import Callable, Optional
 
 import numpy as np
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from scipy.optimize import linear_sum_assignment
 
-from iso_mining import ancestors_inclusive, in_template, lca
+from iso_mining import ancestors_inclusive, in_template
 
 # --------------------------------------------------------------------------
 # Data structures
@@ -177,6 +179,44 @@ def _default_to_pinyin(name: str) -> Optional[list[str]]:
         return None
 
 
+# Readings multiply per character, and every extra spelling widens what an
+# address may match, so only the spellings closest to the default are kept.
+_MAX_READINGS = 64
+
+
+@lru_cache(maxsize=8192)
+def _readings(name: str) -> tuple[tuple[str, ...], ...]:
+    try:
+        from pypinyin import Style, lazy_pinyin, pinyin
+    except ImportError:
+        return ()
+    default = tuple(s.lower() for s in lazy_pinyin(name))
+    if len(default) != len(name) or not all("\u4e00" <= ch <= "\u9fff" for ch in name):
+        return (default,)
+    options = []
+    for ch, first in zip(name, default):
+        spellings = []
+        for reading in [first, *pinyin(ch, style=Style.NORMAL, heteronym=True)[0]]:
+            reading = reading.lower()
+            # pypinyin writes ü as v; mailboxes also use u or yu (吕 lv / lu / lyu).
+            forms = (reading, reading.replace("v", "u"), reading.replace("v", "yu")) if "v" in reading else (reading,)
+            spellings.extend(form for form in forms if form not in spellings)
+        options.append(spellings)
+    # Spellings that differ from the default at the fewest characters come
+    # first, so a surname reading (曾 zeng, not ceng) is never cut by the cap.
+    combos = sorted(product(*options), key=lambda combo: sum(a != b for a, b in zip(combo, default)))
+    return tuple(combos[:_MAX_READINGS])
+
+
+def pinyin_readings(name: str) -> list[list[str]]:
+    """Every pinyin spelling of a name, pypinyin's default reading first.
+
+    The default reading of many surnames is not the surname reading (曾 ceng,
+    单 dan, 解 jie, 仇 chou, 区 qu, 查 cha, 朴 pu, 翟 di), so each character's
+    other readings are tried too. Empty when pypinyin is unavailable."""
+    return [list(combo) for combo in _readings(name)]
+
+
 def pinyin_variants(syl: list[str]) -> set[str]:
     if not syl:
         return set()
@@ -236,19 +276,29 @@ class DomainConventionModel:
         n = sum(c.values())
         return (c[L] + 0.1) / (n + 0.1 * 12) if n else 0.1
 
+    def readings(self, name: str) -> list[list[str]]:
+        """Pinyin spellings to try for a name; a custom to_pinyin gives exactly one."""
+        if self.to_pinyin is _default_to_pinyin:
+            return pinyin_readings(name)
+        syl = self.to_pinyin(name)
+        return [syl] if syl else []
+
     def _pinyin_match(self, local: str, name: str) -> Optional[bool]:
         if re.search(r"[\u4e00-\u9fff]", name):
-            syl = self.to_pinyin(name)
+            readings = self.readings(name)
         else:                                      # 'John A. Smith' -> ['smith', 'john', 'a']
             words = [w.lower() for w in re.split(r"[\s.\-]+", name) if w]
-            syl = words[-1:] + words[:-1]
-        if not syl:
+            readings = [words[-1:] + words[:-1]] if words else []
+        if not readings:
             return None
         clean = re.sub(r"[\d._\-]+", "", local)
         if not clean:
             return False
-        v = pinyin_variants(syl)
-        return clean in v or any(len(x) >= 4 and clean.startswith(x) for x in v)
+        for syl in readings:
+            v = pinyin_variants(syl)
+            if clean in v or any(len(x) >= 4 and clean.startswith(x) for x in v):
+                return True
+        return False
 
     def log_lr(self, addr: str, name: str) -> float:
         local, dom = self.split(addr)
