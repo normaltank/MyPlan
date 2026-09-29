@@ -53,3 +53,6 @@ tmp_edge_profile/
 /wyx_test.html
 /server/ruishu.js
 /server/waf_script.js
+
+# ---- 本地归档：清理时移出根目录的旧数据文件（含个人信息，不入库）----
+/_archive/
