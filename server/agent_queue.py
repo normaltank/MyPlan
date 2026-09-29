@@ -94,14 +94,13 @@ class AgentTaskQueue:
                  legacy_json_path: str | Path | None = None) -> None:
         self.db_path = Path(db_path) if db_path is not None else _HERE / "tasks.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._tasks: dict[str, AgentTask] = {}  # Legacy Web view; SQLite is authoritative.
-        self._batch_tasks: dict[str, list[str] | str] = {}
+        # SQLite is the only task store. The former in-memory views were written
+        # but never read, and loaded every task with all records at import time.
         self._active_task: AgentTask | None = None
         self._init_schema()
         source = legacy_json_path if legacy_json_path is not None else (_LEGACY if db_path is None else None)
         if source is not None:
             self._migrate_legacy(Path(source))
-        self._load_views()
         # Failure types are reconciled when a task fails and before statistics
         # are read. Constructing a queue must not create files beside the DB.
 
@@ -169,6 +168,9 @@ class AgentTaskQueue:
                 manifest_json TEXT NOT NULL,created_at REAL NOT NULL)""")
             con.execute("""CREATE TABLE IF NOT EXISTS worker_presence (
                 instance_id TEXT PRIMARY KEY,last_seen REAL NOT NULL)""")
+            con.execute("""CREATE TABLE IF NOT EXISTS worker_selfcheck (
+                id INTEGER PRIMARY KEY CHECK(id=1),checked_at REAL NOT NULL,
+                ok INTEGER NOT NULL,problems_json TEXT NOT NULL)""")
             con.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_open_ticket ON tasks(cluster_key)
                 WHERE task_type='compile_ticket' AND status IN ('queued','compiling','running')""")
 
@@ -216,15 +218,6 @@ class AgentTaskQueue:
         task.teachers_preview = task.records[:10] or meta.get("teachers_preview", [])
         return task
 
-    def _load_views(self) -> None:
-        with self._connect() as con:
-            rows = con.execute("SELECT * FROM tasks ORDER BY created_at, task_id").fetchall()
-            for row in rows:
-                task = self._decode(con, row)
-                self._tasks[task.task_id] = task
-                if task.mode == "batch" and task.task_type == "harvest":
-                    self._batch_tasks.setdefault(task.batch_id, []).append(task.task_id)
-
     def _migrate_legacy(self, path: Path) -> None:
         if not path.exists():
             return
@@ -254,18 +247,12 @@ class AgentTaskQueue:
         task.owner_user_id = owner_user_id
         with self._connect() as con:
             self._insert(con, task)
-        self._tasks[task.task_id] = task
-        if mode == "batch":
-            self._batch_tasks.setdefault(task.batch_id, []).append(task.task_id)
         return task
 
     def get_task(self, task_id: str) -> AgentTask | None:
         with self._connect() as con:
             row = con.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-            task = self._decode(con, row) if row else None
-        if task:
-            self._tasks[task_id] = task
-        return task
+            return self._decode(con, row) if row else None
 
     def retry_failed_review_task(self, task_id: str) -> bool:
         """Requeue one failed college after its evidence-bound human review."""
@@ -282,7 +269,6 @@ class AgentTaskQueue:
                 lease_until=NULL,lease_token=NULL,error=NULL,started_at=NULL,
                 finished_at=NULL,stats_json='{}',download_url=NULL,meta_json=?
                 WHERE task_id=? AND status='failed'""", (_json(meta), task_id))
-        self._tasks.pop(task_id, None)
         if updated.rowcount == 1:
             self._reconcile_failure_types_best_effort()
         return updated.rowcount == 1
@@ -309,22 +295,27 @@ class AgentTaskQueue:
         if not worker_id or lease_seconds <= 0:
             raise ValueError("worker_id and positive lease_seconds required")
         now = time.time()
+        query = """SELECT task_id,task_type FROM tasks WHERE
+            (status='queued' OR (status IN ('running','compiling') AND lease_until < ?))"""
+        args: list[Any] = [now]
+        if task_id is not None:
+            query += " AND task_id=?"
+            args.append(task_id)
+        if task_type is not None:
+            query += " AND task_type=?"
+            args.append(task_type)
+        excluded = sorted(set(exclude_task_ids))
+        if excluded:
+            query += " AND task_id NOT IN (" + ",".join("?" for _ in excluded) + ")"
+            args.extend(excluded)
+        query += " ORDER BY created_at,task_id LIMIT 1"
         with self._connect() as con:
+            # Idle polling must not take the database write lock: look first,
+            # and lock only when there is something to claim.
+            if con.execute(query, args).fetchone() is None:
+                return None
             con.execute("BEGIN IMMEDIATE")
-            query = """SELECT task_id,task_type FROM tasks WHERE
-                (status='queued' OR (status IN ('running','compiling') AND lease_until < ?))"""
-            args: list[Any] = [now]
-            if task_id is not None:
-                query += " AND task_id=?"
-                args.append(task_id)
-            if task_type is not None:
-                query += " AND task_type=?"
-                args.append(task_type)
-            excluded = sorted(set(exclude_task_ids))
-            if excluded:
-                query += " AND task_id NOT IN (" + ",".join("?" for _ in excluded) + ")"
-                args.extend(excluded)
-            row = con.execute(query + " ORDER BY created_at,task_id LIMIT 1", args).fetchone()
+            row = con.execute(query, args).fetchone()
             if row is None:
                 return None
             status = "compiling" if row["task_type"] == "compile_ticket" else "running"
@@ -334,7 +325,6 @@ class AgentTaskQueue:
                 (status, worker_id, now + lease_seconds, token, now, row["task_id"]))
             claimed = self._decode(con, con.execute("SELECT * FROM tasks WHERE task_id=?",
                                                     (row["task_id"],)).fetchone())
-        self._tasks[claimed.task_id] = claimed
         return claimed
 
     def renew_lease(self, task_id: str, worker_id: str, lease_seconds: float = 120,
@@ -455,7 +445,6 @@ class AgentTaskQueue:
             if row is not None:
                 return self._decode(con, row)
             self._insert(con, task)
-        self._tasks[task.task_id] = task
         return task
 
     def sync_task_result(self, task_id: str, records: list[dict[str, Any]],
@@ -554,12 +543,23 @@ class AgentTaskQueue:
         with self._connect() as con:
             con.execute("DELETE FROM worker_presence WHERE instance_id=?", (instance_id,))
 
+    def record_self_check(self, problems: list[str]) -> None:
+        """Keep the latest worker start-up check so the Web page can show why it is offline."""
+        with self._connect() as con:
+            con.execute("""INSERT INTO worker_selfcheck VALUES (1,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                checked_at=excluded.checked_at,ok=excluded.ok,problems_json=excluded.problems_json""",
+                (time.time(), int(not problems), _json(list(problems))))
+
     def get_worker_status(self) -> dict[str, Any]:
         now = time.time()
         with self._connect() as con:
             count, last_seen = con.execute("SELECT COUNT(*),MAX(last_seen) FROM worker_presence "
                                           "WHERE last_seen>=? AND last_seen<=?", (now - 30, now)).fetchone()
-        return {"online": count > 0, "online_count": count, "last_seen": last_seen}
+            check = con.execute("SELECT checked_at,ok,problems_json FROM worker_selfcheck WHERE id=1").fetchone()
+        self_check = ({"ok": bool(check["ok"]), "problems": json.loads(check["problems_json"]),
+                       "checked_at": check["checked_at"]} if check else None)
+        return {"online": count > 0, "online_count": count, "last_seen": last_seen,
+                "self_check": self_check}
 
     def get_request_history(self, limit: int = 20,
                             *, owner_user_id: int | None = None, offset: int = 0) -> list[dict[str, Any]]:
@@ -651,8 +651,6 @@ class AgentTaskQueue:
             con.execute("BEGIN IMMEDIATE")
             for task in tasks:
                 self._insert(con, task)
-        self._batch_tasks[batch_id] = [task.task_id for task in tasks]
-        self._tasks.update({task.task_id: task for task in tasks})
         return tasks
 
 

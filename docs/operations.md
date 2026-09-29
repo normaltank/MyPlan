@@ -7,13 +7,41 @@ README 只保留项目简介和快速开始；本文件收录部署、参数、�
 ```powershell
 .runtime/worker-venv/Scripts/python.exe -m server.start_server
 ```
-Windows 本机也可双击 `双击启动局域网服务.bat`。它会检查后台接单心跳，缺少在线消费者时启动常驻 `server.agent_worker`，然后启动网页；已在线的消费者或已监听的网页不会重复启动。两者都已在运行时，窗口会打开网页并提示后等待回车，不会一闪而过。**更新代码后请双击 `重启本地服务.bat`**：它只结束本项目虚拟环境里的接单进程与网页进程（含子进程），再按同样流程重新启动；旧的网页窗口会显示已退出，直接关闭即可。每次启动的过程记录在 `.runtime/launcher.log`。首次启动接单服务时，窗口会要求输入 DeepSeek API Key（输入不回显），并用当前 Windows 账号加密保存在本机 `.runtime/deepseek-api-key.dpapi`；此文件不能复制到其他账号或服务器当作凭据。当前账号后续双击无需重输。worker 日志在 `.runtime/local-worker.out.log` 和 `.runtime/local-worker.err.log`。网页默认监听 `http://127.0.0.1:8000`。
+Windows 本机也可双击 `双击启动局域网服务.bat`。它会检查后台接单心跳，缺少在线消费者时启动常驻 `server.agent_worker`，然后启动网页；已在线的消费者或已监听的网页不会重复启动。两者都已在运行时，窗口会打开网页并提示后等待回车，不会一闪而过。worker 启动自检未通过时，网页顶部会显示"后台接单离线 · 启动自检未通过"和第一条原因。**更新代码后请双击 `重启本地服务.bat`**：它只结束本项目虚拟环境里的接单进程与网页进程（含子进程），再按同样流程重新启动；旧的网页窗口会显示已退出，直接关闭即可。每次启动的过程记录在 `.runtime/launcher.log`。首次启动接单服务时，窗口会要求输入 DeepSeek API Key（输入不回显），并用当前 Windows 账号加密保存在本机 `.runtime/deepseek-api-key.dpapi`；此文件不能复制到其他账号或服务器当作凭据。当前账号后续双击无需重输。worker 日志在 `.runtime/local-worker.out.log` 和 `.runtime/local-worker.err.log`。网页默认监听 `http://127.0.0.1:8000`。
 
 ## 2. 员工账号与访问
 
 首次从服务器本机打开网页时，按页面提示创建管理员账号；也可以在本机终端执行 `python -m server.manage_users create-admin`（密码不回显，也不作为命令行参数）。管理员登录后在页面创建员工账号，员工可自行修改初始密码。每个员工只看自己的工单、批次、交付版本与每日统计；管理员可查看全部并按员工查看每日提交学院数、完成学院数和通过审计的教师记录行数。旧工单没有可靠的提交人信息，只有管理员可见。
 
 网页的员工账号登录仅允许本机 HTTP 或 HTTPS。默认服务只监听 `127.0.0.1:8000`；多台员工电脑访问时，应在服务器配置 HTTPS 反向代理，并将它转发到本机端口。不要把 8000 端口的 HTTP 服务直接开放到局域网或互联网。教师记录数按完成工单统计，复采会再次计入，因此它表示工作量，不表示跨工单去重的人数。
+
+### 反向代理部署
+
+网页按请求来源判断"是否本机请求"：首次创建管理员、worker 续租与同步接口只接受本机。反向代理也从 127.0.0.1 连进来，所以程序把带有 `X-Forwarded-For`、`X-Forwarded-Proto`、`X-Forwarded-Host`、`X-Real-IP` 或 `Forwarded` 头的请求一律当作远程请求。代理必须设置这些头：
+
+- 缺少 `X-Forwarded-For` 等转发头时，远程访问会被当成本机请求，能调用只限本机的接口；
+- 缺少 `X-Forwarded-Proto` 时，登录会被当成明文 HTTP 拒绝。
+
+nginx 示例（证书路径与域名按实际填写）：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name faculty.example.lan;
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+网页服务（uvicorn）默认只信任来自 127.0.0.1 的转发头。代理不在本机时，启动前设置环境变量 `FORWARDED_ALLOW_IPS=<代理地址>`，并让 8000 端口只对代理开放。续租接口的 `lease_seconds` 限定在 30 到 900 秒之间。
+
+`双击启动局域网服务.bat` 的"局域网"是历史叫法：它默认只监听本机 127.0.0.1，多台电脑访问请按上面的方式部署代理。
 
 ## 3. 图片文字与邮箱复核
 
@@ -36,6 +64,10 @@ worker 常驻轮询 `server/tasks.db`；使用锁定依赖中的 Harness 可执�
 侦察由代码分阶段执行：先读取 `server/recon_discovery.md` 核实全部名录 URL，再为每个分支用新的短上下文执行 `server/recon_instructions.md`。阶段只提供对应的真实浏览器工具；每个 URL、卡片选择器与实际下一页都须有本轮浏览器证据。确定性代码合并通过门禁的分支计划，再执行采集。无效计划或未解决审计最多返回侦察补缺两轮（`--max-recon-repairs`），全程保留原工单租约。
 
 侦察默认不按固定请求数或 Token 数截断正常学院。入口发现只提交实际承载名录的页面，避免把菜单页和个人详情页重复当成名录分支；分支验证失败后保留同一工单内已核实的其他分支，只补有问题的分支。补缺反馈只传给对应阶段；若连续两轮仍是同一问题且没有新增已核实分支，停止无进展的重试。运维如需额外费用保险，可同时设置 worker 参数 `--max-recon-calls` 与 `--max-recon-tokens`；两者默认均为 `0`（关闭）。启用后按学院累计计数，缓存输入也计入 Token，达到阈值时失败并保留用量审计。Token 在每次请求完成后检查，因此不是严格费用上限。
+
+**总时限与补缺**：单个学院工单最长 45 分钟（`--max-task-seconds`），单次侦察最长 900 秒（`--recon-timeout`），审计失败后最多补缺两轮。每轮补缺开始前，worker 会为之后的确定性采集预留 600 秒（`--harvest-reserve-seconds`）：剩余时间不够一轮侦察（至少 180 秒）加采集时，不再开始新一轮补缺，工单以 `repair_skipped_task_deadline` 结束，而不是在侦察中途被总时限腰斩；够用但不足 900 秒时，这一轮侦察按剩余时间缩短。
+
+空闲时 worker 查询队列的间隔从 0.2 秒逐步放宽到 2 秒，有新工单后恢复；没有可领工单时不占数据库写锁。
 
 ## 5. 资源与用量保护
 

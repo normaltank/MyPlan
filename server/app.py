@@ -22,7 +22,7 @@ if sys.platform == "win32":
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import pandas as pd
 
 if __package__:
@@ -71,7 +71,16 @@ SESSION_COOKIE = 'faculty_session'
 CSRF_COOKIE = 'faculty_csrf'
 
 
+# A reverse proxy on this machine also connects from 127.0.0.1. Anything it
+# forwarded carries one of these headers and is treated as a remote request,
+# so the proxy must send them (see docs/operations.md, 反向代理部署).
+_FORWARDING_HEADERS = ('forwarded', 'x-forwarded-for', 'x-forwarded-host',
+                       'x-forwarded-proto', 'x-real-ip')
+
+
 def _local_request(request: Request) -> bool:
+    if any(header in request.headers for header in _FORWARDING_HEADERS):
+        return False
     return bool(request.client and request.client.host in {'127.0.0.1', '::1', 'testclient'})
 
 
@@ -188,7 +197,7 @@ class TaskSyncRequest(BaseModel):
 
 class LeaseRenewRequest(BaseModel):
     worker_id: str
-    lease_seconds: int = 300
+    lease_seconds: int = Field(300, ge=30, le=900)
     lease_token: str
 
 
@@ -1203,7 +1212,9 @@ async def serve_ui(request: Request = None):
                 const response = await fetch('/api/worker/status');
                 if (!response.ok) throw new Error('后台状态不可用');
                 const status = await response.json();
-                document.getElementById('workerStatusText').innerText = status.online ? '后台自动接单在线' : '后台接单离线 · 请求将排队';
+                const failedCheck = !status.online && status.self_check && !status.self_check.ok
+                    ? '后台接单离线 · 启动自检未通过：' + (status.self_check.problems[0] || '见 .runtime/local-worker.err.log') : '';
+                document.getElementById('workerStatusText').innerText = status.online ? '后台自动接单在线' : (failedCheck || '后台接单离线 · 请求将排队');
                 document.getElementById('agentPill').className = `inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${status.online ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`;
             } catch (_) {
                 document.getElementById('workerStatusText').innerText = '后台状态未知';

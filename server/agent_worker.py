@@ -58,6 +58,13 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
 # 审计建议值：超过此时长即判定卡死（见 audits C3）
 DEFAULT_MAX_TASK_SECONDS = 45 * 60
+# Time kept after a recon for the deterministic harvest, and the shortest recon
+# window worth starting. A repair that cannot fit is skipped with a clear
+# status instead of being cut off by the task deadline midway.
+DEFAULT_HARVEST_RESERVE_SECONDS = 600
+MIN_RECON_SECONDS = 180
+IDLE_POLL_MIN_SECONDS = 0.2
+IDLE_POLL_MAX_SECONDS = 2.0
 DEFAULT_MAX_RECON_CALLS = 0
 DEFAULT_MAX_RECON_TOKENS = 0
 # Report (never stop) a college whose reconnaissance crosses these totals.
@@ -122,7 +129,11 @@ class AgentWorker:
         min_free_memory_mb: float = DEFAULT_MIN_FREE_MEMORY_MB,
         max_discovery_calls: int = DEFAULT_MAX_DISCOVERY_CALLS,
         max_branch_calls: int = DEFAULT_MAX_BRANCH_CALLS,
+        harvest_reserve_seconds: float = DEFAULT_HARVEST_RESERVE_SECONDS,
     ) -> None:
+        if harvest_reserve_seconds < 0:
+            raise ValueError("harvest_reserve_seconds must not be negative")
+        self.harvest_reserve_seconds = harvest_reserve_seconds
         if lease_renew_seconds <= 0:
             raise ValueError("lease_renew_seconds must be positive")
         if recon_alert_tokens < 0 or recon_alert_calls < 0 or min_free_memory_mb < 0:
@@ -164,6 +175,7 @@ class AgentWorker:
         presence_id = uuid.uuid4().hex
         last_heartbeat = float('-inf')
         memory_paused = False
+        idle_delay = IDLE_POLL_MIN_SECONDS
         try:
             while True:
                 if time.monotonic() - last_heartbeat >= 5:
@@ -184,8 +196,12 @@ class AgentWorker:
                 task = self.queue.claim_task("server-worker", task_type="harvest",
                                              exclude_task_ids=running_ids)
                 if task is None:
-                    await asyncio.sleep(0.2)
+                    # Back off while the queue stays empty; a new ticket is still
+                    # picked up within IDLE_POLL_MAX_SECONDS.
+                    await asyncio.sleep(idle_delay)
+                    idle_delay = min(idle_delay * 2, IDLE_POLL_MAX_SECONDS)
                     continue
+                idle_delay = IDLE_POLL_MIN_SECONDS
                 if once:
                     await self._execute_task(task)
                     return
@@ -232,8 +248,10 @@ class AgentWorker:
 
         renew = self._lease_renewer(task)
 
+        deadline = started + self.max_task_seconds
+
         async def harvest() -> dict[str, Any]:
-            return await self._harvest_with_repair(task, task_output_dir)
+            return await self._harvest_with_repair(task, task_output_dir, deadline=deadline)
 
         try:
             report = await asyncio.wait_for(
@@ -296,8 +314,19 @@ class AgentWorker:
 
         return renew
 
-    async def _harvest_with_repair(self, task: Any, output_dir: Path) -> dict[str, Any]:
+    def _recon_window(self, deadline: float | None, attempt: int) -> float | None:
+        """Seconds this recon may use, or None when a repair would not fit."""
+        if deadline is None:
+            return self.recon_timeout
+        window = deadline - time.monotonic() - self.harvest_reserve_seconds
+        if attempt > 0 and window < MIN_RECON_SECONDS:
+            return None
+        return max(MIN_RECON_SECONDS, min(self.recon_timeout, window))
+
+    async def _harvest_with_repair(self, task: Any, output_dir: Path, *,
+                                   deadline: float | None = None) -> dict[str, Any]:
         feedback = None
+        report: dict[str, Any] = {"delivery_ready": False, "unresolved": []}
         output_dir.mkdir(parents=True, exist_ok=True)
         resumed = self._resume_plan(task, output_dir)
         attempts = resumed.diagnostics.pop("prior_attempts", []) if resumed else []
@@ -314,13 +343,20 @@ class AgentWorker:
             attempt_dir.mkdir(parents=True, exist_ok=True)
             from server.task_image_review import carry_review_decisions
             carry_review_decisions(output_dir, attempt_dir)
+            recon = resumed if attempt == 0 else None
+            window = self._recon_window(deadline, attempt)
+            if window is None:
+                remaining = max(0, int(deadline - time.monotonic()))
+                print(f"[worker]   剩余 {remaining}s 不足一轮补缺加采集，停止补缺", flush=True)
+                report = {**report, "unresolved": [*(report.get("unresolved") or []),
+                          {"status": "repair_skipped_task_deadline", "remaining_seconds": remaining}]}
+                break
             print(f"[worker]   侦察 {attempt + 1}… {task.url}", flush=True)
             try:
-                recon = resumed if attempt == 0 else None
                 if attempt == 0 and recon is None:
                     recon = await self._cached_recon(task, output_dir)
                 if recon is None:
-                    kwargs = {"timeout_seconds": self.recon_timeout,
+                    kwargs = {"timeout_seconds": window,
                               "feedback": feedback, "budget": budget,
                               "phase_call_limits": self.phase_call_limits}
                     if verified_branches:
@@ -652,6 +688,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="单个名录分支验证会话的模型请求上限，超过即停止该学院；0 关闭")
     p.add_argument("--min-free-memory-mb", type=float, default=DEFAULT_MIN_FREE_MEMORY_MB,
                    help="可用内存低于此值时暂缓接新单（已有学院在跑时才生效）；0 关闭")
+    p.add_argument("--harvest-reserve-seconds", type=float, default=DEFAULT_HARVEST_RESERVE_SECONDS,
+                   help="补缺侦察须为之后的确定性采集预留的秒数；不够时不再开始新一轮补缺")
     p.add_argument("--once", action="store_true", help="处理一个工单后退出")
     p.add_argument("--skip-self-check", action="store_true",
                    help="跳过启动自检（仅排障用；缺依赖时采集质量会静默下降）")
@@ -669,6 +707,11 @@ def main() -> None:
     else:
         from server.worker_selfcheck import run_self_check
         problems = run_self_check()
+        try:  # shown on the Web page; a broken database must not hide the real reason
+            AgentTaskQueue(args.db).record_self_check(problems)
+        except Exception as exc:
+            print(f"[worker] 自检结果未能写入队列数据库：{type(exc).__name__}: {exc}",
+                  file=sys.stderr, flush=True)
         if problems:
             print("[worker] 启动自检未通过，未领取任何工单：", file=sys.stderr, flush=True)
             for problem in problems:
@@ -688,6 +731,7 @@ def main() -> None:
         recon_alert_tokens=args.recon_alert_tokens,
         recon_alert_calls=args.recon_alert_calls,
         min_free_memory_mb=args.min_free_memory_mb,
+        harvest_reserve_seconds=args.harvest_reserve_seconds,
         max_discovery_calls=args.max_discovery_calls,
         max_branch_calls=args.max_branch_calls,
     )
