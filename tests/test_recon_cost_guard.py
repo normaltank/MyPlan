@@ -65,6 +65,35 @@ def test_runtime_notification_stops_session_and_keeps_partial_usage(monkeypatch)
     assert caught.value.diagnostics["token_usage"]["cached_input"] == 40
 
 
+def test_completed_usage_is_counted_when_a_parallel_sibling_has_cancelled(monkeypatch):
+    import threading
+    import deepseek_harness
+    cancel = threading.Event()
+    cancel.set()
+    class Harness:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def run(self, prompt, *, session_id, on_notification):
+            on_notification(SimpleNamespace(method='session.event', payload={
+                'sessionId': session_id, 'event': _message()}))
+    monkeypatch.setattr(deepseek_harness, 'DeepSeekHarness', Harness)
+    monkeypatch.setattr(agent_recon, 'check_runtime_composition', lambda *_: None)
+    budget = agent_recon.ReconBudget()
+    cfg = {'dsh_home': 'home', 'workspace': '.', 'dsh_bin': None,
+           'profile': 'sdk', 'provider': 'deepseek-official', 'model': 'deepseek-flash',
+           'effort': 'high', 'api_key': 'fixture', 'budget': budget, 'cancel_event': cancel}
+    with pytest.raises(agent_recon.ReconCancelled):
+        agent_recon._execute_harness('structure only', 'cancelled', cfg, ())
+    snapshot = budget.snapshot()
+    assert snapshot['calls'] == 1 and snapshot['token_usage']['cached_input'] == 20
+    assert snapshot['cost']['known_usd'] > 0
+    assert snapshot['cost']['estimated_usd'] is None
+
+
 @pytest.mark.asyncio
 async def test_worker_stops_repair_loop_and_saves_budget_audit(tmp_path, monkeypatch):
     worker = AgentWorker(db_path=tmp_path / "tasks.db", output_dir=tmp_path / "outputs",

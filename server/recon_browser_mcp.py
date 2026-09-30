@@ -72,23 +72,33 @@ TOOLS = [
 
 
 def phase_tools(phase: str) -> list[dict]:
+    from server.recon_contract import submission_schema
+    submit = tool("submit_plan", "Submit this phase's structure-only plan. Schema and current-session browser "
+                  "evidence are checked immediately. Fix reported paths/codes and retry; stop after accepted:true. "
+                  "CSS selectors intentionally cannot contain Chinese. Never include teacher fields.",
+                  {"plan": submission_schema(phase)}, ("plan",))
+    definitions = submit["inputSchema"]["properties"]["plan"].pop("$defs", None)
+    if definitions:
+        submit["inputSchema"]["$defs"] = definitions
     if phase == "discovery":
         allowed = {"browser_navigate", "browser_navigation", "browser_survey", "browser_evaluate", "browser_screenshot"}
     elif phase == "branch":
         allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
                    "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot"}
     else:
-        return TOOLS
-    return [entry for entry in TOOLS if entry["name"] in allowed]
+        return [*TOOLS, submit]
+    return [*[entry for entry in TOOLS if entry["name"] in allowed], submit]
 
 
 class BrowserScout:
-    def __init__(self, page: Any, evidence_dir: Path, phase: str = "full"):
+    def __init__(self, page: Any, evidence_dir: Path, phase: str = "full", target: dict | None = None):
         self.page = page
         self.evidence_dir = evidence_dir
         evidence_dir.mkdir(parents=True, exist_ok=True)
         self.sequence = 0
         self.phase = phase
+        self.target = target
+        self.events: list[dict] = []
         self._last_html_digest = None
         self._seen_links: set[str] = set()
         self._seen_lines: set[str] = set()
@@ -164,6 +174,24 @@ class BrowserScout:
             self.save("discovery.json", json.dumps(await navigation_evidence(self.page), ensure_ascii=False))
 
     async def call(self, name: str, arguments: dict) -> dict:
+        if name == "submit_plan":
+            from server.recon_contract import plan_digest, validate_submission
+            plan = arguments.get("plan")
+            issues = validate_submission(plan, self.phase, self.target, self.events)
+            if issues:
+                return {**self.text_result({"accepted": False, "issues": issues}), "isError": True}
+            self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
+            return self.text_result({"accepted": True, "digest": plan_digest(plan)})
+        reply = await self._browser_call(name, arguments)
+        cid = str(len(self.events))
+        self.events.extend([
+            {"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
+                                            "arguments": json.dumps(arguments)}},
+            {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": cid, **reply}]}}},
+        ])
+        return reply
+
+    async def _browser_call(self, name: str, arguments: dict) -> dict:
         if name == "browser_navigate":
             url = arguments["url"]
             if not url.startswith(("http://", "https://")):
@@ -222,6 +250,7 @@ class BrowserScout:
                 from server.empty_roster import verify_empty_roster
                 branch = {**arguments, "url": self.page.url, "single_page": True}
                 value["empty_roster"] = await verify_empty_roster(self.page, branch, await self.page.content())
+                value["pagination"] = await self.page.evaluate("() => __facultyRecon.pagination('body',0,12,true)")
                 await self.snapshot()
         elif name == "browser_verify_segments":
             from server.segmented_roster import verification_summary
@@ -275,7 +304,7 @@ class BrowserScout:
         return self.text_result(value)
 
 
-async def serve(*, phase: str | None = None, session: str | None = None) -> None:
+async def serve(*, phase: str | None = None, session: str | None = None, target: dict | None = None) -> None:
     from server.browser_context import new_browser_context
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -286,7 +315,8 @@ async def serve(*, phase: str | None = None, session: str | None = None) -> None
             session = session or os.environ.get("FACULTY_RECON_SESSION", "standalone")
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session):
                 session = hashlib.sha256(session.encode()).hexdigest()
-            scout = BrowserScout(await context.new_page(), HERE / "outputs/recon-evidence" / session / uuid.uuid4().hex, phase)
+            scout = BrowserScout(await context.new_page(), HERE / "outputs/recon-evidence" / session / uuid.uuid4().hex,
+                                 phase, target)
             while line := await asyncio.to_thread(sys.stdin.readline):
                 request = json.loads(line)
                 if "id" not in request:  # MCP initialization/cancellation notifications.
@@ -326,5 +356,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Real browser MCP for faculty structural reconnaissance")
     parser.add_argument("--phase", choices=("full", "discovery", "branch"))
     parser.add_argument("--session")
+    parser.add_argument("--target", type=json.loads)
     args = parser.parse_args()
-    asyncio.run(serve(phase=args.phase, session=args.session))
+    asyncio.run(serve(phase=args.phase, session=args.session, target=args.target))

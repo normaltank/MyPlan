@@ -218,13 +218,48 @@ def _name_cards(name_items: list[dict]) -> list[str]:
     return cards
 
 
+def _identity_cards(items: list[dict], allowed: bool) -> str:
+    cards = []
+    for item in items:
+        observations = item['observations']
+        options = ''.join('<option value="' + escape(o['url'], quote=True) + '">'
+                          + escape(o['url']) + '</option>' for o in observations)
+        sources = []
+        for o in observations:
+            row = o['record']
+            from server.faculty_identity import field_value
+            choices = ''.join('<option value="' + escape(p['url'], quote=True) + '"'
+                              + (' selected' if p['url'] == o['url'] else '') + '>'
+                              + escape(p['url']) + '</option>' for p in observations)
+            sources.append('<div class="identity-source" data-url="' + escape(o['url'], quote=True) + '">'
+                + '<p>来源：' + _page_link(o['url']) + '</p><p>职称：' + escape(field_value(row, '职称'))
+                + ' · 邮箱：' + escape(field_value(row, '邮箱')) + '</p>'
+                + '<details><summary>完整简介原文</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">'
+                + escape(field_value(row, '简介')) + '</pre></details>'
+                + '<label>这条观察属于哪个主来源代表的教师？<select>' + choices + '</select></label></div>')
+        buttons = ('<div class="actions"><button data-verdict="distinct" type="button">不同教师，全部保留</button>'
+                   '<button data-verdict="same" type="button">同一教师，合并来源</button>'
+                   '<button data-verdict="partition" type="button">按各条选择分组</button>'
+                   '<button data-verdict="insufficient" type="button" class="secondary">证据不足，保持阻断</button></div>')
+        status = {'distinct': '已确认不同教师', 'same': '已确认同一教师', 'partition': '已保存来源分组',
+                  'insufficient': '证据不足，仍不可交付'}.get(item.get('saved_verdict'), '')
+        cards.append('<section class="card identity-card" data-id="' + escape(item['id']) + '"><h2>同名身份复核：'
+            + escape(item['name']) + '</h2><p>不同网址不能证明是不同教师。同一人合并时，邮箱、职称与主页取主来源；'
+            + '各来源的完整简介都保留，原始观察另存审计。</p>' + ''.join(sources)
+            + '<label>全部合并时使用的主来源<select class="primary">' + options + '</select></label>'
+            + (buttons if allowed else '<p>请管理员核对来源并确认身份。</p>')
+            + '<p class="status" role="status">' + status + '</p></section>')
+    return ''.join(cards)
+
+
 def render_review_page(items: list[dict], email_items: list[dict] | None = None, *,
                        decision_url: str = '/decision',
                        email_decision_url: str = '/email-decision',
                        csrf_token: str = '', retry_url: str = '',
                        return_url: str = '/',
                        name_items: list[dict] | None = None,
-                       name_decision_url: str = '') -> str:
+                       name_decision_url: str = '', identity_items: list[dict] | None = None,
+                       identity_decision_url: str = '', can_review_identity: bool = True) -> str:
     cards = []
     for item in items:
         crop = base64.b64encode(item["crop_bytes"]).decode("ascii")
@@ -261,11 +296,14 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     if name_cards:
         body += ('<h2>生僻姓氏</h2><p>这些名字的姓不在常用姓氏表里，也可能是普通词语。'
                  '请打开名录页核对。</p>' + "\n".join(name_cards))
-    if not body:
+    if not body and not identity_items:
         body = '<p>当前没有需要人工复核的图片文字、邮箱或姓名。</p>'
+    if identity_items:
+        body += '<h2>来源身份</h2>' + _identity_cards(identity_items, can_review_identity)
     decision_js = json.dumps(decision_url).replace('<', '\\u003c')
     email_js = json.dumps(email_decision_url).replace('<', '\\u003c')
     name_js = json.dumps(name_decision_url).replace('<', '\\u003c')
+    identity_js = json.dumps(identity_decision_url).replace('<', '\\u003c')
     retry_js = json.dumps(retry_url).replace('<', '\\u003c')
     csrf_js = json.dumps(csrf_token).replace('<', '\\u003c')
     footer = ''
@@ -292,7 +330,19 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "if(!response.ok)throw await failure(response);"
             "status.textContent=verdict==='person'?'已确认为教师':'已标记为不是教师姓名';}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
-            "document.querySelectorAll('.card:not(.email-card):not(.name-card)').forEach(card=>{"
+            "document.querySelectorAll('.identity-card').forEach(card=>{"
+            "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
+            "const status=card.querySelector('.status');const verdict=button.dataset.verdict;"
+            "const primary_url=card.querySelector('.primary').value;"
+            "const assignments=Object.fromEntries(Array.from(card.querySelectorAll('.identity-source'))"
+            ".map(source=>[source.dataset.url,source.querySelector('select').value]));"
+            "try{const response=await fetch(" + identity_js + ",{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
+            "body:JSON.stringify({id:card.dataset.id,verdict,primary_url,assignments})});"
+            "if(!response.ok)throw await failure(response);"
+            "status.textContent=verdict==='insufficient'?'证据不足，保持阻断':'已保存身份决定；来源变化后须重新复核';}"
+            "catch(error){status.textContent='保存失败：'+error.message;}});});"
+            "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
             "const verified_text=card.querySelector('textarea').value;"
             "try{const response=await fetch(" + decision_js + ",{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"

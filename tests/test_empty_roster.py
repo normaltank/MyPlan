@@ -160,6 +160,37 @@ def test_request_tracking_is_shared_idempotent_and_unavailable_without_a_page():
 
 @pytest.mark.asyncio
 @pytest.mark.browser
+async def test_empty_roster_accepts_only_native_disabled_pagination_and_keeps_other_gates():
+    from server.empty_roster import verify_empty_roster, install_empty_roster_tracking
+    cases = [
+        ('<div class="pagination"><button disabled>上一页</button><button disabled>下一页</button></div>', True),
+        ('<div class="pagination"><button disabled>上一页</button><button>下一页</button></div>', False),
+        ('<div class="pagination"><button aria-disabled="true">下一页</button></div>', False),
+        ('<div class="pagination"><a aria-disabled="true" href="/next">下一页</a></div>', False),
+        ('<div class="pagination"><a href="">下一页</a></div>', False),
+        ('<div class="pagination"><button disabled><span hidden>隐藏教师</span></button></div>', False),
+        ('<div class="pagination" onclick="location.href=\'/next\'"><button disabled>下一页</button></div>', False),
+    ]
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        install_empty_roster_tracking(page)
+        await page.route('**/*', lambda request: request.fulfill(body=HTML, content_type='text/html'))
+        try:
+            await page.goto(BRANCH['url'])
+            for controls, allowed in cases:
+                source = '<main><div id="roster"><p class="empty">暂无教师</p>' + controls + '</div></main>'
+                await page.set_content(source)
+                result = await verify_empty_roster(page, BRANCH, await page.content())
+                assert result['confirmed'] is allowed, (source, result)
+            await page.set_content(HTML + '<div class="pagination"><a aria-disabled="true" href="/next">继续</a></div>')
+            assert not (await verify_empty_roster(page, BRANCH, await page.content()))['confirmed']
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
 async def test_late_network_request_cannot_confirm_still_loading_roster():
     from server.empty_roster import verify_empty_roster, install_empty_roster_tracking
     async with async_playwright() as pw:

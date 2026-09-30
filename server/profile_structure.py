@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -167,14 +168,24 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         from server.profile_content import TRIVIAL_HIDDEN_CHARS
         args = {"selector": selector, "start": start_selector, "trivialChars": TRIVIAL_HIDDEN_CHARS}
         first_facts = await page.evaluate(_FACTS, args)
-        await asyncio.sleep(0.3)
-        html = await page.content()
-        _, evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
-        facts = await page.evaluate(_FACTS, args)
-        selected_stable = bool(not issue and evidence
-                               and first_evidence['selected_html_sha256'] == evidence['selected_html_sha256'])
-        visibility_stable = first_facts == facts and not facts['active_animation_count']
-        stable = bool(selected_stable and visibility_stable)
+        # A finite entrance animation is not evidence of an incomplete article.
+        # Wait for two stable samples; continuing animation/DOM changes still block.
+        settle_deadline = time.monotonic() + 2.0
+        settle_samples = 0
+        while True:
+            await asyncio.sleep(0.3)
+            html = await page.content()
+            _, evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
+            facts = await page.evaluate(_FACTS, args)
+            settle_samples += 1
+            selected_stable = bool(not issue and evidence and first_evidence
+                                   and first_evidence['selected_html_sha256'] == evidence['selected_html_sha256'])
+            visibility_stable = first_facts == facts and not facts['active_animation_count']
+            stable = bool(selected_stable and visibility_stable)
+            if stable or issue or time.monotonic() >= settle_deadline:
+                break
+            first_evidence, first_facts = evidence, facts
+            activity = tracker.activity
         # A failed stylesheet, font or an image that is not inside the container
         # (theme icons, CSS backgrounds) cannot change the captured profile.
         failed = list(tracker.failed_requests)
@@ -232,6 +243,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                       network_activity_changed=activity != tracker.activity,
                       hidden_content_count=facts['hidden_content_count'], start_valid=facts['start_valid'],
                       active_animation_count=facts['active_animation_count'])
+        result['settle_samples'] = settle_samples
         if evidence:
             result['selected_html_sha256'] = evidence['selected_html_sha256']
         if issue:

@@ -18,15 +18,24 @@ def field_value(record, field):
     return ""
 
 
-def identity_review_issues(records):
+def identity_review_issues(records, reviewed_pairs=None):
     groups = defaultdict(set)
+    by_name = defaultdict(list)
     for record in records:
         name, url = field_value(record, "姓名"), field_value(record, "主页")
         if name and url:
             groups[name].add(url)
+            by_name[name].append(record)
     issues = []
     for name, urls in groups.items():
         if len(urls) > 1:
+            if reviewed_pairs:
+                from itertools import combinations
+                from server.identity_review import observation_key
+                if all(frozenset((observation_key(a), observation_key(b))) in reviewed_pairs
+                       for a, b in combinations(by_name[name], 2)
+                       if field_value(a, "主页") != field_value(b, "主页")):
+                    continue
             ordered = sorted(urls)
             issues.append({"status": "distinct_profile_identity_unverified", "url": ordered[0],
                 "profile_urls": ordered, "observation_count": len(ordered),

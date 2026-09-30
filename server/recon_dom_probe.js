@@ -80,19 +80,22 @@
       groups.sort((a, b) => b.repeatedCount - a.repeatedCount);
       return page(groups, offset, limit);
     },
-    pagination(selector = 'body', offset = 0, limit = 12) {
+    isPaginationControl(control, root = document.body) {
+      if (control.relList?.contains('next')) return true;
+      for (let node = control; node && node !== root; node = node.parentElement) {
+        const tokens = [...node.classList, node.id || ''].join(' ');
+        if (/(?:^|[-_\s])(?:next|nextpage|pagination|pager|pages)(?:$|[-_\s])/i.test(tokens)
+            || (node.getAttribute('aria-label') || '').toLowerCase().includes('pagination')) return true;
+      }
+      return false;
+    },
+    pagination(selector = 'body', offset = 0, limit = 12, nativeDisabledOnly = false) {
       const root = document.querySelector(selector);
       if (!root) return {error: 'container_empty', url: location.href};
-      const candidates = [...root.querySelectorAll('a,button')].filter(control => {
-        if (control.disabled || control.getAttribute('aria-disabled') === 'true') return false;
-        if (control.relList?.contains('next')) return true;
-        for (let node = control; node && node !== root; node = node.parentElement) {
-          const tokens = [...node.classList, node.id || ''].join(' ');
-          if (/(?:^|[-_\s])(?:next|nextpage|pagination|pager|pages)(?:$|[-_\s])/i.test(tokens)
-              || (node.getAttribute('aria-label') || '').toLowerCase().includes('pagination')) return true;
-        }
-        return false;
-      }).filter(n => n.getAttribute('aria-current') !== 'page').map(n => ({selector: path(n),
+      const candidates = [...root.querySelectorAll(nativeDisabledOnly ? 'a,button,input' : 'a,button')].filter(control => {
+        if (control.matches(':disabled') || (!nativeDisabledOnly && control.getAttribute('aria-disabled') === 'true')) return false;
+        return this.isPaginationControl(control, root);
+      }).filter(n => nativeDisabledOnly || n.getAttribute('aria-current') !== 'page').map(n => ({selector: path(n),
         url: n.href || null, label: (n.textContent || '').trim().slice(0, 16)}));
       return page(candidates, offset, limit);
     },

@@ -10,7 +10,7 @@
    第二个 worker 合法认领同一学院、两台 Chromium 同时打同一站点。
    故 `reconnoiter()` 是 async，并在独立工作线程中卸出阻塞调用。
 2. 模型产出物中**任何非 URL、非选择器的字符串都视为可疑**。
-   CSS 选择器不可能含 CJK 字符——这条机械判据是红线 1 的可执行形式。
+   CSS 实际可含 CJK，但本项目有意禁止，非白名单 CJK 是红线 1 的机械判据。
 3. 模型在侦察时必然看到页面内容（含姓名），这是允许的；
    被禁止的是把数据字段**带出来**（见红线 1「严禁数据出境」）。
 """
@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -27,7 +28,7 @@ import subprocess
 import time
 import tempfile
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -48,11 +49,10 @@ class ReconBudgetExceeded(ReconError):
 
 
 class ReconPhaseLimitExceeded(ReconError):
-    """One discovery/branch session used more model requests than allowed.
+    """An explicitly configured phase ceiling was reached.
 
-    A structure the plan contract cannot express makes the scout probe the
-    same page again and again; a repair round rarely helps, so this is a
-    terminal failure that tells operators to look at the page type.
+    This does not prove an unsupported page: a valid complex website can need
+    more steps. Defaults leave these ceilings disabled.
     """
 
 
@@ -70,6 +70,8 @@ class ReconBudget:
 
     def __init__(self, *, max_calls: int = 0, max_tokens: int = 0,
                  alert_calls: int = 0, alert_tokens: int = 0,
+                 alert_cost_usd: float = 0, provider: str = "deepseek-official",
+                 model: str = "deepseek-flash", price_override: dict | None = None,
                  on_alert: Callable[[dict[str, Any]], None] | None = None) -> None:
         if min(max_calls, max_tokens, alert_calls, alert_tokens) < 0:
             raise ValueError("recon budget limits must not be negative")
@@ -80,45 +82,92 @@ class ReconBudget:
         self.alert_calls = alert_calls
         self.alert_tokens = alert_tokens
         self.on_alert = on_alert
+        if not math.isfinite(alert_cost_usd) or alert_cost_usd < 0:
+            raise ValueError("cost alert must be finite and non-negative")
+        self.alert_cost_usd = alert_cost_usd
+        self.provider, self.model, self.price_override = provider, model, price_override
+        self.known_cost_usd = 0.0
+        self.unknown_cost_calls = 0
+        self._lock = threading.RLock()
         self.alerts: list[dict[str, Any]] = []
         self.calls = 0
         self.usage = {"uncached_input": 0, "cached_input": 0, "output": 0}
 
     def snapshot(self) -> dict[str, Any]:
-        usage = self.usage.copy()
-        return {"calls": self.calls, "token_usage": usage,
+        from server.recon_pricing import PRICE_DATE, PRICE_SOURCE
+        with self._lock:
+            usage = self.usage.copy()
+            return {"calls": self.calls, "token_usage": usage,
                 "total_tokens": sum(usage.values()),
-                "max_calls": self.max_calls, "max_tokens": self.max_tokens}
+                "max_calls": self.max_calls, "max_tokens": self.max_tokens,
+                "cost": {"estimated_usd": round(self.known_cost_usd, 9) if not self.unknown_cost_calls else None,
+                         "known_usd": round(self.known_cost_usd, 9), "unknown_calls": self.unknown_cost_calls,
+                         "provider": self.provider, "model": self.model, "price_date": PRICE_DATE,
+                         "price_source": PRICE_SOURCE, "price_override": self.price_override,
+                         "time_basis": "usage_notification_received_at", "invoice": False}}
 
     def delta(self, before: dict[str, Any]) -> dict[str, Any]:
-        return {"model_calls": self.calls - before["calls"],
+        with self._lock:
+            prior = before.get("cost") or {}
+            unknown = self.unknown_cost_calls - prior.get("unknown_calls", 0)
+            known = self.known_cost_usd - prior.get("known_usd", 0)
+            return {"model_calls": self.calls - before["calls"],
                 "token_usage": {key: value - before["token_usage"][key]
                                 for key, value in self.usage.items()},
+                "cost": {**self.snapshot()["cost"], "known_usd": round(known, 9),
+                         "estimated_usd": round(known, 9) if not unknown else None, "unknown_calls": unknown},
                 "budget_total": self.snapshot()}
 
     def seed(self, attempts: list[dict[str, Any]]) -> None:
-        for attempt in attempts:
-            self.calls += int(attempt.get("model_calls") or 0)
-            source = attempt.get("token_usage") or {}
-            for key in self.usage:
-                self.usage[key] += int(source.get(key) or 0)
+        with self._lock:
+            for attempt in attempts:
+                calls = int(attempt.get("model_calls") or 0)
+                self.calls += calls
+                source = attempt.get("token_usage") or {}
+                for key in self.usage:
+                    self.usage[key] += int(source.get(key) or 0)
+                cost = attempt.get("cost")
+                if cost:
+                    self.known_cost_usd += cost.get("known_usd", 0)
+                    self.unknown_cost_calls += cost.get("unknown_calls", 0)
+                else:
+                    self.unknown_cost_calls += calls
+
+    def mark_usage_unknown(self) -> None:
+        """An interrupted request may be charged without a completed usage event."""
+        with self._lock:
+            self.unknown_cost_calls += 1
 
     def observe(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            self._observe_locked(event)
+
+    def _observe_locked(self, event: dict[str, Any]) -> None:
         if event.get("type") != "assistant/message":
             return
         values = (event.get("data") or {}).get("usage") or {}
         if not values:
             return
         self.calls += 1
+        increment = {}
         for target, source in (("uncached_input", "inputTokens"),
                                ("cached_input", "cacheReadTokens"),
                                ("output", "outputTokens")):
-            self.usage[target] += int(values.get(source) or 0)
+            increment[target] = int(values.get(source) or 0)
+            self.usage[target] += increment[target]
+        from server.recon_pricing import estimate
+        cost = estimate(increment, self.provider, self.model, time.time(), self.price_override)
+        if cost is None:
+            self.unknown_cost_calls += 1
+        else:
+            self.known_cost_usd += cost
         total = sum(self.usage.values())
         if not self.alerts and ((self.alert_calls and self.calls >= self.alert_calls)
-                                or (self.alert_tokens and total >= self.alert_tokens)):
+                                or (self.alert_tokens and total >= self.alert_tokens)
+                                or (self.alert_cost_usd and self.known_cost_usd >= self.alert_cost_usd)):
             alert = {"calls": self.calls, "total_tokens": total, "token_usage": self.usage.copy(),
                      "alert_calls": self.alert_calls, "alert_tokens": self.alert_tokens,
+                     "alert_cost_usd": self.alert_cost_usd, "cost": self.snapshot()["cost"],
                      "at": time.time()}
             self.alerts.append(alert)
             if self.on_alert is not None:
@@ -266,8 +315,8 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
         if "single_page" in node and not isinstance(node["single_page"], bool):
             raise PlanHygieneError(f"{path}.single_page must be boolean")
         for name in ("max_pages", "max_children"):
-            if name in node and (type(node[name]) is not int or not 1 <= node[name] <= 100):
-                raise PlanHygieneError(f"{path}.{name} must be an integer from 1 to 100")
+            if name in node and (type(node[name]) is not int or node[name] < 1):
+                raise PlanHygieneError(f"{path}.{name} must be a positive integer")
         if "child_branch" in node:
             if not isinstance(node["child_branch"], dict):
                 raise PlanHygieneError(f"{path}.child_branch must be an object")
@@ -672,7 +721,8 @@ class ReconResult:
         }
 
 
-def write_runtime_patch(path: Path, *, phase: str = "full", session_id: str = "standalone") -> None:
+def write_runtime_patch(path: Path, *, phase: str = "full", session_id: str = "standalone",
+                        target: dict | None = None) -> None:
     """Resolve project resources before the MCP subprocess starts."""
     here = Path(__file__).resolve().parent
     entries = yaml.safe_load((here / "recon_runtime.cordis.yml").read_text(encoding="utf-8"))
@@ -680,10 +730,13 @@ def write_runtime_patch(path: Path, *, phase: str = "full", session_id: str = "s
         if entry.get("id") == "spill-local":
             entry["config"]["root"] = str(here / "outputs" / "recon-evidence")
     import sys
+    args = ["-m", "server.recon_browser_mcp", "--phase", phase, "--session", session_id]
+    if target is not None:
+        args.extend(["--target", json.dumps(target, ensure_ascii=False)])
     entries.append({"insert": [{"id": os.environ.get("DSH_MCP_ID", "faculty-recon-browser"),
         "name": "@deepseek-ai/dsh-mcp-client", "config": {
         "serverName": "playwright", "transport": "stdio", "command": sys.executable,
-        "args": ["-m", "server.recon_browser_mcp", "--phase", phase, "--session", session_id], "cwd": str(here.parent),
+        "args": args, "cwd": str(here.parent),
         "env": {"PYTHONIOENCODING": "utf-8", "FACULTY_RECON_PHASE": phase,
                 "FACULTY_RECON_SESSION": session_id}, "failOnStartupError": True}}]})
     path.write_text(yaml.safe_dump(entries, allow_unicode=True), encoding="utf-8")
@@ -696,7 +749,7 @@ def _run_harness_blocking(prompt: str, session_id: str, cfg: dict[str, Any]) -> 
         runtime = str(Path(__file__).with_name("recon_runtime.cordis.yml"))
         if runtime in patches:
             resolved = Path(folder) / "runtime.yml"
-            write_runtime_patch(resolved)
+            write_runtime_patch(resolved, target=cfg.get("target"))
             cfg = {**cfg, "runtime_patch": str(resolved)}
             patches[patches.index(runtime)] = str(resolved)
         if cfg.get("target"):
@@ -715,13 +768,21 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
         *(branch["url"] for branch in (feedback.get("previous_plan") or {}).get("branches", [])
           if isinstance(branch, dict) and isinstance(branch.get("url"), str))]) if _is_structure_url(url)]
     urls = []
-    last_events = []
+    parallel = cfg.get("parallel_branches", False)
+    template_reuse = cfg.get("template_reuse", False)
     discovery_checkpoint = None
     verified_branches = dict(cfg.get("verified_branches") or {})
+    errors = []
 
-    def run(phase: str, url: str, suffix: str) -> dict[str, Any]:
-        nonlocal last_events
+    def run(phase: str, url: str, suffix: str) -> tuple[dict, list, dict]:
         remaining = deadline - time.monotonic()
+        if cfg.get("cancel_event") is not None and cfg["cancel_event"].is_set():
+            error = ReconCancelled("侦察已被停止")
+            error.phase, error.phase_session_id = phase, f"{session_id}-{suffix}"
+            error.diagnostics = {"model_calls": 0, "token_usage": dict.fromkeys(
+                ("uncached_input", "cached_input", "output"), 0),
+                "budget_total": cfg["budget"].snapshot() if cfg.get("budget") else {}}
+            raise error
         if remaining <= 0:
             raise ReconError("阶段侦察超过总时限")
         phase_cfg = {**cfg, "phase": phase, "timeout_seconds": remaining,
@@ -744,26 +805,36 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             if scoped.get("issues") or scoped.get("known_urls") or scoped.get("previous_branch"):
                 prompt += "\n本阶段结构反馈：" + json.dumps(scoped, ensure_ascii=False, separators=(",", ":"))
         sid = f"{session_id}-{suffix}"
+        phase_patches = patches
         if cfg.get("runtime_patch"):
-            write_runtime_patch(Path(cfg["runtime_patch"]), phase=phase, session_id=sid)
+            original = Path(cfg["runtime_patch"])
+            patch = original.with_name(f"{original.stem}-{suffix}{original.suffix}") if parallel else original
+            write_runtime_patch(patch, phase=phase, session_id=sid,
+                                target={**target, "url": url, "required_urls": required_urls})
+            phase_patches = tuple(str(patch) if value == str(original) else value for value in patches)
         try:
-            result = _execute_harness(prompt, sid, phase_cfg, patches)
+            result = _execute_harness(prompt, sid, phase_cfg, phase_patches)
         except (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled) as exc:
             exc.phase = phase
             exc.phase_session_id = sid
             raise
         current = getattr(result, "events", []) or []
-        last_events = current
-        events.extend(current)
-        phases.append({"phase": phase, "session_id": sid,
+        metric = {"phase": phase, "session_id": sid,
                        "evidence_root": str(Path(__file__).parent / "outputs/recon-evidence" / sid),
-                       **run_metrics(current)})
+                       **run_metrics(current)}
         if getattr(result, "finish_reason", None) != "completed":
-            raise ReconError("阶段侦察未正常完成")
-        parsed = extract_plan_json(getattr(result, "final_response", "") or "")
+            error = ReconError("阶段侦察未正常完成")
+            error.phase_events, error.phase_metric = current, metric
+            raise error
+        from server.recon_contract import submitted_plan
+        parsed = submitted_plan(current)
+        if parsed is None and not cfg.get("require_submission"):
+            parsed = extract_plan_json(getattr(result, "final_response", "") or "")
         if parsed is None:
-            raise ReconPlanError("阶段未返回 JSON")
-        return parsed
+            error = ReconPlanError("阶段未返回 JSON")
+            error.phase_events, error.phase_metric = current, metric
+            raise error
+        return parsed, current, metric
 
     try:
         resumed_discovery = cfg.get("resume_discovery")
@@ -776,8 +847,9 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                            "evidence_root": str(Path(__file__).parent / "outputs/recon-evidence"
                                                 / discovery_session_id)})
         else:
-            discovery = run("discovery", target["url"], "discover")
-            discovery_events = list(last_events)
+            discovery, discovery_events, metric = run("discovery", target["url"], "discover")
+            events.extend(discovery_events)
+            phases.append(metric)
             discovery_session_id = f"{session_id}-discover"
         if (set(discovery) != {"school", "college", "source_kind", "branches"}
                 or discovery["school"] != target["school"] or discovery["college"] != target["college"]
@@ -804,7 +876,15 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
         discovery_checkpoint = {"plan": discovery, "events": discovery_events,
                                 "session_id": discovery_session_id}
         plan = {**discovery, "branches": []}
-        for index, url in enumerate(urls):
+        from server.recon_templates import inspect_templates, verify_template
+        evidence_root = Path(__file__).parent / "outputs/recon-evidence" / session_id
+        fingerprints = (inspect_templates(urls, evidence_root / "templates",
+                        max(0.01, min(60, deadline - time.monotonic())))
+                        if template_reuse and len(urls) > 1 else {})
+        accepted = {}
+
+        def verify(index, url, representative=None):
+            started = time.monotonic()
             reuse = verified_branches.get(url)
             if reuse:
                 branch = reuse["branch"]
@@ -813,35 +893,118 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                 validate_model_plan(one, school=target["school"], college=target["college"])
                 if branch.get("url") != url or selector_evidence_issues(one, proof_events):
                     raise ReconPlanError("复用分支缺少本轮真实浏览器证据")
-                events.extend(proof_events)
-                phases.append({"phase": "branch", "reused": True, "model_calls": 0,
-                               "evidence_root": reuse.get("evidence_root"), **run_metrics(proof_events)})
+                metric = {"phase": "branch", "reused": True,
+                          "evidence_root": reuse.get("evidence_root"), **run_metrics(proof_events)}
             else:
-                branch = run("branch", url, f"branch-{index + 1}")
-                proof_events = last_events
-                branch = restore_verified_profile_selector(branch, plan, proof_events)
-            one = {**plan, "branches": [branch]}
-            validate_model_plan(one, school=target["school"], college=target["college"])
-            aliases = browser_url_aliases(proof_events)
-            if resolved_browser_url(branch.get("url"), aliases) != resolved_browser_url(url, aliases):
-                raise ReconPlanError("分支阶段改变了目标入口")
-            issues = selector_evidence_issues(one, proof_events)
-            if issues:
-                error = ReconPlanError("分支缺少选择器或翻页证据")
-                error.safe_feedback = {"previous_plan": {**plan, "branches": [*plan["branches"], branch]},
-                                       "known_urls": urls, "issues": issues}
-                raise error
-            plan["branches"].append(branch)
-            if not reuse:
-                verified_branches[url] = {"branch": branch, "events": proof_events,
-                                          "evidence_root": str(Path(__file__).parent /
-                                                               "outputs/recon-evidence" /
-                                                               f"{session_id}-branch-{index + 1}")}
+                proof = None
+                # Interactive, image, segmented and empty rosters keep independent scouting.
+                if (representative and representative.get("kind", "roster") == "roster"
+                        and not representative.get("initial_click_selector")
+                        and not representative.get("empty_state_selector")):
+                    branch = {**representative, "url": url}
+                    proof = verify_template(branch, target, evidence_root / f"template-{index + 1}",
+                                            max(0.01, min(120, deadline - time.monotonic())), fingerprints[url])
+                if proof and proof.get("valid"):
+                    proof_events = proof["events"]
+                    metric = {"phase": "branch", "template_reused": True,
+                              "representative_url": representative["url"],
+                              "evidence_root": proof["evidence_root"], **run_metrics(proof_events)}
+                else:
+                    branch, proof_events, metric = run("branch", url, f"branch-{index + 1}")
+                    branch = restore_verified_profile_selector(branch, plan, proof_events)
+                    if proof is not None:
+                        metric["template_fallback"] = proof.get("reason", "verification_failed")
+            metric["url"] = url
+            metric["elapsed_seconds"] = round(time.monotonic() - started, 3)
+            try:
+                one = {**plan, "branches": [branch]}
+                validate_model_plan(one, school=target["school"], college=target["college"])
+                aliases = browser_url_aliases(proof_events)
+                if resolved_browser_url(branch.get("url"), aliases) != resolved_browser_url(url, aliases):
+                    raise ReconPlanError("分支阶段改变了目标入口")
+                issues = selector_evidence_issues(one, proof_events)
+                if issues:
+                    error = ReconPlanError("分支缺少选择器或翻页证据")
+                    error.safe_feedback = {"previous_plan": {**plan, "branches": [branch]},
+                                           "known_urls": urls, "issues": issues}
+                    raise error
+            except ReconError as error:
+                error.phase_events, error.phase_metric = proof_events, metric
+                raise
+            return branch, proof_events, metric
+
+        def batch(jobs):
+            def collect(index, url, operation):
+                try:
+                    branch, proof, metric = operation()
+                    events.extend(proof)
+                    phases.append(metric)
+                    accepted[index] = branch
+                    verified_branches[url] = {"branch": branch, "events": proof,
+                                              "evidence_root": metric.get("evidence_root")}
+                except ReconError as error:
+                    events.extend(getattr(error, "phase_events", []))
+                    if getattr(error, "phase_metric", None):
+                        phases.append(error.phase_metric)
+                    errors.append(error)
+                    if isinstance(error, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled)):
+                        if cfg.get("cancel_event") is not None:
+                            cfg["cancel_event"].set()
+            if parallel and len(jobs) > 1:
+                with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix=session_id) as pool:
+                    pending = {pool.submit(verify, *job): job for job in jobs}
+                    for future in as_completed(pending):
+                        index, url, *_ = pending[future]
+                        collect(index, url, future.result)
+            else:
+                for job in jobs:
+                    collect(job[0], job[1], lambda job=job: verify(*job))
+
+        leaders = {}
+        first, followers = [], []
+        for index, url in enumerate(urls):
+            fingerprint = fingerprints.get(url)
+            if fingerprint and fingerprint in leaders and url not in verified_branches:
+                followers.append((index, url, leaders[fingerprint]))
+            else:
+                first.append((index, url))
+                if fingerprint:
+                    leaders[fingerprint] = index
+        batch(first)
+        if not any(isinstance(error, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled))
+                   for error in errors):
+            batch([(index, url, accepted.get(leader)) for index, url, leader in followers])
+        plan["branches"] = [accepted[index] for index in sorted(accepted)]
+        if errors:
+            fatal = next((error for error in errors if isinstance(error, (
+                ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled))), None)
+            error = fatal or errors[0]
+            if not fatal:
+                feedback_issues = [item for failure in errors for item in
+                                   getattr(failure, "safe_feedback", {}).get("issues", [])]
+                error.safe_feedback = {"previous_plan": plan, "known_urls": urls,
+                                       "issues": feedback_issues or [{"status": "plan_contract_rejected"}]}
+            # Aggregate all completed sibling usage, including failed-phase usage.
+            if fatal:
+                partials = [failure.diagnostics for failure in errors if isinstance(failure, (
+                    ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled))]
+                complete = run_metrics(events)
+                error.diagnostics = {**complete, "session_id": session_id, "phases": phases,
+                    "model_calls": complete["model_calls"] + sum(p["model_calls"] for p in partials),
+                    "token_usage": {key: complete["token_usage"][key] +
+                                    sum(p["token_usage"][key] for p in partials)
+                                    for key in complete["token_usage"]},
+                    "budget_total": (cfg["budget"].snapshot() if cfg.get("budget")
+                                     else partials[-1]["budget_total"])}
+                error.aggregated = True
+            raise error
         return SimpleNamespace(final_response=json.dumps(plan, ensure_ascii=False), finish_reason="completed",
                                 events=events, phase_metrics=phases,
                                 discovery_session_id=discovery_session_id)
     except ReconError as exc:
         if isinstance(exc, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled)):
+            if getattr(exc, "aggregated", False):
+                raise
             partial = exc.diagnostics
             completed = run_metrics(events)
             usage = {key: completed["token_usage"][key] + partial["token_usage"][key]
@@ -862,6 +1025,9 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             if discovery_checkpoint is not None:
                 exc.discovery_checkpoint = discovery_checkpoint
                 exc.verified_branches = verified_branches
+        if getattr(exc, "phase_events", None) and not errors:
+            events.extend(exc.phase_events)
+            phases.append(exc.phase_metric)
         exc.diagnostics = {"session_id": session_id, **run_metrics(events), "phases": phases}
         raise
 
@@ -918,7 +1084,6 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
         exc.diagnostics = {"session_id": session_id, **run_metrics([])}
         raise
     budget: ReconBudget | None = cfg.get("budget")
-    before = budget.snapshot() if budget else None
     phase_limit = int(cfg.get("phase_call_limit") or 0)
     phase_usage = ReconBudget()  # this session only; the budget above spans the college
     cancel_event = cfg.get("cancel_event")
@@ -940,8 +1105,6 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
             run_kwargs: dict[str, Any] = {"session_id": session_id}
             if budget is not None or phase_limit or cancel_event is not None:
                 def on_notification(notification: Any) -> None:
-                    if cancel_event is not None and cancel_event.is_set():
-                        raise ReconCancelled("侦察已被调用方停止（超时）")
                     if (notification.method == "session.event"
                             and notification.payload.get("sessionId") == session_id):
                         event = notification.payload.get("event")
@@ -952,17 +1115,25 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
                             if phase_limit and phase_usage.calls > phase_limit:
                                 raise ReconPhaseLimitExceeded(
                                     f"{_PHASE_NAMES.get(cfg.get('phase'), '侦察')}阶段已用 {phase_usage.calls} 次模型请求仍未完成"
-                                    f"（上限 {phase_limit}），页面结构可能超出当前计划格式，已停止以免继续消耗 Token")
+                                    f"（显式设置上限 {phase_limit}），已停止；复杂正常网站也可能需要更多步骤")
+                    # A completed request can arrive after a sibling stops.
+                    # Count its actual usage before honoring cancellation.
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise ReconCancelled("侦察已被调用方停止（超时）")
                 run_kwargs["on_notification"] = on_notification
             return harness.run(prompt, **run_kwargs)
         except (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled) as exc:
-            exc.diagnostics = budget.delta(before) if budget is not None else {
-                "model_calls": phase_usage.calls, "token_usage": phase_usage.usage.copy(),
-                "budget_total": phase_usage.snapshot()}
+            if isinstance(exc, ReconCancelled) and budget is not None:
+                budget.mark_usage_unknown()
+            exc.diagnostics = {"model_calls": phase_usage.calls,
+                               "token_usage": phase_usage.usage.copy(),
+                               "budget_total": budget.snapshot() if budget else phase_usage.snapshot()}
             exc.usage_unknown = False
             raise
         except TimeoutError as exc:
-            raise ReconError("Harness 初始化或请求超时；未完成有效侦察") from exc
+            error = ReconError("Harness 初始化或请求超时；未完成有效侦察")
+            error.usage_unknown = True
+            raise error from exc
 
 
 def _config_from_env() -> dict[str, Any]:
@@ -993,6 +1164,9 @@ def _config_from_env() -> dict[str, Any]:
         "effort": os.environ.get("DSH_EFFORT", "high"),
         "api_key": api_key,
         "patches": (str(here / "recon_runtime.cordis.yml"),),
+        "parallel_branches": os.environ.get("FACULTY_RECON_PARALLEL", "1") != "0",
+        "template_reuse": os.environ.get("FACULTY_RECON_TEMPLATE_REUSE", "1") != "0",
+        "require_submission": True,
     }
 
 
@@ -1031,6 +1205,14 @@ async def reconnoiter(
     cfg["verified_branches"] = verified_branches
     cfg["resume_discovery"] = resume_discovery
     cfg["budget"] = budget
+    if budget is not None:
+        budget.provider = cfg.get("provider", "deepseek-official")
+        budget.model = cfg.get("model", "deepseek-flash")
+        raw_price = os.environ.get("FACULTY_RECON_PRICE_USD_PER_MILLION")
+        if raw_price:
+            from server.recon_pricing import rates
+            budget.price_override = json.loads(raw_price)
+            rates(budget.provider, budget.model, time.time(), budget.price_override)
     cfg["phase_call_limits"] = phase_call_limits or {}
     cancel_event = threading.Event()
     cfg["cancel_event"] = cancel_event
@@ -1067,8 +1249,9 @@ async def reconnoiter(
         cancel_event.set()
         error = ReconError(f"侦察超时（{timeout_seconds:.0f}s）")
         if budget is not None:
+            budget.mark_usage_unknown()
             error.diagnostics = {"session_id": sid, **budget.delta(budget_before)}
-            error.usage_unknown = False
+            error.usage_unknown = True
         raise error from exc
     except asyncio.CancelledError:
         cancel_event.set()  # the whole task timed out or the worker is stopping
@@ -1078,7 +1261,11 @@ async def reconnoiter(
             exc.diagnostics = {**getattr(exc, "diagnostics", {}), **budget.delta(budget_before)}
         exc.usage_unknown = False
         raise
-    except ReconError:
+    except ReconError as error:
+        if budget is not None:
+            if getattr(error, "usage_unknown", False):
+                budget.mark_usage_unknown()
+            error.diagnostics = {**getattr(error, "diagnostics", {}), **budget.delta(budget_before)}
         raise
     except Exception as exc:  # dsh / SDK 层异常
         raise ReconError(f"dsh 调用失败：{type(exc).__name__}: {exc}") from exc
@@ -1127,7 +1314,8 @@ async def reconnoiter(
         finish_reason=finish,
         session_id=sid,
         event_count=len(getattr(result, "events", []) or []),
-        diagnostics={**run_metrics(events), "phases": getattr(result, "phase_metrics", []),
+        diagnostics={**run_metrics(events), **({"cost": budget.delta(budget_before)["cost"]} if budget else {}),
+                     "phases": getattr(result, "phase_metrics", []),
                      "discovery_pages": discovery_evidence(
                          getattr(result, "discovery_session_id", sid).removesuffix("-discover"))},
     )
