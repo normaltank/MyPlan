@@ -124,7 +124,8 @@ class LayoutAwareTokenizer:
     """Extracts text while strictly adhering to W3C physical CSS block boundaries."""
 
     @staticmethod
-    def get_clean_text(root: Tag, *, preserve_content: bool = False) -> str:
+    def get_clean_text(root: Tag, *, preserve_content: bool = False,
+                       separate_fields: bool = False) -> str:
         if not root:
             return ""
         tokens = []
@@ -162,6 +163,13 @@ class LayoutAwareTokenizer:
                     or (not preserve_content and is_noise_element(curr))):
                 continue
 
+            # Address parsing may separate sibling DOM fields, while the
+            # biography keeps its original reading stream. A colon-labelled
+            # element supplies the boundary; domain casing supplies none.
+            if separate_fields and tokens and re.match(
+                    r'^\s*[^\W\d_][\w \-]{0,30}\s*[:：]', curr.get_text('', strip=True)):
+                if not tokens[-1].endswith((' ', '\n')):
+                    tokens.append(' ')
             if is_block:
                 if tokens and not tokens[-1].endswith('\n'):
                     tokens.append('\n')
@@ -239,7 +247,7 @@ def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
         # paragraph is one; that would absorb addresses in the research prose.
         if node.find(['p', 'div', 'table', 'section', 'article', 'li'], recursive=False):
             continue
-        text = LayoutAwareTokenizer.get_clean_text(node, preserve_content=True)
+        text = LayoutAwareTokenizer.get_clean_text(node, preserve_content=True, separate_fields=True)
         label = node.find_previous_sibling(['th', 'dt', 'td']) if node.name in {'td', 'dd'} else None
         label_text = label.get_text(' ', strip=True) if label else ''
         labeled = bool(_CONTACT_FIELD.match(text) or (label and (
@@ -327,7 +335,7 @@ class DetailMECCExtractor:
         return deepest
 
     @classmethod
-    def _find_cluster_mecc(cls, soup: BeautifulSoup, siblings: List[BeautifulSoup]) -> Tag:
+    def _find_cluster_mecc(cls, soup: BeautifulSoup, siblings: List[BeautifulSoup], *, pages=None) -> Tag:
         """Find the MECC using cross-page template inference against sibling pages."""
         if not infer_template_nodes_robust or not siblings:
             return cls._find_single_mecc(soup)
@@ -336,7 +344,7 @@ class DetailMECCExtractor:
         if not body:
             return cls._find_single_mecc(soup)
 
-        template_ids = infer_template_nodes_robust(soup, siblings)
+        template_ids = infer_template_nodes_robust(soup, siblings, pages=pages)
 
         # Identify informative content leaves (non-template, non-noise text leaves strictly within body)
         content_leaves: List[Tag] = []
@@ -380,8 +388,10 @@ class DetailMECCExtractor:
         soup = BeautifulSoup(html, 'lxml')
         mecc = (soup.body or soup) if preserve_content else cls._find_single_mecc(soup)
         full_bio = LayoutAwareTokenizer.get_clean_text(mecc, preserve_content=preserve_content)
+        email_text = LayoutAwareTokenizer.get_clean_text(
+            mecc, preserve_content=preserve_content, separate_fields=True)
         emails = [
-            em for em in find_emails(full_bio)
+            em for em in find_emails(email_text)
             if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
         ]
 
@@ -437,6 +447,7 @@ class DetailMECCExtractor:
 
         soups = [s for _, _, _, s in parsed if s is not None]
         details: List[ProfileDetail] = []
+        template_pages = {}
 
         for url, html, fb_name, soup in parsed:
             if soup is None:
@@ -446,10 +457,13 @@ class DetailMECCExtractor:
             siblings = [s for s in soups if s is not soup]
             scoped = url in (scoped_urls or ())
             mecc = ((soup.body or soup) if scoped else
-                    cls._find_cluster_mecc(soup, siblings) if siblings else cls._find_single_mecc(soup))
+                    cls._find_cluster_mecc(soup, siblings, pages=template_pages)
+                    if siblings else cls._find_single_mecc(soup))
             full_bio = LayoutAwareTokenizer.get_clean_text(mecc, preserve_content=scoped)
+            email_text = LayoutAwareTokenizer.get_clean_text(
+                mecc, preserve_content=scoped, separate_fields=True)
             raw_emails = [
-                em for em in find_emails(full_bio)
+                em for em in find_emails(email_text)
                 if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
             ]
 

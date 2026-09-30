@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Set, Tuple, Any
 from collections import Counter
 from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup, Tag, NavigableString, Comment
+from bs4 import BeautifulSoup, Tag, Comment
 from server.dom_regions import is_noise_element
 
 import logging
@@ -617,11 +617,6 @@ class FacultyDirectoryExtractor:
         return candidates
 
 
-BLOCK_ELEMENTS = {
-    'div', 'p', 'tr', 'td', 'th', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'article', 'section', 'header', 'footer', 'nav', 'table', 'tbody', 'thead', 'br', 'hr'
-}
-
 EMAIL_REGEX = re.compile(r'(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}'
                          r'(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])')
 
@@ -630,60 +625,6 @@ def find_emails(text: str) -> List[str]:
     if email_spans is not None:                     # original case kept for delivery
         return [re.sub(r"\s+", "", _AT_RE.sub("@", text[a:b])).strip(".") for a, b, _ in email_spans(text)]
     return [m.lower() for m in EMAIL_REGEX.findall(text)]
-
-class LayoutAwareTokenizer:
-    """Extracts text while strictly adhering to W3C physical CSS block boundaries."""
-
-    @staticmethod
-    def get_clean_text(root: Tag, *, preserve_content: bool = False) -> str:
-        if not root:
-            return ""
-        tokens = []
-        stack = [(root, 0)]  # (node, stage): 0 = enter, 1 = exit
-
-        while stack:
-            curr, stage = stack.pop()
-            if isinstance(curr, NavigableString):
-                if not isinstance(curr, Comment):
-                    raw = str(curr)
-                    raw = raw.replace('\xa0', ' ').replace('\u3000', ' ')
-                    cleaned = re.sub(r'[ \t\r\f\v]+', ' ', raw)
-                    if cleaned and cleaned != ' ':
-                        tokens.append(cleaned)
-                    elif cleaned == ' ':
-                        if tokens and not tokens[-1].endswith((' ', '\n')):
-                            tokens.append(' ')
-                continue
-
-            if not isinstance(curr, Tag):
-                continue
-
-            if stage == 1:
-                if curr.name in BLOCK_ELEMENTS:
-                    if tokens and not tokens[-1].endswith('\n'):
-                        tokens.append('\n')
-                continue
-
-            if (curr.name in {'script', 'style', 'noscript', 'template'}
-                    or (not preserve_content and is_noise_element(curr))):
-                continue
-
-            is_block = curr.name in BLOCK_ELEMENTS
-            if is_block:
-                if tokens and not tokens[-1].endswith('\n'):
-                    tokens.append('\n')
-
-            stack.append((curr, 1))
-            for child in reversed(list(curr.children)):
-                stack.append((child, 0))
-
-        full_text = "".join(tokens)
-        full_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', full_text)
-        full_text = re.sub(r'[ \t]+', ' ', full_text)
-        full_text = re.sub(r' ?\n ?', '\n', full_text)
-        return re.sub(r'\n{3,}', '\n\n', full_text).strip()
-
-
 
 class FacultyProfileExtractor:
     """
@@ -747,7 +688,9 @@ class FacultyProfileExtractor:
         full_bio = LayoutAwareTokenizer.get_clean_text(mecc, preserve_content=preserve_content)
 
         # Extract email strictly from the MECC text stream
-        emails = [em for em in find_emails(full_bio)
+        email_text = LayoutAwareTokenizer.get_clean_text(
+            mecc, preserve_content=preserve_content, separate_fields=True)
+        emails = [em for em in find_emails(email_text)
                   if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))]
         valid_email = emails[0] if emails else ""
         contacts = contact_email_candidates(mecc) if contact_email_candidates is not None else ()
@@ -864,7 +807,9 @@ class FacultyHarvestPipeline:
             card_contacts[id(cand)] = {em.lower() for em in contacts}
             # A mailto link may carry an address its visible text does not show.
             addresses = {}
-            for em in find_emails(card_texts[id(cand)]) + contacts:
+            email_text = (LayoutAwareTokenizer.get_clean_text(
+                card, preserve_content=preserve_content, separate_fields=True) if card else '')
+            for em in find_emails(email_text) + contacts:
                 addresses.setdefault(em.lower(), em)
             card_addresses[id(cand)] = list(addresses.values())
             for em in addresses:
@@ -941,7 +886,7 @@ class FacultyHarvestPipeline:
 
         # Check page-level emails outside candidate exclusive cards
         all_page_emails = [em.lower() for em in find_emails(
-            LayoutAwareTokenizer.get_clean_text(soup, preserve_content=preserve_content))]
+            LayoutAwareTokenizer.get_clean_text(soup, preserve_content=preserve_content, separate_fields=True))]
         uncontained_emails = [em for em in dict.fromkeys(all_page_emails) if em not in holders]
         for u_em in uncontained_emails:
             matching_cands = [c for c in cands_on_page if is_personal_email_for_scholar(u_em, c.name)]

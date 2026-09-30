@@ -113,10 +113,21 @@ def otsu(scores: list[float], weights: list[float], bins: int = 40,
 
 def infer_template_nodes_robust(soup: BeautifulSoup, others: list[BeautifulSoup],
                                 refetches: Optional[list[BeautifulSoup]] = None,
-                                window: int = 2, return_debug: bool = False):
-    A = _Page(soup)
-    Bs = [_Page(o) for o in others]
-    Rs = [_Page(r) for r in (refetches or [])]
+                                window: int = 2, return_debug: bool = False,
+                                *, pages: Optional[dict[int, _Page]] = None):
+    # The caller owns the immutable soups and the cache for one cluster only.
+    # Do not use setdefault: its eager default would rebuild every index.
+    def indexed(source: BeautifulSoup) -> _Page:
+        if pages is None:
+            return _Page(source)
+        key = id(source)
+        if key not in pages:
+            pages[key] = _Page(source)
+        return pages[key]
+
+    A = indexed(soup)
+    Bs = [indexed(o) for o in others]
+    Rs = [indexed(r) for r in (refetches or [])]
     scores, weights, volatile = [], [], set()
     for leaf in A.leaves:
         s = min((_best_sim(A, leaf, B, window) for B in Bs), default=0.0)

@@ -110,3 +110,19 @@ def test_reviewed_exclusions_are_excluded_without_unresolved():
     assert decisions[0]["status"] == "excluded"
     assert decisions[0]["reason"] == "graduated_not_faculty"
 
+
+def test_missing_hospital_profile_requires_appointment_review():
+    from server.faculty_extractor import FacultyCandidate
+    from server.harvest_eligibility import classify_candidates
+    from server.recovery_policy import classify_issues
+
+    candidate = FacultyCandidate('张富有', 'https://hospital.example.edu/doctor/1')
+    admitted, decisions, unresolved = classify_candidates(
+        [candidate], {(candidate.name, candidate.url): {'hospital_doctor_roster'}},
+        {candidate.url: None}, {'school': '样本大学', 'college': '样本学院'})
+    assert admitted == []
+    assert decisions[0]['status'] == 'unresolved'
+    assert unresolved == [{'url': candidate.url, 'name': candidate.name, 'status': 'profile_unavailable'}]
+    recovery = classify_issues(unresolved)
+    assert recovery.review == unresolved
+    assert recovery.structure == recovery.stop == []

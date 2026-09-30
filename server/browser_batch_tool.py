@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urljoin, urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from server import excel_export, name_review
 from server.faculty_extractor import (
@@ -257,12 +257,17 @@ def _unit_signature(html: str, url: str, selector: str) -> tuple:
     """
     signature = []
     for card in BeautifulSoup(html, "html.parser").select(selector):
+        if any(str(node.get('aria-busy', '')).lower() == 'true'
+               for node in [card, *card.parents] if isinstance(node, Tag)):
+            return ()
         anchors = ([card] if card.name == "a" else []) + card.find_all("a", href=True)
         links = tuple(urljoin(url, a["href"]) for a in anchors if a.get("href"))
         text = card.get_text(" ", strip=True)
         images = () if text else tuple(
             img.get("data-src") or img.get("data-original") or img.get("src") or ""
             for img in ([card] if card.name == "img" else card.find_all("img")))
+        if not text and not links and not any(images):
+            return ()
         signature.append((text, links, images))
     return tuple(signature)
 
@@ -282,11 +287,20 @@ async def _wait_for_change(page: Any, before: str, url: str, seconds: float = 3.
         signature = _roster_signature
     previous = signature(before, url)
     deadline = asyncio.get_running_loop().time() + seconds
+    pending, stable_since = None, None
     while asyncio.get_running_loop().time() < deadline:
         current = await page.content()
         sig = signature(current, page.url)
         if current != before and sig and sig != previous:
-            return current
+            if not unit_selector:
+                return current
+            now = asyncio.get_running_loop().time()
+            if sig != pending:
+                pending, stable_since = sig, now
+            elif now - stable_since >= 0.2:
+                return current
+        else:
+            pending, stable_since = None, None
         await asyncio.sleep(0.1)
 def _native_chrome_fallback_disabled() -> bool:
     """True only for an explicit truthy value.
@@ -1045,7 +1059,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             unresolved.append({"url": candidate.url, "name": candidate.name,
                                "status": "profile_identity_not_found"})
     finish_stage("media_audit")
-    extraction = FacultyHarvestPipeline.harvest_candidates(
+    extraction = await asyncio.to_thread(
+        FacultyHarvestPipeline.harvest_candidates,
         admitted, profile_fetcher=lambda url: scoped_profile_html.get(url), base_url=base_url,
         school=plan["school"], college=plan["college"],
         agent_name=plan.get("agent_name", "Browser-assisted Subagent"),
@@ -1055,7 +1070,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                           "unresolved": [], "delivery_ready": False}
     unresolved.extend(extraction["unresolved"])
     pipeline_records = extraction["sheet1_with_email"] + extraction["sheet2_no_email"]
-    unresolved.extend(_enrich_extracted_records(
+    unresolved.extend(await asyncio.to_thread(_enrich_extracted_records,
         pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
         verified_profile_urls=set(profile_scope_evidence)))
     finish_stage("deterministic_extraction")

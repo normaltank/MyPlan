@@ -81,6 +81,8 @@ def classify_candidates(
                         )
                 elif html is None:
                     decision.update(status="unresolved", reason="profile_unavailable")
+                    unresolved.append({'url': candidate.url, 'name': candidate.name,
+                                       'status': 'profile_unavailable'})
                 else:
                     text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
                     if plan["school"] in text or plan["college"] in text:

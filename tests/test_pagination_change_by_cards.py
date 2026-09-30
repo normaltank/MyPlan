@@ -10,7 +10,7 @@ import asyncio
 
 from test_browser_batch_tool import FakeContext
 
-from server.browser_batch_tool import _capture_branch
+from server.browser_batch_tool import _capture_branch, _wait_for_change
 
 URL = "https://faculty.example.edu/roster"
 
@@ -48,3 +48,27 @@ def test_lazy_image_attributes_alone_are_not_a_page_turn():
     pages, errors, _ = capture([lazy, loaded])
     assert len(pages) == 1
     assert [item["status"] for item in errors] == ["pagination_unchanged"]
+
+
+def test_page_turn_waits_for_busy_and_empty_cards_to_settle():
+    before = roster(FIRST)
+    after = roster([(4, '禤海燕')])
+
+    class SettlingPage:
+        url = URL
+        calls = 0
+
+        async def content(self):
+            self.calls += 1
+            if self.calls == 1:
+                return '<main aria-busy="true"><li class="card">暂时的内容</li></main>'
+            if self.calls == 2:
+                return '<main><li class="card"></li></main>'
+            if self.calls == 3:
+                return '<main><li class="card">短暂过渡</li></main>'
+            return after
+
+    page = SettlingPage()
+    result = asyncio.run(_wait_for_change(page, before, URL, seconds=1, unit_selector='main li.card'))
+    assert result == after
+    assert page.calls >= 5
