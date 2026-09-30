@@ -319,3 +319,23 @@ async def test_profile_proof_is_retried_when_the_page_had_not_settled(monkeypatc
         profile_content_selectors={"https://c.edu/p.htm": {(".v", None)}},
         profile_content_evidence=evidence)
     assert unresolved == [] and proofs == [] and evidence["https://c.edu/p.htm"]["confirmed"] is True
+
+
+def test_word_hidden_form_markers_do_not_block_the_profile():
+    from server.profile_content import scope_profile_html
+    html = ("<div class='v'><p>郑骥，教授，研究方向：古典文献学。</p>"
+            "<p><span style=\"font-family: 宋体;display: none;mso-hide: all\">窗体顶端</span></p>"
+            "<p><span style='display:none'>课程组成员名单</span></p></div>")
+    _, _, issue = scope_profile_html(html, ".v", "https://c.edu/p.htm")
+    assert issue["status"] == "profile_content_selector_hidden"      # real hidden Chinese text still blocks
+    html = html.replace("<p><span style='display:none'>课程组成员名单</span></p>", "")
+    scoped, evidence, issue = scope_profile_html(html, ".v", "https://c.edu/p.htm")
+    assert issue is None and "窗体顶端" not in scoped and "古典文献学" in scoped
+
+
+def test_review_only_issues_do_not_start_a_reconnaissance_repair():
+    from server.agent_worker import NOT_STRUCTURAL
+    from server.name_review import STATUS
+    assert STATUS in NOT_STRUCTURAL
+    assert {"image_bio_low_confidence", "image_bio_ocr_incomplete", "image_bio_owner_unresolved"} <= NOT_STRUCTURAL
+    assert "roster_card_mismatch" not in NOT_STRUCTURAL and "profile_content_selector_hidden" not in NOT_STRUCTURAL

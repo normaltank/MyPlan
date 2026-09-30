@@ -109,6 +109,16 @@ def available_memory_mb() -> float | None:
     return None
 
 
+# Audit items a new structure plan cannot change: they wait for a person on the
+# review page (rare-surname names, OCR lines, image names, e-mail choices) or are
+# properties of the images themselves. Sending them back to the scout only
+# repeats the same harvest, so they never start a reconnaissance repair.
+NOT_STRUCTURAL = frozenset({
+    "rare_surname_needs_review", "segment_name_needs_review", "image_bio_email_conflict",
+    "image_bio_ocr_incomplete", "image_bio_owner_unresolved", "image_bio_low_confidence",
+})
+
+
 class SleepGuard:
     """Keep Windows from sleeping while colleges are being harvested.
 
@@ -475,10 +485,11 @@ class AgentWorker:
             if any(item.get("status") in {"distinct_profile_identity_unverified", "zero_person_delivery_requires_review"}
                    for item in report.get("unresolved", [])):
                 break  # Identity and zero-person delivery review are not structure repair.
-            from server.name_review import STATUS as NAME_REVIEW
-            if all(item.get("status") == NAME_REVIEW for item in report.get("unresolved") or [{}]):
-                break  # Only rare-surname names await a person; the model cannot decide them.
-            feedback = build_repair_feedback(recon.plan, report)
+            structural = [item for item in report.get("unresolved") or []
+                          if item.get("status") not in NOT_STRUCTURAL]
+            if not structural:
+                break  # Only a person (review page) or the content itself can settle these.
+            feedback = build_repair_feedback(recon.plan, {**report, "unresolved": structural})
             resume_discovery = None
             if not feedback["issues"]:
                 break
