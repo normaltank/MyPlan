@@ -10,6 +10,7 @@ remain plan data and do not become branches in the core collector.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import urljoin
 
@@ -64,6 +65,11 @@ class RosterReconciliation:
     segment_pending: list[Any] = field(default_factory=list)
     segment_shared_emails: dict[str, set[str]] = field(default_factory=dict)
     segmented_pages: dict[str, str] = field(default_factory=dict)
+
+
+# Page conditions that pass with time (flaky site, late requests, a settling
+# layout). A profile failing for one of these is opened again, up to three times.
+TRANSIENT_PROOF_REASONS = frozenset({"network_not_idle", "dom_unstable"})
 
 
 async def capture_profiles(
@@ -148,6 +154,12 @@ async def capture_profiles(
                             # browser-facing JSON never includes this raw capture.
                             html = local_capture.get('html', html)
                             if (proof.get("confirmed") is not True
+                                    and proof.get("reason") in TRANSIENT_PROOF_REASONS and attempt < 2):
+                                # Requests still in flight or a page still settling: open
+                                # the page again rather than judge it from one moment.
+                                await asyncio.sleep(1.5 * (attempt + 1))
+                                continue
+                            if (proof.get("confirmed") is not True
                                     or proof.get("html_sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest()):
                                 unresolved.append({"url": url, "status": "profile_content_browser_unverified",
                                                    "selector": selector,
@@ -231,6 +243,39 @@ async def capture_sources(
     return result
 
 
+def _compact(text: str) -> str:
+    return re.sub(r"[\s\u3000\u200b\u200c\u200d\ufeff]+", "", text or "")
+
+
+def candidates_inside_cards(
+    html: str,
+    url: str,
+    selector: str,
+    candidates: list[FacultyCandidate],
+) -> tuple[list[FacultyCandidate], list[FacultyCandidate]]:
+    """Split candidates into those found in a verified card and those outside every card.
+
+    The reconnaissance model verified ``selector`` as the roster's cards; a name
+    extracted from elsewhere on the page (a menu item such as a section title)
+    is not a roster entry. Image cards carry no text, so they are left alone.
+    """
+    cards = BeautifulSoup(html, "html.parser").select(selector)
+    if not cards or all(card.name == "img" for card in cards):
+        return list(candidates), []
+    links: set[str] = set()
+    texts = []
+    for card in cards:
+        anchors = ([card] if card.name == "a" and card.has_attr("href") else []) + card.select("a[href]")
+        links.update(urljoin(url, a["href"]) for a in anchors)
+        texts.append(_compact(card.get_text(" ", strip=True)))
+    inside, outside = [], []
+    for candidate in candidates:
+        located = ((candidate.url != url and candidate.url in links)
+                   or any(_compact(candidate.name) in text for text in texts))
+        (inside if located else outside).append(candidate)
+    return inside, outside
+
+
 def observe_roster(
     html: str,
     url: str,
@@ -246,8 +291,10 @@ def observe_roster(
         anchors = ([card] if card.name == "a" and card.has_attr("href") else []) + card.select("a[href]")
         links = [urljoin(url, a["href"]) for a in anchors]
         card_text = card.get_text(" ", strip=True)
+        # A two-character name padded to three ('王 奔') is extracted as '王奔'.
+        compact = _compact(card_text)
         if not any(link in candidate_urls for link in links) and not any(
-            candidate.name in card_text for candidate in candidates
+            _compact(candidate.name) in compact for candidate in candidates
         ):
             unaccounted.append(
                 {"index": index, "links": links[:3], "text": card_text[:80]}
@@ -311,7 +358,8 @@ def reconcile_rosters(
     segment_pending: list[Any] = []
     segment_shared: dict[str, set[str]] = {}
     segmented_pages: dict[str, str] = {}
-    for page in captured:
+    captured_pages = list(captured)
+    for page in captured_pages:
         if page.branch.get("kind") == "segmented":
             from server.segmented_roster import reconcile_page
             source_kind = page.branch.get("source_kind") or default_source
@@ -333,7 +381,32 @@ def reconcile_rosters(
             continue
         if "profile_content_start_selector" in page.branch and "profile_content_selector" not in page.branch:
             unresolved.append({"url": page.url, "status": "profile_content_start_selector_without_container"})
+        selector = page.branch.get("card_selector")
+        empty_declared = "empty_state_selector" in page.branch or "roster_container_selector" in page.branch
+        if selector and not empty_declared:
+            from server.name_list import is_name_list_page, reconcile_name_list
+            if is_name_list_page(page.html, selector):
+                # 补充名单页：卡片是一串顿号分隔的姓名，逐项切分并逐项交代。
+                listed = reconcile_name_list(page.html, page.url, selector)
+                awaiting = _apply_name_decisions(page.url, listed.found, listed.review,
+                                                 name_decisions or {}, unresolved)
+                unresolved.extend(listed.unresolved)
+                observations.append(listed.observation)
+                source_kind = page.branch.get("source_kind") or default_source
+                for person in listed.found:
+                    candidate_sources.setdefault((person.name, person.url), set()).add(source_kind)
+                if not listed.found and not awaiting:
+                    unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
+                candidates.extend(listed.found)
+                continue
         found, review = FacultyDirectoryExtractor.extract_with_review(page.html, page.url)
+        if selector:
+            found, outside = candidates_inside_cards(page.html, page.url, selector, found)
+            review, outside_review = candidates_inside_cards(page.html, page.url, selector, review)
+            if outside or outside_review:
+                # Kept out of the roster, and still reported: the page is not explained.
+                unresolved.append({"url": page.url, "status": "candidate_outside_cards",
+                                   "count": len(outside) + len(outside_review)})
         # Undecided names still account for their cards: the review item, not a
         # card-count mismatch, is what blocks delivery until a person decides.
         awaiting = _apply_name_decisions(page.url, found, review, name_decisions or {}, unresolved)
@@ -358,8 +431,6 @@ def reconcile_rosters(
                 if evidence not in sources:
                     sources.append(evidence)
 
-        selector = page.branch.get("card_selector")
-        empty_declared = "empty_state_selector" in page.branch or "roster_container_selector" in page.branch
         verified_empty = False
         if empty_declared:
             from server.empty_roster import empty_roster_proof_valid
@@ -399,6 +470,15 @@ def reconcile_rosters(
         candidates.extend(found)
 
     unique = {(candidate.name, candidate.url): candidate for candidate in candidates}
+    # A rare-surname name on a list without personal pages that is also a teacher
+    # with a personal page in this college is that teacher (同名合并); the page
+    # already carries the evidence, so nobody has to confirm the name again.
+    page_urls = {page.url for page in captured_pages}
+    with_page = {candidate.name for candidate in candidates if candidate.url not in page_urls}
+    unresolved = [item for item in unresolved
+                  if not (item.get("status") == "rare_surname_needs_review"
+                          and item.get("profile_url") == item.get("url")
+                          and item.get("name") in with_page)]
     unresolved.extend({"url": url, "status": "profile_content_selector_conflict",
                        "selectors": [{"profile_content_selector": scope,
                                       "profile_content_start_selector": start}

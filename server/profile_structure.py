@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 
-_FACTS = """args => {
+_FACTS = r"""args => {
   const nodes=[...document.querySelectorAll(args.selector)];
   const visible=n=>{
     if(!n || !n.getClientRects().length) return false;

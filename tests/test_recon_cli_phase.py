@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -64,3 +65,5 @@ async def test_actual_mcp_process_honors_cli_stage_and_saves_discovery_namespace
         process.stderr.close()
         server.shutdown()
         server.server_close()
+        # The MCP child writes under the real outputs folder; leave nothing behind.
+        shutil.rmtree(Path(__file__).parents[1]/'server/outputs/recon-evidence'/sid, ignore_errors=True)

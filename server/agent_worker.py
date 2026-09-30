@@ -109,6 +109,37 @@ def available_memory_mb() -> float | None:
     return None
 
 
+class SleepGuard:
+    """Keep Windows from sleeping while colleges are being harvested.
+
+    A sleeping machine pauses every browser and model session; on waking the
+    45-minute limit has already passed and the college starts over. Only system
+    sleep is held off: the screen may still turn off or lock. Released as soon
+    as no college is running. Other platforms: no effect.
+    """
+
+    _CONTINUOUS = 0x80000000
+    _SYSTEM_REQUIRED = 0x00000001
+
+    def __init__(self, platform: str | None = None) -> None:
+        self.platform = platform or sys.platform
+        self.held = False
+
+    def update(self, busy: bool) -> None:
+        if busy == self.held or self.platform != "win32":
+            return
+        try:
+            import ctypes
+            flags = self._CONTINUOUS | (self._SYSTEM_REQUIRED if busy else 0)
+            if not ctypes.windll.kernel32.SetThreadExecutionState(flags):
+                return
+        except Exception:
+            return
+        self.held = busy
+        print("[worker] 有学院在采集，已暂停系统睡眠" if busy else "[worker] 采集结束，恢复系统睡眠设置",
+              flush=True)
+
+
 class AgentWorker:
     """消费工单队列，按「侦察 → 采集 → 同步」履约。"""
 
@@ -176,8 +207,10 @@ class AgentWorker:
         last_heartbeat = float('-inf')
         memory_paused = False
         idle_delay = IDLE_POLL_MIN_SECONDS
+        awake = SleepGuard()
         try:
             while True:
+                awake.update(bool(active))
                 if time.monotonic() - last_heartbeat >= 5:
                     self.queue.touch_worker(presence_id)
                     last_heartbeat = time.monotonic()
@@ -221,6 +254,7 @@ class AgentWorker:
                 job.cancel()
             if active:
                 await asyncio.gather(*active, return_exceptions=True)
+            awake.update(False)
             self.queue.remove_worker(presence_id)
 
     async def _execute_task(self, task: Any) -> None:
