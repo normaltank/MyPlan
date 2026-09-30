@@ -35,7 +35,9 @@ def pending_item(roster_url: str, candidate: Any) -> dict[str, Any]:
     return {"url": roster_url, "status": STATUS,
             "id": review_id(roster_url, candidate.url, candidate.name, card),
             "name": candidate.name, "title": candidate.title,
-            "profile_url": candidate.url, "card_text": card}
+            "profile_url": candidate.url, "card_text": card,
+            **({"reason": candidate.name_review_reason}
+               if getattr(candidate, 'name_review_reason', '') else {})}
 
 
 def load_decisions(path: str | Path | None) -> dict[str, dict[str, Any]]:

@@ -311,7 +311,7 @@
                     </div>
                     <div id="univDownloadBox" class="downloads"></div>
                     <a id="reviewBtn" href="#" class="btn btn-warn btn-lg btn-block hidden">
-                        <svg class="icon"><use href="#i-review"/></svg>人工复核：图片文字、邮箱与生僻姓名</a>
+                        <svg class="icon"><use href="#i-review"/></svg>人工复核：图片文字、邮箱、姓名与来源身份</a>
                     <a id="downloadBtn" href="#" class="btn btn-success btn-lg btn-block">
                         <svg class="icon"><use href="#i-download"/></svg><span id="downloadBtnText">下载交付标准表</span></a>
                 </div>
@@ -807,9 +807,18 @@
                     } else if (task.status === 'failed') {
                         clearInterval(pollTimer);
                         if (!viewingHistory && !task.review_url) forgetRequest('task', targetId);
-                        setBadge('失败', 'danger');
+                        setBadge(task.source_review_required ? '来源范围待核验' : '失败', task.source_review_required ? 'warn' : 'danger');
                         document.getElementById('downloadBtn').classList.add('hidden');
                         document.getElementById('statSummary').innerText = task.error || task.current_step || '任务失败，请查看审计记录';
+                        for (const url of task.source_review_urls || []) {
+                            if (!/^https?:\/\//i.test(url)) continue;
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.target = '_blank';
+                            link.rel = 'noopener noreferrer';
+                            link.textContent = ' 查看待核验原始来源';
+                            document.getElementById('statSummary').append(link);
+                        }
                         setResultTone('danger');
                         if (task.review_url) {
                             const review = document.getElementById('reviewBtn');
@@ -837,7 +846,10 @@
                 tone = st.counts_basis ? 'warn' : 'success';
                 text = st.counts_basis ? `待复核 (${st.stats?.total || 0}条观察)` : `完成 (${st.stats?.total || 0}人)`;
             }
-            if (st.status === 'failed') { tone = 'danger'; text = '失败'; }
+            if (st.status === 'failed') {
+                tone = st.source_review_required ? 'warn' : 'danger';
+                text = st.source_review_required ? '来源范围待核验' : '失败';
+            }
             const download = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download title="下载该学院的双 Sheet Excel">${icon('download')}表格</a>` : '';
             const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>` : '';
             return `

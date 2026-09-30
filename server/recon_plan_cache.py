@@ -213,7 +213,8 @@ class ReconPlanCache:
                 raise ValueError("validation requires a saved plan version")
 
 
-async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Path, *, verify_discovery: bool = True) -> dict:
+async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Path, *,
+                               verify_discovery: bool = True, expected_template: str | None = None) -> dict:
     """Revisit all discovery pages, then verify each roster and a real next page."""
     from server.agent_recon import selector_evidence_issues, validate_model_plan
     from server.browser_batch_tool import _validate_plan, _wait_for_change
@@ -264,6 +265,10 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
             if branch.get("kind", "roster") != "roster" or branch.get("initial_click_selector"):
                 return outcome(valid=False, reason="unsupported_branch_shape")
             await tool("browser_navigate", {"url": branch["url"]})
+            if expected_template:
+                from server.recon_templates import structural_fingerprint
+                if structural_fingerprint(await page.content()) != expected_template:
+                    return outcome(valid=False, reason="template_changed")
             args = {"card_selector": branch["card_selector"]}
             for selector in ("empty_state_selector", "roster_container_selector"):
                 if selector in branch:
@@ -271,6 +276,9 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
             if branch.get("next_selector"):
                 args["next_selector"] = branch["next_selector"]
             first = await tool("browser_verify", args)
+            if expected_template and (not first.get("cardCount") or not first.get("linkedSamples")
+                                      or not branch.get("profile_content_selector")):
+                return outcome(valid=False, reason="unsupported_template_roster")
             if branch.get("next_selector") and first.get("nextCount") == 1 and not first.get("nextDisabled"):
                 before = await page.content()
                 await tool("browser_click", {"selector": branch["next_selector"]})

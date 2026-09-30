@@ -35,6 +35,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import math
 import hashlib
 import sys
 import time
@@ -45,6 +46,7 @@ from typing import Any
 import httpx
 
 from server.agent_queue import AgentTaskQueue
+from server.recovery_policy import NON_STRUCTURAL, classify_issues
 from server.agent_recon import (PlanHygieneError, ReconBudget, ReconBudgetExceeded,
                                ReconError, ReconPhaseLimitExceeded, ReconPlanError, ReconResult,
                                build_repair_feedback, reconnoiter, run_metrics, validate_model_plan)
@@ -68,15 +70,16 @@ IDLE_POLL_MAX_SECONDS = 2.0
 DEFAULT_MAX_RECON_CALLS = 0
 DEFAULT_MAX_RECON_TOKENS = 0
 # Report (never stop) a college whose reconnaissance crosses these totals.
-DEFAULT_RECON_ALERT_TOKENS = 1_000_000
-DEFAULT_RECON_ALERT_CALLS = 150
+DEFAULT_RECON_ALERT_TOKENS = 0
+DEFAULT_RECON_ALERT_CALLS = 0
+DEFAULT_RECON_ALERT_COST_USD = 1.0
 # Every queued college still starts at once; a new one waits only while the
 # machine is short of memory and at least one college is already running.
 DEFAULT_MIN_FREE_MEMORY_MB = 1024
-# One Harness session that needs more model requests than this is probing a
-# page the plan format cannot express; stop it instead of repeating the probe.
-DEFAULT_MAX_DISCOVERY_CALLS = 40
-DEFAULT_MAX_BRANCH_CALLS = 25
+# Optional operator-selected phase caps; legitimate complex sites have no
+# default request-count ceiling. Task deadlines and audited progress remain.
+DEFAULT_MAX_DISCOVERY_CALLS = 0
+DEFAULT_MAX_BRANCH_CALLS = 0
 
 
 def available_memory_mb() -> float | None:
@@ -113,10 +116,7 @@ def available_memory_mb() -> float | None:
 # review page (rare-surname names, OCR lines, image names, e-mail choices) or are
 # properties of the images themselves. Sending them back to the scout only
 # repeats the same harvest, so they never start a reconnaissance repair.
-NOT_STRUCTURAL = frozenset({
-    "rare_surname_needs_review", "segment_name_needs_review", "image_bio_email_conflict",
-    "image_bio_ocr_incomplete", "image_bio_owner_unresolved", "image_bio_low_confidence",
-})
+NOT_STRUCTURAL = NON_STRUCTURAL  # Compatibility for existing integrations.
 
 
 class SleepGuard:
@@ -167,6 +167,7 @@ class AgentWorker:
         lease_renew_seconds: float = 60,
         recon_alert_tokens: int = DEFAULT_RECON_ALERT_TOKENS,
         recon_alert_calls: int = DEFAULT_RECON_ALERT_CALLS,
+        recon_alert_cost_usd: float = DEFAULT_RECON_ALERT_COST_USD,
         min_free_memory_mb: float = DEFAULT_MIN_FREE_MEMORY_MB,
         max_discovery_calls: int = DEFAULT_MAX_DISCOVERY_CALLS,
         max_branch_calls: int = DEFAULT_MAX_BRANCH_CALLS,
@@ -182,6 +183,9 @@ class AgentWorker:
         self.lease_renew_seconds = lease_renew_seconds
         self.recon_alert_tokens = recon_alert_tokens
         self.recon_alert_calls = recon_alert_calls
+        if not math.isfinite(recon_alert_cost_usd) or recon_alert_cost_usd < 0:
+            raise ValueError("recon cost alert must be finite and non-negative")
+        self.recon_alert_cost_usd = recon_alert_cost_usd
         self.min_free_memory_mb = min_free_memory_mb
         if max_discovery_calls < 0 or max_branch_calls < 0:
             raise ValueError("phase call limits must not be negative")
@@ -325,10 +329,14 @@ class AgentWorker:
 
         if not ready or report.get("unresolved"):
             unresolved = report.get("unresolved") or []
+            reason = ("审计未通过交付门禁：嵌入 PDF 名录尚未核验；需核对 PDF 人员与主名录的差额、"
+                      "姓名冲突及采集范围。已保留本地证据，未导出。"
+                      if any(item.get("status") == "embedded_pdf_roster_requires_review" for item in unresolved)
+                      else f"审计未通过交付门禁：unresolved={len(unresolved)} "
+                           f"{[u.get('status') for u in unresolved[:3]]}")
             await self._mark_failed(
                 task,
-                f"审计未通过交付门禁：unresolved={len(unresolved)} "
-                f"{[u.get('status') for u in unresolved[:3]]}",
+                reason,
                 failure_codes=[u.get("status") for u in unresolved],
             )
             return
@@ -369,6 +377,8 @@ class AgentWorker:
 
     async def _harvest_with_repair(self, task: Any, output_dir: Path, *,
                                    deadline: float | None = None) -> dict[str, Any]:
+        started = time.monotonic()
+        browser_runs = []
         feedback = None
         report: dict[str, Any] = {"delivery_ready": False, "unresolved": []}
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -377,8 +387,28 @@ class AgentWorker:
         budget = ReconBudget(
             max_calls=self.max_recon_calls, max_tokens=self.max_recon_tokens,
             alert_calls=self.recon_alert_calls, alert_tokens=self.recon_alert_tokens,
+            alert_cost_usd=self.recon_alert_cost_usd,
             on_alert=lambda alert: self._record_usage_alert(task, output_dir, alert))
         budget.seed(attempts)
+
+        async def capture(plan, directory, retry):
+            capture_started = time.monotonic()
+            result = await self._run_browser_plan(plan, directory)
+            browser_runs.append({"attempt": int(directory.name.removeprefix("attempt-")), "retry": retry,
+                "elapsed_seconds": round(time.monotonic() - capture_started, 3),
+                "stage_seconds": result.get("stage_seconds", {}),
+                "checkpoints": {key: value for key, value in (result.get("checkpoints") or {}).items()
+                                if key not in {"plan_digest", "evidence_captured_at"}},
+                "delivery_ready": bool(result.get("delivery_ready"))})
+            return result
+
+        def save_runtime(result):
+            from server.harvest_runtime_report import build_runtime_report
+            result["runtime_report"] = build_runtime_report(attempts, browser_runs,
+                result.get("unresolved") or [], time.monotonic() - started, budget.snapshot())
+            (output_dir / "runtime-report.json").write_text(json.dumps(
+                result["runtime_report"], ensure_ascii=False, indent=2), encoding="utf-8")
+            return result
         verified_branches = None
         resume_discovery = None
         previous_contract_failure = None
@@ -443,32 +473,37 @@ class AgentWorker:
                                  "status": status})
                 self._save_recon_audit(output_dir, attempts, status,
                                       usage_unknown=getattr(exc, "usage_unknown", True))
+                save_runtime({"unresolved": [{"status": status}]})
                 raise
             (attempt_dir / "plan.json").write_text(
                 json.dumps(recon.plan, ensure_ascii=False, indent=2), encoding="utf-8")
             attempts.append(recon.summary())
             self._save_recon_audit(output_dir, attempts, "recon_completed")
             self._save_active_plan(task, output_dir, recon, attempts)
-            report = await self._run_browser_plan(recon.plan, attempt_dir)
+            report = await capture(recon.plan, attempt_dir, 0)
             local_attempts = []
             for retry in range(2):
                 issues = report.get("unresolved") or []
-                if not self._access_failures_only(issues):
+                recovery = classify_issues(issues)
+                if not recovery.access or recovery.stop:
                     break
                 print("[worker]   访问失败，按页面断点补缺", flush=True)
                 local_attempts.append({"retry": retry + 1, "issues": build_repair_feedback(recon.plan, report)["issues"],
                                        "model_calls": 0})
-                report = await self._run_browser_plan(recon.plan, attempt_dir)
+                report = await capture(recon.plan, attempt_dir, retry + 1)
             report["recon"] = attempts[-1]
             report["recon_attempts"] = attempts.copy()
             if budget.alerts:
                 report["recon_usage_alerts"] = budget.alerts
             report["local_access_repairs"] = local_attempts
+            report["recovery"] = classify_issues(report.get("unresolved") or []).summary()
+            save_runtime(report)
             audit = report.get("audit_path")
             if audit and Path(audit).is_file():
                 saved = json.loads(Path(audit).read_text(encoding="utf-8"))
                 saved.update(recon=report["recon"], recon_attempts=report["recon_attempts"],
-                             local_access_repairs=local_attempts)
+                             local_access_repairs=local_attempts, recovery=report["recovery"],
+                             runtime_report=report["runtime_report"])
                 if budget.alerts:
                     saved["recon_usage_alerts"] = budget.alerts
                 Path(audit).write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -480,14 +515,9 @@ class AgentWorker:
                 except (ValueError, OSError):
                     pass  # Unsupported interactions or missing evidence are researched again.
                 return report
-            if self._access_failures_only(report.get("unresolved") or []):
-                break
-            if any(item.get("status") in {"distinct_profile_identity_unverified", "zero_person_delivery_requires_review"}
-                   for item in report.get("unresolved", [])):
-                break  # Identity and zero-person delivery review are not structure repair.
-            structural = [item for item in report.get("unresolved") or []
-                          if item.get("status") not in NOT_STRUCTURAL]
-            if not structural:
+            recovery = classify_issues(report.get("unresolved") or [])
+            structural = recovery.structure
+            if recovery.stop or not structural:
                 break  # Only a person (review page) or the content itself can settle these.
             feedback = build_repair_feedback(recon.plan, {**report, "unresolved": structural})
             resume_discovery = None
@@ -496,6 +526,10 @@ class AgentWorker:
             if attempt < self.max_recon_repairs:
                 print(f"[worker]   审计未通过，返回浏览器补缺（{len(feedback['issues'])} 项）", flush=True)
                 verified_branches = await self._unaffected_branches(recon.plan, feedback, attempt_dir)
+        save_runtime(report)
+        audit = report.get("audit_path")
+        if audit and Path(audit).is_file():
+            Path(audit).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         return report
 
     @staticmethod
@@ -506,9 +540,12 @@ class AgentWorker:
         a small file, so it is safe to run there.
         """
         limits = "、".join(part for part in (
+            f"${alert['alert_cost_usd']:.2f}" if alert.get("alert_cost_usd") else "",
             f"{alert['alert_tokens']:,} Token" if alert.get("alert_tokens") else "",
             f"{alert['alert_calls']} 次请求" if alert.get("alert_calls") else "") if part)
-        print(f"[worker]   ⚠ 侦察用量告警 {task.school}-{task.college}：已 {alert['calls']} 次请求、"
+        known_usd = (alert.get("cost") or {}).get("known_usd")
+        cost_text = f"、已核算约 ${known_usd:.4f}" if known_usd is not None else ""
+        print(f"[worker]   ⚠ 侦察用量告警 {task.school}-{task.college}：已 {alert['calls']} 次请求{cost_text}、"
               f"{alert['total_tokens']:,} Token（告警线 {limits}）；未中断，"
               "详见任务目录 recon-usage-alert.json", flush=True)
         root.mkdir(parents=True, exist_ok=True)
@@ -533,23 +570,8 @@ class AgentWorker:
 
     @staticmethod
     def _access_failures_only(issues: list) -> bool:
-        failures = {item.get("url") for item in issues if item.get("status") in {
-            "profile_navigation_failed", "browser_navigation_failed"}}
-        branch_failures = {item.get("url") for item in issues if item.get("status") == "browser_navigation_failed"}
-        branch_failures.update(item.get("branch_url") for item in issues
-                               if item.get("status") == "browser_navigation_failed" and item.get("branch_url"))
-        if not failures:
-            return False
-        for item in issues:
-            status, url = item.get("status", ""), item.get("url") or item.get("主页")
-            if status in {"profile_navigation_failed", "browser_navigation_failed"}:
-                continue
-            if status.startswith("fetch_failed") and url in failures:
-                continue
-            if status in {"branch_termination_unverified", "planned_branch_not_captured"} and url in branch_failures:
-                continue
-            return False
-        return True
+        recovery = classify_issues(issues)
+        return bool(recovery.access and not (recovery.structure or recovery.review or recovery.stop))
 
     def _save_active_plan(self, task: Any, root: Path, recon: ReconResult, attempts: list) -> None:
         from server.recon_plan_cache import _contract
@@ -698,6 +720,10 @@ class AgentWorker:
             if alert_path.is_file():
                 with contextlib.suppress(OSError, ValueError):
                     stats["recon_usage_alerts"] = [json.loads(alert_path.read_text(encoding="utf-8"))]
+            runtime_path = path.with_name("runtime-report.json")
+            if runtime_path.is_file():
+                with contextlib.suppress(OSError, ValueError):
+                    stats["runtime_report"] = json.loads(runtime_path.read_text(encoding="utf-8"))
             self.queue.sync_task_result(
                 task.task_id, [], stats,
                 "", reason,
@@ -730,6 +756,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="单学院侦察累计 Token 超过此值时告警（不中断）；0 关闭")
     p.add_argument("--recon-alert-calls", type=int, default=DEFAULT_RECON_ALERT_CALLS,
                    help="单学院侦察累计模型请求超过此值时告警（不中断）；0 关闭")
+    p.add_argument("--recon-alert-cost-usd", type=float, default=DEFAULT_RECON_ALERT_COST_USD,
+                   help="按缓存/非缓存输入及输出核算的美元费用告警线（只告警，0 关闭）")
     p.add_argument("--max-discovery-calls", type=int, default=DEFAULT_MAX_DISCOVERY_CALLS,
                    help="入口发现阶段单次会话的模型请求上限，超过即停止该学院；0 关闭")
     p.add_argument("--max-branch-calls", type=int, default=DEFAULT_MAX_BRANCH_CALLS,
@@ -778,6 +806,7 @@ def main() -> None:
         max_recon_tokens=args.max_recon_tokens,
         recon_alert_tokens=args.recon_alert_tokens,
         recon_alert_calls=args.recon_alert_calls,
+        recon_alert_cost_usd=args.recon_alert_cost_usd,
         min_free_memory_mb=args.min_free_memory_mb,
         harvest_reserve_seconds=args.harvest_reserve_seconds,
         max_discovery_calls=args.max_discovery_calls,

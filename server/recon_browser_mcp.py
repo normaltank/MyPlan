@@ -64,7 +64,8 @@ TOOLS = [
     tool("browser_verify_profile", "Verify a complete profile DOM container and optional direct-child start boundary; structure only.",
          {"profile_content_selector": STRING, "profile_content_start_selector": STRING}, ("profile_content_selector",)),
     tool("browser_click", "Click a unique, verified CSS selector in the real browser.", {"selector": STRING}, ("selector",)),
-    tool("browser_evaluate", "Run a JS function in the current page only for questions probes cannot answer. Return compact structure.",
+    tool("browser_evaluate", "Run read-only JS only for questions probes cannot answer. Return compact structure. "
+         "DOM edits invalidate verification evidence and require reloading the official URL.",
          {"function": STRING}, ("function",)),
     tool("browser_screenshot", "View the current viewport, or one element via selector, as a compressed image when roster "
          "shape cannot be judged from DOM. Images are costly; prefer structure/verify.", {"selector": STRING}),
@@ -72,26 +73,37 @@ TOOLS = [
 
 
 def phase_tools(phase: str) -> list[dict]:
+    from server.recon_contract import submission_schema
+    submit = tool("submit_plan", "Submit this phase's structure-only plan. Schema and current-session browser "
+                  "evidence are checked immediately. Fix reported paths/codes and retry; stop after accepted:true. "
+                  "CSS selectors intentionally cannot contain Chinese. Never include teacher fields.",
+                  {"plan": submission_schema(phase)}, ("plan",))
+    definitions = submit["inputSchema"]["properties"]["plan"].pop("$defs", None)
+    if definitions:
+        submit["inputSchema"]["$defs"] = definitions
     if phase == "discovery":
         allowed = {"browser_navigate", "browser_navigation", "browser_survey", "browser_evaluate", "browser_screenshot"}
     elif phase == "branch":
         allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
                    "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot"}
     else:
-        return TOOLS
-    return [entry for entry in TOOLS if entry["name"] in allowed]
+        return [*TOOLS, submit]
+    return [*[entry for entry in TOOLS if entry["name"] in allowed], submit]
 
 
 class BrowserScout:
-    def __init__(self, page: Any, evidence_dir: Path, phase: str = "full"):
+    def __init__(self, page: Any, evidence_dir: Path, phase: str = "full", target: dict | None = None):
         self.page = page
         self.evidence_dir = evidence_dir
         evidence_dir.mkdir(parents=True, exist_ok=True)
         self.sequence = 0
         self.phase = phase
+        self.target = target
+        self.events: list[dict] = []
         self._last_html_digest = None
         self._seen_links: set[str] = set()
         self._seen_lines: set[str] = set()
+        self._dom_modified = False
         from server.empty_roster import install_empty_roster_tracking
         install_empty_roster_tracking(page)
 
@@ -164,11 +176,39 @@ class BrowserScout:
             self.save("discovery.json", json.dumps(await navigation_evidence(self.page), ensure_ascii=False))
 
     async def call(self, name: str, arguments: dict) -> dict:
+        if name == "submit_plan":
+            from server.recon_contract import plan_digest, validate_submission
+            plan = arguments.get("plan")
+            if self._dom_modified:
+                return {**self.text_result({"accepted": False, "issues": [
+                    {"path": "$", "status": "browser_dom_modified"}]}), "isError": True}
+            issues = validate_submission(plan, self.phase, self.target, self.events)
+            if issues:
+                return {**self.text_result({"accepted": False, "issues": issues}), "isError": True}
+            self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
+            return self.text_result({"accepted": True, "digest": plan_digest(plan)})
+        reply = await self._browser_call(name, arguments)
+        cid = str(len(self.events))
+        self.events.extend([
+            {"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
+                                            "arguments": json.dumps(arguments)}},
+            {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": cid, **reply}]}}},
+        ])
+        return reply
+
+    async def _browser_call(self, name: str, arguments: dict) -> dict:
+        if self._dom_modified and name in {
+            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click"
+        }:
+            return {**self.text_result({"status": "browser_dom_modified",
+                                       "retry": "Reload the official URL before collecting new verification evidence."}),
+                    "isError": True}
         if name == "browser_navigate":
             url = arguments["url"]
             if not url.startswith(("http://", "https://")):
                 raise ValueError("http(s) URL required")
             await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            self._dom_modified = False
             await self.snapshot()
             if self.phase == "discovery":
                 value = await self.page.evaluate(
@@ -188,6 +228,7 @@ class BrowserScout:
                     continue
                 try:
                     response = await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    self._dom_modified = False
                     await self.snapshot()
                     probe = await self.page.evaluate(
                         "() => ({page: __facultyRecon.summary(), navigation: __facultyRecon.navigation('body',0,64)})")
@@ -215,20 +256,29 @@ class BrowserScout:
         elif name == "browser_verify":
             value = await self.page.evaluate("args => __facultyRecon.check(...args)",
                                             [arguments["card_selector"], arguments.get("next_selector")])
+            if value.get("hiddenCardCount", 0) > 0:
+                return {**self.text_result({**value, "status": "roster_cards_not_visible",
+                    "retry": "Verify a selector for the visible roster rather than hidden or preload nodes."}),
+                    "isError": True}
             cards = await self.page.locator(arguments["card_selector"]).evaluate_all("nodes => nodes.map(n=>n.outerHTML)")
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()
-            value["pagination"] = await self.page.evaluate("() => __facultyRecon.pagination()")
+            value["pagination"] = await self.page.evaluate(
+                "selector => __facultyRecon.pagination('body',0,12,false,selector)", arguments["card_selector"])
             if "empty_state_selector" in arguments or "roster_container_selector" in arguments:
                 from server.empty_roster import verify_empty_roster
                 branch = {**arguments, "url": self.page.url, "single_page": True}
                 value["empty_roster"] = await verify_empty_roster(self.page, branch, await self.page.content())
+                value["pagination"] = await self.page.evaluate(
+                    "selector => __facultyRecon.pagination('body',0,12,true,selector)",
+                    arguments.get("roster_container_selector") or arguments["card_selector"])
                 await self.snapshot()
         elif name == "browser_verify_segments":
             from server.segmented_roster import verification_summary
             html = await self.page.content()
             value = verification_summary(html, self.page.url, arguments["container_selector"],
                                          arguments["record_start_selector"])
-            value["pagination"] = await self.page.evaluate("() => __facultyRecon.pagination()")
+            value["pagination"] = await self.page.evaluate(
+                "selector => __facultyRecon.pagination('body',0,12,false,selector)", arguments["container_selector"])
             await self.snapshot()
         elif name == "browser_verify_profile":
             from server.profile_structure import verify_profile_container
@@ -249,8 +299,34 @@ class BrowserScout:
             await self.snapshot()
             value = {"url": self.page.url}
         elif name == "browser_evaluate":
-            value = await self.page.evaluate(arguments["function"])
+            observation = await self.page.evaluate("""async source => {
+                const probe = window.__facultyRecon;
+                let modified = false;
+                const observer = new MutationObserver(records => {modified ||= records.length > 0;});
+                observer.observe(document, {subtree:true,childList:true,attributes:true,characterData:true});
+                let value, failed = false;
+                try {
+                    const fn = (0,eval)('(' + source + ')');
+                    value = await (typeof fn === 'function' ? fn() : fn);
+                } catch (_) {failed = true;}
+                finally {
+                    modified ||= observer.takeRecords().length > 0 || window.__facultyRecon !== probe;
+                    observer.disconnect();
+                }
+                return {value, modified, failed};
+            }""", arguments["function"])
             await self.snapshot()
+            if observation["modified"]:
+                # Previous selector/pagination proofs cannot certify an edited
+                # browser document. Require an official reload and fresh proof.
+                self._dom_modified = True
+                self.events.clear()
+                return {**self.text_result({"status": "browser_dom_modified",
+                                           "retry": "Use read-only probes. Reload the official URL and verify again."}),
+                        "isError": True}
+            if observation["failed"]:
+                return {**self.text_result({"status": "browser_evaluate_failed"}), "isError": True}
+            value = observation.get("value")
         elif name == "browser_screenshot":
             # Full-page PNGs (e.g. 1280x19624, 3.7 MB) were sent to the model and then
             # re-sent with every later request of the session. Send one bounded JPEG.
@@ -275,7 +351,7 @@ class BrowserScout:
         return self.text_result(value)
 
 
-async def serve(*, phase: str | None = None, session: str | None = None) -> None:
+async def serve(*, phase: str | None = None, session: str | None = None, target: dict | None = None) -> None:
     from server.browser_context import new_browser_context
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -286,7 +362,8 @@ async def serve(*, phase: str | None = None, session: str | None = None) -> None
             session = session or os.environ.get("FACULTY_RECON_SESSION", "standalone")
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session):
                 session = hashlib.sha256(session.encode()).hexdigest()
-            scout = BrowserScout(await context.new_page(), HERE / "outputs/recon-evidence" / session / uuid.uuid4().hex, phase)
+            scout = BrowserScout(await context.new_page(), HERE / "outputs/recon-evidence" / session / uuid.uuid4().hex,
+                                 phase, target)
             while line := await asyncio.to_thread(sys.stdin.readline):
                 request = json.loads(line)
                 if "id" not in request:  # MCP initialization/cancellation notifications.
@@ -326,5 +403,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Real browser MCP for faculty structural reconnaissance")
     parser.add_argument("--phase", choices=("full", "discovery", "branch"))
     parser.add_argument("--session")
+    parser.add_argument("--target", type=json.loads)
     args = parser.parse_args()
-    asyncio.run(serve(phase=args.phase, session=args.session))
+    asyncio.run(serve(phase=args.phase, session=args.session, target=args.target))

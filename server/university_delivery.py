@@ -37,15 +37,28 @@ def delivery_scope(con, batch_id, school):
 
 def _assemble(con, rows):
     records, identities, by_key, by_name, conflicts = [], [], {}, {}, []
+    from server.identity_review import audit_pairs, observation_key
+    approved_pairs, task_records = set(), {}
     for task in rows:
-        for seq, payload in con.execute("SELECT seq,payload_json FROM records WHERE task_id=? ORDER BY seq", (task["task_id"],)):
-            record = json.loads(payload)
+        saved = [(seq, json.loads(payload)) for seq, payload in con.execute(
+            "SELECT seq,payload_json FROM records WHERE task_id=? ORDER BY seq", (task["task_id"],))]
+        task_records[task["task_id"]] = saved
+        try:
+            approved_pairs.update(audit_pairs([record for _, record in saved],
+                                             json.loads(task["stats_json"]), task["task_id"]))
+        except (ValueError, KeyError, TypeError, OSError):
+            conflicts.append({"kind": "identity_review_evidence_invalid", "requires_review": True,
+                              "task_id": task["task_id"]})
+    for task in rows:
+        for seq, record in task_records[task["task_id"]]:
             name = field_value(record, "姓名")
             url = field_value(record, "主页")
             # A roster URL or missing profile is not sufficient evidence for merging.
             key = (name, url) if name and url and url != task["url"] else (task["task_id"], seq)
             source = {"task_id": task["task_id"], "seq": seq, "college": task["college"]}
-            if name in by_name and key not in by_name[name]:
+            if name in by_name and key not in by_name[name] and any(
+                    frozenset((observation_key(records[by_key[prior]]), observation_key(record))) not in approved_pairs
+                    for prior in by_name[name]):
                 conflicts.append({"kind": "homonym_or_distinct_profile", "identity_keys": [
                     hashlib.sha256(repr(k).encode()).hexdigest() for k in sorted([*by_name[name], key], key=repr)],
                     "requires_review": True})

@@ -30,7 +30,7 @@ if __package__:
     from .task_image_review import (task_review_audit, has_image_review, review_items,
                                     review_complete, prepare_review_resume,
                                     legacy_review_audits, name_items)
-    from . import name_review
+    from . import name_review, identity_review
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
@@ -40,6 +40,7 @@ else:
                                    review_complete, prepare_review_resume,
                                    legacy_review_audits, name_items)
     import name_review
+    import identity_review
     from image_bio_review import (render_review_page, save_review_decision,
                                   save_email_decision)
 
@@ -235,6 +236,13 @@ class NameReviewRequest(BaseModel):
     verified_name: str = ''
 
 
+class IdentityReviewRequest(BaseModel):
+    id: str
+    verdict: str
+    primary_url: str = ''
+    assignments: dict[str, str] | None = None
+
+
 @app.post('/api/auth/login')
 async def login(req: LoginRequest, request: Request, response: Response):
     user = account_store.authenticate(req.username, req.password)
@@ -410,6 +418,18 @@ def present_task(data, scope):
     if data.get('status') == 'failed':
         task = agent_queue.get_task(data['task_id'])
         audit = task_review_audit(OUTPUT_DIR, task) if task else None
+        if audit is not None:
+            saved = json.loads(audit.read_text(encoding='utf-8'))
+            source_issues = [item for item in saved.get('unresolved', [])
+                             if item.get('status') == 'embedded_pdf_roster_requires_review']
+            if source_issues:
+                data['source_review_required'] = True
+                links = []
+                for item in source_issues:
+                    for url in [item.get('url'), *item.get('media_urls', [])]:
+                        if isinstance(url, str) and url.startswith(('https://', 'http://')) and url not in links:
+                            links.append(url)
+                data['source_review_urls'] = links
         if audit is not None and has_image_review(audit):
             data['review_url'] = f"/review/task/{data['task_id']}"
     return data
@@ -443,6 +463,11 @@ async def task_image_review_page(task_id: str, request: Request):
     try:
         ocr_items, email_items = review_items(audit)
         names = name_items(audit)
+        identities = identity_review.collect_items(audit)
+        saved = identity_review.load_decisions(audit.parent / identity_review.DECISIONS_FILE)
+        for item in identities:
+            decision = saved.get(item['id'], {})
+            item['saved_verdict'] = decision.get('verdict', '')
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据不完整，请管理员检查审计文件') from exc
     return render_review_page(ocr_items, email_items,
@@ -450,7 +475,9 @@ async def task_image_review_page(task_id: str, request: Request):
         email_decision_url=f'/api/task/{task_id}/review/email',
         retry_url=f'/api/task/{task_id}/review/retry',
         csrf_token=request.cookies.get(CSRF_COOKIE, ''), return_url='/',
-        name_items=names, name_decision_url=f'/api/task/{task_id}/review/name')
+        name_items=names, name_decision_url=f'/api/task/{task_id}/review/name',
+        identity_items=identities, identity_decision_url=f'/api/task/{task_id}/review/identity',
+        can_review_identity=_user(request).role == 'admin')
 
 
 @app.post('/api/task/{task_id}/review/ocr', status_code=204)
@@ -494,13 +521,30 @@ async def save_task_name_review(task_id: str, payload: NameReviewRequest, reques
     return Response(status_code=204)
 
 
+@app.post('/api/task/{task_id}/review/identity', status_code=204)
+async def save_task_identity_review(task_id: str, payload: IdentityReviewRequest, request: Request):
+    _, audit = _review_task(task_id, request)
+    user = _user(request)
+    if user.role != 'admin':
+        raise HTTPException(status_code=403, detail='身份合并与区分须由管理员核对来源后确认')
+    try:
+        item = next((item for item in identity_review.collect_items(audit) if item['id'] == payload.id), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail='身份复核证据不存在或已变化')
+        identity_review.save_decision(audit.parent / identity_review.DECISIONS_FILE, item,
+            payload.verdict, payload.primary_url, assignments=payload.assignments, reviewed_by=user.id)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail='身份决定必须覆盖全部来源，主来源须来自当前观察') from exc
+    return Response(status_code=204)
+
+
 @app.post('/api/task/{task_id}/review/retry')
 async def retry_task_after_image_review(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
         ocr_items, email_items = review_items(audit)
-        if not review_complete(audit, ocr_items, email_items, name_items(audit)):
-            raise HTTPException(status_code=409, detail='请先完成全部图片文字、邮箱和姓名复核')
+        if not review_complete(audit, ocr_items, email_items, name_items(audit), identity_review.collect_items(audit)):
+            raise HTTPException(status_code=409, detail='请先完成全部图片文字、邮箱、姓名和身份复核；证据不足的身份不能放行')
         prepare_review_resume(audit, task_id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据无效') from exc
@@ -774,4 +818,3 @@ if __name__ == "__main__":
     port = cfg.get("port", 8000)
     print(f"Starting Agent Dispatch Center on http://{host}:{port} ...")
     uvicorn.run(app, host=host, port=port)
-

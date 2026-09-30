@@ -4,7 +4,10 @@
 browser_navigate 已返回页面摘要（标题、标题行、常见正文容器计数、本会话尚未出现过的页面文字）以及本会话新出现的链接，判断页面是否承载名录时先用这些信息，不必再用 browser_evaluate 读取标题或正文；已返回过的链接不再重复（seen_omitted 为省略数）。按关键词找链接用 browser_navigation 的 query。需要查看多个候选页面时，用 browser_survey 一次打开最多 8 个 URL，逐页返回最终地址、摘要和新链接；不要逐个 navigate 再逐个读取正文。
 找到全部相关名录后立即结束。此阶段不要验证 CSS、逐页翻阅教师名单、访问个人主页、调查历史新闻或导出数据。图片或特殊名录仍保留实际核实的入口，不能假装普通文本名录。
 补缺反馈中的 known_urls 是此前已核实的分支，必须重新检查并全部保留，不得通过删分支规避错误；重定向应实际打开验证。
-只输出 JSON：顶层 school、college、source_kind、branches。source_kind 为 university_faculty_roster；branches 中每项恰好只有 url，必须来自本轮浏览器实际看到的链接或已打开的页面。不得附加 name、label、说明或教师数据。
+使用 submit_plan 提交 JSON：顶层 school、college、source_kind、branches。source_kind 为 university_faculty_roster；branches 中每项恰好只有 url，必须来自本轮浏览器实际看到的链接或已打开的页面。不得附加 name、label、说明或教师数据。
+工具即时检查格式、目标与本轮浏览器证据。accepted:false 时按 issues 的字段路径和错误码修正；accepted:true 后立即结束，回复“计划已提交”，无需再次抄写 JSON。
+提交参数示例（示例 URL 必须替换为本轮实际核实的 URL）：
+{{"plan":{{"school":"{school}","college":"{college}","source_kind":"university_faculty_roster","branches":[{{"url":"https://example.edu/faculty/"}}]}}}}
 
 本工单：
 目标学校：{school}

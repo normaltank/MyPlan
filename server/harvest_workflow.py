@@ -399,10 +399,27 @@ def reconcile_rosters(
                     unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
                 candidates.extend(listed.found)
                 continue
-        found, review = FacultyDirectoryExtractor.extract_with_review(page.html, page.url)
+        found, review = FacultyDirectoryExtractor.extract_with_review(
+            page.html, page.url, card_selector=selector)
         if selector:
             found, outside = candidates_inside_cards(page.html, page.url, selector, found)
             review, outside_review = candidates_inside_cards(page.html, page.url, selector, review)
+            if not found and not review and not empty_declared:
+                from server.image_biography import media_references
+                cards_html = "".join(str(card) for card in
+                                     BeautifulSoup(page.html, "html.parser").select(selector))
+                pdf_urls = list(dict.fromkeys(ref.url for ref in media_references(cards_html, page.url)
+                                             if ref.kind == "pdf" and not ref.linked))
+                if pdf_urls:
+                    # The viewer's enclosing DIV is not a teacher record.
+                    # Another selector cannot explain people inside a PDF;
+                    # retain this source and stop paid structural repair.
+                    observation = observe_roster(page.html, page.url, selector, [])
+                    observation["status"] = "embedded_pdf_roster_requires_review"
+                    observations.append(observation)
+                    unresolved.append({"url": page.url, "status": "embedded_pdf_roster_requires_review",
+                                       "selector": selector, "media_urls": pdf_urls})
+                    continue
             if outside or outside_review:
                 # Kept out of the roster, and still reported: the page is not explained.
                 unresolved.append({"url": page.url, "status": "candidate_outside_cards",

@@ -55,6 +55,8 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
+from name_labels import without_degree_annotation
+
 # --------------------------------------------------------------------------
 # 1. Structural fingerprint
 # --------------------------------------------------------------------------
@@ -268,6 +270,18 @@ def _collapse_han(t: str) -> str:
         c = re.sub(r"[\s\u3000]+", "", t)
         if 2 <= len(c) <= 4:
             return c
+        # A padded name may precede a separate, longer annotation token:
+        # '王 奔 副教授'. Joining the whole label is too long, while splitting
+        # it first exposes '王' as the supposed name. Join just the leading
+        # run of single-character padding, preserving the following field.
+        words = t.split()
+        prefix = 0
+        for word in words:
+            if len(word) != 1:
+                break
+            prefix += 1
+        if 2 <= prefix <= 3 and prefix < len(words):
+            return "".join(words[:prefix]) + " " + " ".join(words[prefix:])
     return t
 
 _LEADING_LIST_INDEX = re.compile(r"^[\s\u3000]*\d{1,4}[\s\u3000]*[.、,，)）:：]?[\s\u3000]*")
@@ -291,7 +305,7 @@ def _name_token(t: str) -> str:
         s = s[1:].lstrip()
     if not s or any(ch.isdigit() for ch in s):
         return ""
-    return s
+    return without_degree_annotation(s)
 
 
 def primary_tokens(nodes: list[Tag], k: int = 3) -> list[str]:

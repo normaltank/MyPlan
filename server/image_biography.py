@@ -16,7 +16,7 @@ from pathlib import Path
 import re
 import uuid
 from typing import Awaitable, Callable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -76,6 +76,22 @@ def media_references(html: str, base_url: str) -> list[MediaReference]:
         else:
             raw_url = element.get("href") or element.get("data") or element.get("src") or ""
             path = urlparse(raw_url).path.lower()
+            if element.name == "iframe" and path.rsplit("/", 1)[-1] == "viewer.html":
+                viewer_url = urljoin(base_url, raw_url)
+                viewer = urlparse(viewer_url)
+                if viewer.scheme not in {"http", "https"} or not viewer.netloc:
+                    continue
+                file_url = parse_qs(viewer.query).get("file", [""])[0]
+                try:
+                    file_path = urlparse(file_url).path.lower()
+                except ValueError:
+                    continue
+                if not file_url or not file_path.endswith(".pdf"):
+                    continue
+                # PDF.js resolves relative file parameters against its viewer,
+                # not the containing article. Decode query escaping once.
+                raw_url = quote(urljoin(viewer_url, file_url), safe=":/?#[]@!$&'()*+,;=%")
+                path = urlparse(raw_url).path.lower()
             label = element.get_text(" ", strip=True).lower()
             if not (path.endswith(".pdf") or label.endswith(".pdf")
                     or element.get("type", "").lower() == "application/pdf"):

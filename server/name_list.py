@@ -26,12 +26,13 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 from server.faculty_extractor import FacultyCandidate, FacultyDirectoryExtractor
+from server.titles import TITLE_KEYWORDS
 
-from iso_mining import name_prob, rare_surname_name  # noqa: E402  (Opus on sys.path)
+from iso_mining import first_href, name_prob, rare_surname_name  # noqa: E402  (Opus on sys.path)
 
 NAME_PRIOR_FLOOR = 0.5
 # Clause boundaries: a list of names never runs across these.
-_BOUNDARY = re.compile(r"[（）()\[\]【】<>《》：:；;。！？!?|/\n\r\t]+|\s{2,}|　{2,}")
+_BOUNDARY = re.compile(r"[（）()\[\]【】<>《》：:；;。！？!?|/\n\r\t]+")
 _PADDED_TWO = re.compile(r"^([一-鿿])[\s　]+([一-鿿])$")
 _HAN_NAME = re.compile(r"^[一-鿿]{2,4}$")
 _MINORITY_NAME = re.compile(r"^[一-鿿]{2,6}[·•][一-鿿]{2,8}$")
@@ -43,11 +44,15 @@ def _item(raw: str) -> str:
     padded = _PADDED_TWO.match(text)
     if padded:
         return padded.group(1) + padded.group(2)
-    return text.split()[0] if text.split() else ""
+    return text
 
 
 def _person_name(item: str) -> str | None:
     cleaned, _title = FacultyDirectoryExtractor._clean_name(item)
+    words = item.split()
+    if (len(words) > 1 and not _PADDED_TWO.match(item)
+            and cleaned == "".join(words)):
+        return None  # Independent full tokens must not become an invented combined name.
     if not (_HAN_NAME.match(cleaned) or _MINORITY_NAME.match(cleaned)):
         return None
     return cleaned if name_prob(cleaned) >= NAME_PRIOR_FLOOR else None
@@ -55,7 +60,36 @@ def _person_name(item: str) -> str | None:
 
 def _rare_name(item: str) -> str | None:
     cleaned, _title = FacultyDirectoryExtractor._clean_name(item)
+    words = item.split()
+    if len(words) > 1 and not _PADDED_TWO.match(item) and cleaned == "".join(words):
+        return None
     return cleaned if _HAN_NAME.match(cleaned) and rare_surname_name(cleaned) else None
+
+
+def _list_items(part: str) -> list[str]:
+    item = _item(part)
+    words = item.split()
+    if len(words) <= 1 or _person_name(item) or _rare_name(item):
+        return [item] if item else []
+    # Complete names remain separate; runs of one Han character are the
+    # typography of padded names. Unknown tokens remain auditable items.
+    items = []
+    index = 0
+    while index < len(words):
+        if re.fullmatch(r"[一-鿿]", words[index]):
+            end = index + 1
+            while end < len(words) and re.fullmatch(r"[一-鿿]", words[end]):
+                end += 1
+            joined = "".join(words[index:end])
+            # Two/three isolated characters cannot form two valid Han names;
+            # four or more can, so keep that entire run unresolved.
+            items.append(joined if 2 <= len(joined) <= 3 and (_person_name(joined) or _rare_name(joined))
+                         else " ".join(words[index:end]))
+            index = end
+        else:
+            items.append(words[index])
+            index += 1
+    return items
 
 
 @dataclass
@@ -78,9 +112,10 @@ def chains(text: str) -> list[NameChain]:
     """Every 顿号 run of at least two items in ``text``, classified."""
     found = []
     for clause in _BOUNDARY.split(text or ""):
-        if "、" not in clause:
+        if "、" not in clause and len(clause.split()) < 2:
             continue
-        items = [item for item in (_item(part) for part in clause.split("、")) if item]
+        items = [item for part in clause.split("、") for item in _list_items(part)
+                 if item not in TITLE_KEYWORDS]
         if len(items) < 2:
             continue
         chain = NameChain(text=clause.strip(), items=items)
@@ -104,6 +139,8 @@ def people_chains(text: str) -> list[NameChain]:
 
 def _single_name(text: str) -> str | None:
     """The card is exactly one name (a one-person cell of a name-list table)."""
+    if _BOUNDARY.search(text):
+        return None  # A role/unit label with a named office-holder is not a name cell.
     compact = _item(text)
     if compact != text.strip() and not _PADDED_TWO.match(text.strip()):
         return None
@@ -117,6 +154,11 @@ def is_name_list_page(html: str, card_selector: str) -> bool:
     are at least half of the cards that hold any name at all.
     """
     cards = BeautifulSoup(html, "html.parser").select(card_selector)
+    # Named personal links have their own URL identity. Do not convert them
+    # into profile-less names merely because get_text inserted whitespace.
+    if any(_person_name(a.get_text(' ', strip=True)) and first_href([a], None)
+           for card in cards for a in ([card] if card.name == 'a' else []) + card.find_all('a')):
+        return False
     list_cards = named_cards = 0
     for card in cards:
         text = card.get_text(" ", strip=True)

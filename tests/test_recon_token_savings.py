@@ -99,7 +99,8 @@ async def test_timeout_stops_the_harness_thread_and_keeps_usage(monkeypatch):
         await agent_recon.reconnoiter("U", "C", "https://u.edu/", timeout_seconds=0.3,
                                       config=_cfg(), budget=budget)
     assert stopped.wait(2)
-    assert caught.value.usage_unknown is False
+    assert caught.value.usage_unknown is True  # an interrupted in-flight request may still be billed
+    assert caught.value.diagnostics["cost"]["estimated_usd"] is None
     assert caught.value.diagnostics["model_calls"] > 0
 
 
@@ -126,7 +127,7 @@ async def test_worker_fails_fast_on_phase_limit_without_repair_rounds(tmp_path, 
     root = tmp_path / "outputs" / "tasks" / task.task_id
     with pytest.raises(agent_recon.ReconPhaseLimitExceeded):
         await worker._harvest_with_repair(task, root)
-    assert calls == [{"discovery": 40, "branch": 25}]
+    assert calls == [{"discovery": 0, "branch": 25}]
     audit = json.loads((root / "recon-attempts.json").read_text(encoding="utf-8"))
     assert audit["status"] == "recon_phase_limit" and audit["usage_unknown"] is False
     assert audit["attempts"][0]["model_calls"] == 26

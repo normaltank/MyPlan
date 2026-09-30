@@ -59,9 +59,9 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         if branch.get("kind", "roster") == "navigation":
             if not str(branch.get("child_link_selector", "")).strip():
                 raise ValueError("navigation branch requires child_link_selector")
-            max_children = branch.get("max_children", 30)
-            if not isinstance(max_children, int) or not 1 <= max_children <= 100:
-                raise ValueError("max_children must be an integer from 1 to 100")
+            max_children = branch.get("max_children")
+            if max_children is not None and (type(max_children) is not int or max_children < 1):
+                raise ValueError("max_children must be a positive integer")
             child = branch.get("child_branch")
             if not isinstance(child, dict) or "url" in child:
                 raise ValueError("navigation branch requires a child_branch without url")
@@ -79,9 +79,9 @@ def _validate_plan(plan: dict[str, Any]) -> None:
             if not branch_valid(branch):
                 raise ValueError("segmented branch requires container_selector, record_start_selector "
                                  "and exactly one of single_page or next_selector, without card selectors")
-            max_pages = branch.get("max_pages", 20)
-            if not isinstance(max_pages, int) or not 1 <= max_pages <= 100:
-                raise ValueError("max_pages must be an integer from 1 to 100")
+            max_pages = branch.get("max_pages")
+            if max_pages is not None and (type(max_pages) is not int or max_pages < 1):
+                raise ValueError("max_pages must be a positive integer")
             continue
         if branch.get("kind", "roster") != "roster":
             raise ValueError("branch kind must be roster, navigation or segmented")
@@ -89,9 +89,9 @@ def _validate_plan(plan: dict[str, Any]) -> None:
             raise ValueError("each branch needs exactly one of single_page or next_selector")
         if "card_selector" in branch and not str(branch["card_selector"]).strip():
             raise ValueError("card_selector must be non-empty")
-        max_pages = branch.get("max_pages", 20)
-        if not isinstance(max_pages, int) or not 1 <= max_pages <= 100:
-            raise ValueError("max_pages must be an integer from 1 to 100")
+        max_pages = branch.get("max_pages")
+        if max_pages is not None and (type(max_pages) is not int or max_pages < 1):
+            raise ValueError("max_pages must be a positive integer")
     concurrency = plan.get("profile_concurrency", 4)
     if not isinstance(concurrency, int) or not 1 <= concurrency <= 8:
         raise ValueError("profile_concurrency must be an integer from 1 to 8")
@@ -162,14 +162,30 @@ def _roster_signature(html: str, url: str) -> tuple:
     return tuple((cand.name, cand.url, cand.title) for cand in found)
 
 
-def _pagination_candidates(html: str, current_url: str) -> list[str | None]:
+def _pagination_candidates(html: str, current_url: str,
+                           card_selector: str | None = None) -> list[str | None]:
     """Find bounded pagination leads from browser-rendered structure, not names."""
     soup = BeautifulSoup(html, "html.parser")
+    roster_nodes = soup.select(card_selector) if card_selector else []
     leads: list[str | None] = []
     for control in soup.select("a, button"):
         if (control.has_attr("disabled") or control.get("aria-disabled") == "true"
                 or control.get("aria-current") == "page"):
             continue
+        slider = control.parent
+        # Only a fully rendered slide component outside the verified roster
+        # proves that this arrow advances a banner. A "next" class alone does
+        # not, and teacher cards inside a slider still need pagination proof.
+        if (card_selector and roster_nodes and control.name == "button"
+                and {"slick-next", "slick-prev"}.intersection(control.get("class", []))
+                and {"slick-slider", "slick-initialized"}.issubset(slider.get("class", []))):
+            track = slider.select_one(":scope > .slick-list > .slick-track")
+            slides = track.find_all(recursive=False) if track else []
+            contains_roster = any(node is slider or any(parent is slider for parent in node.parents)
+                                  for node in roster_nodes)
+            if (len(slides) >= 2 and all("slick-slide" in node.get("class", []) for node in slides)
+                    and not contains_roster):
+                continue
         rel = control.get("rel", [])
         is_next = "next" in rel
         control_classes = " ".join(control.get("class", []))
@@ -204,7 +220,7 @@ async def _probe_single_page(context: Any, html: str, url: str, card_selector: s
         return []  # roster reconciliation handles this; reviewed posters are separate
     baseline = tuple(card.get_text(" ", strip=True) for card in BeautifulSoup(html, "html.parser").select(card_selector))
     unresolved: list[dict] = []
-    for target in _pagination_candidates(html, url):
+    for target in _pagination_candidates(html, url, card_selector):
         if target is None:
             unresolved.append({"url": url, "status": "single_page_pagination_unverified"})
             continue
@@ -394,7 +410,7 @@ def _restorable_prefix(branch: dict, pages: list[dict]) -> bool:
         return False
     host = urlparse(branch["url"]).netloc.lower()
     urls = [row["url"] for row in pages]
-    return (len(urls) <= branch.get("max_pages", 20) and len(set(urls)) == len(urls)
+    return ((branch.get("max_pages") is None or len(urls) <= branch["max_pages"]) and len(set(urls)) == len(urls)
             and all(urlparse(url).scheme in {"http", "https"}
                     and urlparse(url).netloc.lower() == host for url in urls))
 
@@ -454,10 +470,17 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 unresolved.append({"url": url, "status": "initial_control_unchanged", "selector": selector})
                 return captured, unresolved, evidence
 
-        for page_number in range(start_page, branch.get("max_pages", 20) + 1):
+        page_number = start_page
+        seen_frontiers = {(row["url"], _frontier_signature(row["html"], branch)) for row in saved[:-1]} if evidence["restored_pages"] else set()
+        while True:
             if branch.get("empty_state_selector"):
                 await page.wait_for_load_state("networkidle", timeout=2000)
             html = await page.content()
+            frontier = (page.url, _frontier_signature(html, branch))
+            if frontier[1] is not None and frontier in seen_frontiers:
+                unresolved.append({"url": page.url, "status": "pagination_cycle", "page": page_number})
+                break
+            seen_frontiers.add(frontier)
             if not (evidence["restored_pages"] and page_number == start_page):
                 captured.append((page.url, html))
                 if on_page:
@@ -493,7 +516,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             if not await next_control.is_enabled():
                 evidence["end"] = "next_control_disabled"
                 break
-            if page_number == branch.get("max_pages", 20):
+            if branch.get("max_pages") is not None and page_number == branch["max_pages"]:
                 unresolved.append({"url": page.url, "page": page_number,
                                    "status": "page_limit_reached", "selector": next_selector})
                 break
@@ -503,6 +526,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 unresolved.append({"url": page.url, "page": page_number,
                                    "status": "pagination_unchanged", "selector": next_selector})
                 break
+            page_number += 1
     except Exception as exc:
         if branch.get("single_page"):
             native_html = await asyncio.to_thread(_fetch_page_via_native_chrome, url)
@@ -556,10 +580,10 @@ async def _discover_children(context: Any, branch: dict[str, Any]) -> tuple[str 
             if child_url not in seen:
                 links.append(child_url)
                 seen.add(child_url)
-        if len(links) > branch.get("max_children", 30):
+        if branch.get("max_children") is not None and len(links) > branch["max_children"]:
             errors.append({"url": url, "status": "child_limit_reached",
-                           "discovered": len(links), "limit": branch.get("max_children", 30)})
-            links = links[:branch.get("max_children", 30)]
+                           "discovered": len(links), "limit": branch.get("max_children")})
+            links = links[:branch["max_children"]]
         evidence["discovered_children"] = len(links)
         evidence["children"] = links
     except Exception as exc:
@@ -574,21 +598,10 @@ def _safe_name(value: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "", value).strip() or "college"
 
 
-async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str | Path, *, state=None) -> dict[str, Any]:
-    """Capture a Subagent-selected college plan using an existing browser context."""
-    started = time.perf_counter()
-    _validate_plan(plan)
-    if state is not None:
-        canonical = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
-        if state.plan_digest != hashlib.sha256(canonical.encode("utf-8")).hexdigest():
-            raise ValueError("checkpoint state belongs to a different plan")
-    out = Path(output_dir).resolve()
-    out.mkdir(parents=True, exist_ok=True)
+async def _capture_sources_with_state(plan, browser_context, state):
     restored_branches = 0
     resumed_branches = 0
     restored_roster_pages = 0
-    cached_profile_urls = {row["url"] for row in state.list_pages("profile")} if state else set()
-    restored_profiles = len(cached_profile_urls)
 
     async def capture_branch(context, branch):
         nonlocal restored_branches, resumed_branches, restored_roster_pages
@@ -626,6 +639,157 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         capture_branch=capture_branch,
         discover_children=_discover_children,
     )
+    return source_capture, {"restored_branches": restored_branches, "resumed_branches": resumed_branches,
+                            "restored_roster_pages": restored_roster_pages}
+
+
+def _save_capture_snapshots(out, name, navigation_pages, all_pages, profile_html):
+    snapshot_dir = out / f"{name}_snapshots"
+    snapshot_dir.mkdir(exist_ok=True)
+    snapshots = []
+    for index, (url, html) in enumerate(navigation_pages, 1):
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+        path = snapshot_dir / f"navigation_{index:03d}_{digest}.html"
+        path.write_text(html, encoding="utf-8")
+        snapshots.append({"kind": "navigation", "url": url, "path": str(path)})
+    for index, (url, html) in enumerate(all_pages, 1):
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+        path = snapshot_dir / f"directory_{index:03d}_{digest}.html"
+        path.write_text(html, encoding="utf-8")
+        snapshots.append({"kind": "directory", "url": url, "path": str(path)})
+    for index, (url, html) in enumerate(profile_html.items(), 1):
+        if not html:
+            continue
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+        path = snapshot_dir / f"profile_{index:03d}_{digest}.html"
+        path.write_text(html, encoding="utf-8")
+        snapshots.append({"kind": "profile", "url": url, "path": str(path)})
+    return snapshot_dir, snapshots
+
+
+def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_evidence, selector_sources):
+    unresolved = []
+    from server.profile_content import scope_profile_html
+    scoped_profile_html = dict(profile_html)
+    profile_scope_evidence = {}
+    for url, selectors in selectors_by_url.items():
+        if not profile_html.get(url):
+            continue
+        if len(selectors) == 1:
+            selector, start_selector = next(iter(selectors))
+        elif url in profile_live_evidence:
+            selector = profile_live_evidence[url]["profile_content_selector"]
+            start_selector = profile_live_evidence[url]["profile_content_start_selector"]
+        else:
+            continue
+        scoped, evidence, issue = scope_profile_html(profile_html[url], selector, url,
+                                                   start_selector=start_selector)
+        if issue:
+            unresolved.append(issue)
+        else:
+            scoped_profile_html[url] = scoped
+            profile_scope_evidence[url] = {**evidence,
+                "attribution_scope": ("verified_profile_container" if url in profile_live_evidence
+                                      else "unverified_profile_container"),
+                "selector_sources": selector_sources.get(url, []),
+                "profile_content_browser_evidence": profile_live_evidence.get(url)}
+    return scoped_profile_html, profile_scope_evidence, unresolved
+
+
+def _enrich_extracted_records(pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
+                              verified_profile_urls=()):
+    unresolved = []
+    for record in pipeline_records:
+        segment = segment_records.get((record["主页"], record["姓名"]))
+        if segment is None:
+            continue
+        # The record's own article text, verbatim; an image-named record keeps
+        # document order, so its resume text is placed before the text below it.
+        record["简介"] = segment.segment.text if segment.name_source == "text" else ""
+        if record["职称"] == "教师" and segment.title != "教师":
+            record["职称"] = segment.title
+        if segment.email and not record["邮箱"]:
+            record["邮箱"] = segment.email
+    for record in pipeline_records:
+        image_bio = media_audit["assigned_biographies"].get((record["主页"], record["姓名"]))
+        if image_bio:
+            existing = record["简介"].strip()
+            record["简介"] = existing + ("\n\n" if existing else "") + image_bio
+            parsed_image = FacultyProfileExtractor.extract(
+                "<article>" + "".join(f"<p>{escape(line)}</p>" for line in image_bio.splitlines())
+                + "</article>", record["主页"], fallback_name=record["姓名"])
+            if record["职称"] == "教师" and parsed_image.title != "教师":
+                record["职称"] = parsed_image.title
+            personal_emails = list(dict.fromkeys(
+                email for email in find_emails(image_bio)
+                if is_personal_email_for_scholar(email, record["姓名"])))
+            if len(personal_emails) > 1 or (personal_emails and record["邮箱"]
+                                             and record["邮箱"].lower() != personal_emails[0].lower()):
+                from server.image_bio_review import email_conflict_id, resolve_email_conflict
+                assigned_evidence = [item for item in media_audit["evidence"]
+                                     if item.get("profile_url") == record["主页"]
+                                     and item.get("assigned_name") == record["姓名"]]
+                choices = list(dict.fromkeys(personal_emails +
+                                             ([record["邮箱"]] if record["邮箱"] else [])))
+                review_id = email_conflict_id(record["主页"], record["姓名"], image_bio,
+                                              assigned_evidence, record["邮箱"], choices)
+                selected = resolve_email_conflict(out / "image_bio_email_reviews.json",
+                                                  review_id, choices)
+                if selected:
+                    record["邮箱"] = selected
+                    for item in assigned_evidence:
+                        item["human_reviewed_email"] = True
+                else:
+                    unresolved.append({"url": record["主页"], "name": record["姓名"],
+                                       "status": "image_bio_email_conflict"})
+            elif personal_emails and not record["邮箱"]:
+                record["邮箱"] = personal_emails[0]
+    for record in pipeline_records:
+        segment = segment_records.get((record["主页"], record["姓名"]))
+        if segment is not None and segment.name_source == "ocr" and segment.segment.text:
+            existing = record["简介"].strip()
+            record["简介"] = existing + ("\n\n" if existing else "") + segment.segment.text
+    profile_owners = Counter(cand.url for cand in admitted)
+    for record in pipeline_records:
+        url = record["主页"]
+        html = scoped_profile_html.get(url)
+        if not html or profile_owners[url] > 1:
+            continue
+        single = FacultyProfileExtractor.extract(
+            html, url, fallback_name=record["姓名"], preserve_content=url in verified_profile_urls)
+        selected_bio = " ".join(record["简介"].split())
+        single_bio = " ".join(single.full_bio.split())
+        if single_bio and selected_bio and len(single_bio) > len(selected_bio) and selected_bio in single_bio:
+            if len(single_bio) - len(selected_bio) > 30:
+                unresolved.append({"url": url, "name": record["姓名"],
+                                   "status": "profile_body_disagreement",
+                                   "selected_chars": len(selected_bio), "single_chars": len(single_bio)})
+    return unresolved
+
+
+async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str | Path, *, state=None) -> dict[str, Any]:
+    """Capture a Subagent-selected college plan using an existing browser context."""
+    started = time.perf_counter()
+    stage_started = started
+    stage_seconds = {}
+
+    def finish_stage(name):
+        nonlocal stage_started
+        current = time.perf_counter()
+        stage_seconds[name] = round(current - stage_started, 6)
+        stage_started = current
+
+    _validate_plan(plan)
+    if state is not None:
+        canonical = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        if state.plan_digest != hashlib.sha256(canonical.encode("utf-8")).hexdigest():
+            raise ValueError("checkpoint state belongs to a different plan")
+    out = Path(output_dir).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    cached_profile_urls = {row["url"] for row in state.list_pages("profile")} if state else set()
+    restored_profiles = len(cached_profile_urls)
+    source_capture, source_checkpoints = await _capture_sources_with_state(plan, browser_context, state)
+    finish_stage("source_capture")
     all_pages = [(page.url, page.html) for page in source_capture.roster_pages]
     image_roster_cards: dict[str, int] = {}
     for captured_page in source_capture.roster_pages:
@@ -707,6 +871,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     from server.faculty_identity import merge_same_name_observations
     candidates, candidate_sources, identity_merges = merge_same_name_observations(
         candidates, candidate_sources, roster_urls)
+    finish_stage("roster_reconciliation")
     profile_urls = sorted({cand.url for cand in candidates if cand.url and cand.url not in roster_urls})
     profile_args = {"state": state} if state else {}
     profile_live_evidence = {}
@@ -763,52 +928,14 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         candidates, candidate_sources, profile_html, plan)
     unresolved.extend(eligibility_errors)
     name = _safe_name(f"{plan['school']}_{plan['college']}")
-    snapshot_dir = out / f"{name}_snapshots"
-    snapshot_dir.mkdir(exist_ok=True)
-    snapshots = []
-    for index, (url, html) in enumerate(navigation_pages, 1):
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
-        path = snapshot_dir / f"navigation_{index:03d}_{digest}.html"
-        path.write_text(html, encoding="utf-8")
-        snapshots.append({"kind": "navigation", "url": url, "path": str(path)})
-    for index, (url, html) in enumerate(all_pages, 1):
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
-        path = snapshot_dir / f"directory_{index:03d}_{digest}.html"
-        path.write_text(html, encoding="utf-8")
-        snapshots.append({"kind": "directory", "url": url, "path": str(path)})
-    for index, (url, html) in enumerate(profile_html.items(), 1):
-        if not html:
-            continue
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
-        path = snapshot_dir / f"profile_{index:03d}_{digest}.html"
-        path.write_text(html, encoding="utf-8")
-        snapshots.append({"kind": "profile", "url": url, "path": str(path)})
+    snapshot_dir, snapshots = _save_capture_snapshots(out, name, navigation_pages, all_pages, profile_html)
     base_url = all_pages[0][0] if all_pages else plan["branches"][0]["url"]
     # Preserve raw captures above; only the parser receives the verified subtree copy.
-    from server.profile_content import scope_profile_html
-    scoped_profile_html = dict(profile_html)
-    profile_scope_evidence = {}
-    for url, selectors in roster_reconciliation.profile_content_selectors.items():
-        if not profile_html.get(url):
-            continue
-        if len(selectors) == 1:
-            selector, start_selector = next(iter(selectors))
-        elif url in profile_live_evidence:
-            selector = profile_live_evidence[url]["profile_content_selector"]
-            start_selector = profile_live_evidence[url]["profile_content_start_selector"]
-        else:
-            continue
-        scoped, evidence, issue = scope_profile_html(profile_html[url], selector, url,
-                                                   start_selector=start_selector)
-        if issue:
-            unresolved.append(issue)
-        else:
-            scoped_profile_html[url] = scoped
-            profile_scope_evidence[url] = {**evidence,
-                "attribution_scope": ("verified_profile_container" if url in profile_live_evidence
-                                      else "unverified_profile_container"),
-                "selector_sources": roster_reconciliation.profile_content_sources.get(url, []),
-                "profile_content_browser_evidence": profile_live_evidence.get(url)}
+    scoped_profile_html, profile_scope_evidence, scope_issues = _scope_captured_profiles(
+        profile_html, roster_reconciliation.profile_content_selectors,
+        profile_live_evidence, roster_reconciliation.profile_content_sources)
+    unresolved.extend(scope_issues)
+    finish_stage("profile_capture_and_scope")
     from server.image_biography import audit_profile_media, fetch_browser_asset, media_references
     async def fetch_original_media(url: str) -> bytes:
         return await fetch_browser_asset(browser_context, url)
@@ -885,83 +1012,37 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                 and candidate.name not in media_audit["biographies"].get(candidate.url, "")):
             unresolved.append({"url": candidate.url, "name": candidate.name,
                                "status": "profile_identity_not_found"})
+    finish_stage("media_audit")
     extraction = FacultyHarvestPipeline.harvest_candidates(
         admitted, profile_fetcher=lambda url: scoped_profile_html.get(url), base_url=base_url,
         school=plan["school"], college=plan["college"],
         agent_name=plan.get("agent_name", "Browser-assisted Subagent"),
         profileless_urls=roster_urls,
+        verified_profile_urls=set(profile_scope_evidence),
     ) if admitted else {"sheet1_with_email": [], "sheet2_no_email": [],
                           "unresolved": [], "delivery_ready": False}
     unresolved.extend(extraction["unresolved"])
     pipeline_records = extraction["sheet1_with_email"] + extraction["sheet2_no_email"]
-    for record in pipeline_records:
-        segment = segment_records.get((record["主页"], record["姓名"]))
-        if segment is None:
-            continue
-        # The record's own article text, verbatim; an image-named record keeps
-        # document order, so its resume text is placed before the text below it.
-        record["简介"] = segment.segment.text if segment.name_source == "text" else ""
-        if record["职称"] == "教师" and segment.title != "教师":
-            record["职称"] = segment.title
-        if segment.email and not record["邮箱"]:
-            record["邮箱"] = segment.email
-    for record in pipeline_records:
-        image_bio = media_audit["assigned_biographies"].get((record["主页"], record["姓名"]))
-        if image_bio:
-            existing = record["简介"].strip()
-            record["简介"] = existing + ("\n\n" if existing else "") + image_bio
-            parsed_image = FacultyProfileExtractor.extract(
-                "<article>" + "".join(f"<p>{escape(line)}</p>" for line in image_bio.splitlines())
-                + "</article>", record["主页"], fallback_name=record["姓名"])
-            if record["职称"] == "教师" and parsed_image.title != "教师":
-                record["职称"] = parsed_image.title
-            personal_emails = list(dict.fromkeys(
-                email for email in find_emails(image_bio)
-                if is_personal_email_for_scholar(email, record["姓名"])))
-            if len(personal_emails) > 1 or (personal_emails and record["邮箱"]
-                                             and record["邮箱"].lower() != personal_emails[0].lower()):
-                from server.image_bio_review import email_conflict_id, resolve_email_conflict
-                assigned_evidence = [item for item in media_audit["evidence"]
-                                     if item.get("profile_url") == record["主页"]
-                                     and item.get("assigned_name") == record["姓名"]]
-                choices = list(dict.fromkeys(personal_emails +
-                                             ([record["邮箱"]] if record["邮箱"] else [])))
-                review_id = email_conflict_id(record["主页"], record["姓名"], image_bio,
-                                              assigned_evidence, record["邮箱"], choices)
-                selected = resolve_email_conflict(out / "image_bio_email_reviews.json",
-                                                  review_id, choices)
-                if selected:
-                    record["邮箱"] = selected
-                    for item in assigned_evidence:
-                        item["human_reviewed_email"] = True
-                else:
-                    unresolved.append({"url": record["主页"], "name": record["姓名"],
-                                       "status": "image_bio_email_conflict"})
-            elif personal_emails and not record["邮箱"]:
-                record["邮箱"] = personal_emails[0]
-    for record in pipeline_records:
-        segment = segment_records.get((record["主页"], record["姓名"]))
-        if segment is not None and segment.name_source == "ocr" and segment.segment.text:
-            existing = record["简介"].strip()
-            record["简介"] = existing + ("\n\n" if existing else "") + segment.segment.text
-    profile_owners = Counter(cand.url for cand in admitted)
-    for record in pipeline_records:
-        url = record["主页"]
-        html = scoped_profile_html.get(url)
-        if not html or profile_owners[url] > 1:
-            continue
-        single = FacultyProfileExtractor.extract(html, url, fallback_name=record["姓名"])
-        selected_bio = " ".join(record["简介"].split())
-        single_bio = " ".join(single.full_bio.split())
-        if single_bio and selected_bio and len(single_bio) > len(selected_bio) and selected_bio in single_bio:
-            if len(single_bio) - len(selected_bio) > 30:
-                unresolved.append({"url": url, "name": record["姓名"],
-                                   "status": "profile_body_disagreement",
-                                   "selected_chars": len(selected_bio), "single_chars": len(single_bio)})
+    unresolved.extend(_enrich_extracted_records(
+        pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
+        verified_profile_urls=set(profile_scope_evidence)))
+    finish_stage("deterministic_extraction")
     fields = ("序号", "姓名", "职称", "邮箱", "学校", "学院", "采集人", "采集日期", "简介", "主页")
     records = [{field: row.get(field, "") for field in fields} for row in pipeline_records]
+    from server import identity_review
+    source_hashes = {url: evidence.get("selected_html_sha256", "")
+                     for url, evidence in profile_scope_evidence.items()}
+    source_hashes.update({url: hashlib.sha256(html.encode("utf-8")).hexdigest()
+                          for url, html in profile_html.items() if html and url not in source_hashes})
+    source_hashes.update({url: hashlib.sha256(html.encode("utf-8")).hexdigest()
+                          for url, html in all_pages if url not in source_hashes})
+    observations_path = out / f"{name}_identity_observations.json"
+    observations_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    decision_path = out / identity_review.DECISIONS_FILE
+    records, identity_items, identity_reviews = identity_review.apply_decisions(records, source_hashes, decision_path)
+    reviewed_pairs = identity_review.validated_pairs(records, identity_reviews, decision_path)
     from server.faculty_identity import identity_review_issues
-    unresolved.extend(identity_review_issues(records))
+    unresolved.extend(identity_review_issues(records, reviewed_pairs))
     from server.harvest_coverage import build_coverage_ledger
     coverage = build_coverage_ledger(plan, source_capture, roster_observations, candidates,
                                      profile_html, eligibility, snapshots)
@@ -986,6 +1067,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         **profile_scope_evidence.get(row["主页"], {})} for index, row in enumerate(records, 1)]
     coverage["profile_aliases"] = profile_aliases
     coverage["identity_merges"] = identity_merges
+    coverage["identity_reviews"] = identity_reviews
     coverage_path = out / f"{name}_coverage.json"
     coverage_path.write_text(json.dumps(coverage, ensure_ascii=False, indent=2), encoding="utf-8")
     ready = bool(extraction["delivery_ready"] and not unresolved and coverage["complete"])
@@ -1000,7 +1082,9 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             exporter=excel_export.export_dual_sheet_excel,
         )
 
+    finish_stage("coverage_and_delivery")
     report = {
+        "stage_seconds": stage_seconds,
         "status": "completed" if ready else "needs_agent_review",
         "delivery_ready": ready,
         "school": plan["school"], "college": plan["college"],
@@ -1016,6 +1100,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "branches": branches, "roster_observations": roster_observations,
         "profile_aliases": profile_aliases,
         "identity_merges": identity_merges,
+        "identity_review_items": identity_items, "identity_reviews": identity_reviews,
+        "identity_review_path": str(decision_path), "identity_observations_path": str(observations_path),
         "image_biography_evidence": media_audit["evidence"],
         "segment_name_evidence": segment_naming["evidence"],
         "unresolved": unresolved, "snapshots": snapshots,
@@ -1023,8 +1109,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "coverage_scope": "supplied_roster_branches_only",
         "coverage": coverage, "coverage_path": str(coverage_path),
         "checkpoints": {"enabled": state is not None, "plan_digest": state.plan_digest if state else None,
-                        "restored_branches": restored_branches, "restored_profiles": restored_profiles,
-                        "resumed_branches": resumed_branches, "restored_roster_pages": restored_roster_pages,
+                        **source_checkpoints, "restored_profiles": restored_profiles,
                         "evidence_captured_at": [row["captured_at"] for row in state.list_pages("profile")] if state else []},
     }
     audit_path = out / f"{name}_audit.json"

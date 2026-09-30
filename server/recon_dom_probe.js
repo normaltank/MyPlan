@@ -80,26 +80,53 @@
       groups.sort((a, b) => b.repeatedCount - a.repeatedCount);
       return page(groups, offset, limit);
     },
-    pagination(selector = 'body', offset = 0, limit = 12) {
+    isPaginationControl(control, root = document.body, rosterNodes = null) {
+      // A slide component's arrow moves its track, not the adjacent roster.
+      // Require the initialized component tree; a class called "next" alone
+      // must never suppress an actual roster pagination control.
+      const slider = control.parentElement;
+      if (control.matches('button.slick-next,button.slick-prev')
+          && slider?.matches('.slick-slider.slick-initialized')) {
+        const track = slider.querySelector(':scope > .slick-list > .slick-track');
+        if (track && track.children.length >= 2
+            && [...track.children].every(n => n.matches('.slick-slide'))
+            && (!rosterNodes || !rosterNodes.some(n => slider.contains(n)))) return false;
+      }
+      if (control.relList?.contains('next')) return true;
+      for (let node = control; node && node !== root; node = node.parentElement) {
+        const tokens = [...node.classList, node.id || ''].join(' ');
+        if (/(?:^|[-_\s])(?:next|nextpage|pagination|pager|pages)(?:$|[-_\s])/i.test(tokens)
+            || (node.getAttribute('aria-label') || '').toLowerCase().includes('pagination')) return true;
+      }
+      return false;
+    },
+    pagination(selector = 'body', offset = 0, limit = 12, nativeDisabledOnly = false, rosterSelector = null) {
       const root = document.querySelector(selector);
       if (!root) return {error: 'container_empty', url: location.href};
-      const candidates = [...root.querySelectorAll('a,button')].filter(control => {
-        if (control.disabled || control.getAttribute('aria-disabled') === 'true') return false;
-        if (control.relList?.contains('next')) return true;
-        for (let node = control; node && node !== root; node = node.parentElement) {
-          const tokens = [...node.classList, node.id || ''].join(' ');
-          if (/(?:^|[-_\s])(?:next|nextpage|pagination|pager|pages)(?:$|[-_\s])/i.test(tokens)
-              || (node.getAttribute('aria-label') || '').toLowerCase().includes('pagination')) return true;
-        }
-        return false;
-      }).filter(n => n.getAttribute('aria-current') !== 'page').map(n => ({selector: path(n),
+      const rosterNodes = rosterSelector ? [...document.querySelectorAll(rosterSelector)] : null;
+      const candidates = [...root.querySelectorAll(nativeDisabledOnly ? 'a,button,input' : 'a,button')].filter(control => {
+        if (control.matches(':disabled') || (!nativeDisabledOnly && control.getAttribute('aria-disabled') === 'true')) return false;
+        return this.isPaginationControl(control, root, rosterNodes);
+      }).filter(n => nativeDisabledOnly || n.getAttribute('aria-current') !== 'page').map(n => ({selector: path(n),
         url: n.href || null, label: (n.textContent || '').trim().slice(0, 16)}));
       return page(candidates, offset, limit);
     },
     check(cardSelector, nextSelector = null) {
       const cards = [...document.querySelectorAll(cardSelector)];
+      const visible = node => {
+        if (!node.getClientRects().length) return false;
+        for (let n = node; n; n = n.parentElement) {
+          const style = getComputedStyle(n);
+          if (n.hidden || n.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+              || style.visibility === 'hidden' || style.visibility === 'collapse'
+              || style.contentVisibility === 'hidden' || Number(style.opacity) === 0) return false;
+        }
+        return true;
+      };
+      const visibleCards = cards.filter(visible);
       const next = nextSelector ? [...document.querySelectorAll(nextSelector)] : [];
-      return {url: location.href, cardCount: cards.length,
+      return {url: location.href, cardCount: cards.length, visibleCardCount: visibleCards.length,
+        hiddenCardCount: cards.length - visibleCards.length,
         sample: cards.length ? shape(cards[0]) : null,
         linkedSamples: [...new Set(cards.map(n => n.matches('a[href]') ? n.href : n.querySelector('a[href]')?.href)
           .filter(url => {if(!url || !/^https?:/.test(url))return false;

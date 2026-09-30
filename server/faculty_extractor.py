@@ -12,6 +12,7 @@ from typing import List, Dict, Optional, Set, Tuple, Any
 from collections import Counter
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag, NavigableString, Comment
+from server.dom_regions import is_noise_element
 
 import logging
 import os
@@ -26,9 +27,11 @@ log = logging.getLogger("faculty_extractor")
 _OPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Opus")
 if _OPUS_DIR not in sys.path:
     sys.path.insert(0, _OPUS_DIR)
+from name_labels import without_degree_annotation  # noqa: E402 (Opus is on sys.path)
+
 try:
     from iso_mining import (VirtualNode, first_href, mine_records, primary_tokens,
-                            rare_surname_name, strip_invisible)
+                            name_prob, rare_surname_name, strip_invisible)
     from email_matching import DomainConventionModel
     from text_lists import email_spans, _AT as _AT_PATTERN
     _AT_RE = re.compile(_AT_PATTERN)
@@ -71,15 +74,15 @@ _INTRODUCED_NAME = re.compile(
     + r")(?:个人简介|简介|介绍|个人主页|主页)$")
 
 try:
-    from server.detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer
+    from server.detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer, contact_email_candidates
     DETAIL_MECC_AVAILABLE = True
 except ImportError:
     try:
-        from detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer
+        from detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer, contact_email_candidates
         DETAIL_MECC_AVAILABLE = True
     except ImportError as _ex:
         log.warning("Detail MECC extractor unavailable: %s", _ex)
-        DetailMECCExtractor = ProfileDetail = LayoutAwareTokenizer = None
+        DetailMECCExtractor = ProfileDetail = LayoutAwareTokenizer = contact_email_candidates = None
         DETAIL_MECC_AVAILABLE = False
 
 _DEFAULT_L1_EXECUTOR = None
@@ -149,29 +152,13 @@ def is_institutional_email(email: str, scholar_name: str = "") -> bool:
         return not is_personal_email_for_scholar(email, scholar_name)
     return False
 
-def is_noise_element(tag: Tag) -> bool:
-    """Detects universal website chrome (header, footer, nav, sidebar, copyright)."""
-    if not isinstance(tag, Tag):
-        return False
-    if tag.name in PRUNE_TAGS:
-        return True
-    cls_str = " ".join(tag.get('class', [])).lower()
-    id_str = (tag.get('id') or "").lower()
-    combined = f"{cls_str} {id_str}"
-    if any(k in combined for k in ('footer', 'nav', 'menu', 'sidebar', 'copyright', 'bottom')):
-        return True
-    if 'header' in combined:
-        if not any(k in combined for k in ('profile', 'teacher', 'author', 'person', 'faculty')):
-            return True
-    return False
-
-
 @dataclass(frozen=True)
 class FacultyCandidate:
     name: str
     url: str
     title: str = "教师"
     card_context: str = ""
+    name_review_reason: str = ""
 
 @dataclass(frozen=True)
 class FacultyProfile:
@@ -180,6 +167,7 @@ class FacultyProfile:
     email: str
     full_bio: str
     emails: tuple = ()          # every address inside the content container, in order
+    contact_emails: tuple = ()
 
 class FacultyDirectoryExtractor:
     """
@@ -254,7 +242,7 @@ class FacultyDirectoryExtractor:
                 if title_found == "教师":
                     title_found = kw
                 return name[len(kw):].strip(), title_found
-        return name, title_found
+        return without_degree_annotation(name), title_found
 
     @classmethod
     def _l2_candidates(cls, html: str, base_url: str,
@@ -266,7 +254,11 @@ class FacultyDirectoryExtractor:
         - VirtualNode records (text lists) are first-class
         - records without a link are kept: url = list page (profile-less faculty)
         - dedupe key preserves homonyms: if profile link is missing, identity of head node prevents collapse"""
-        res = mine_records(BeautifulSoup(html, 'lxml'), page_url=base_url)
+        # Score the same name slot we will store. Otherwise an attached title
+        # makes a three-character name five characters long and suppresses its
+        # record before _clean_name is ever reached. Raw card text stays intact.
+        res = mine_records(BeautifulSoup(html, 'lxml'), page_url=base_url,
+                           name_fn=lambda token: name_prob(cls._clean_name(token)[0]))
         g = res.best
         if g is None or g.utility <= 0:
             return []
@@ -321,7 +313,7 @@ class FacultyDirectoryExtractor:
                 # evidence; unstructured text lists never receive this lift.
                 peers = sum(prob >= 0.5 for prob in grp.record_probs)
                 tokens = primary_tokens(r)
-                proposed = tokens[0] if tokens else ""
+                proposed = cls._clean_name(tokens[0])[0] if tokens else ""
                 structural_proof = (
                     not isinstance(r[0], VirtualNode)
                     and grp.size >= 4 and peers >= 3
@@ -367,10 +359,63 @@ class FacultyDirectoryExtractor:
 
     @classmethod
     def extract_with_review(cls, html: str,
-                            base_url: str) -> Tuple[List[FacultyCandidate], List[FacultyCandidate]]:
+                            base_url: str, *, card_selector: str | None = None
+                            ) -> Tuple[List[FacultyCandidate], List[FacultyCandidate]]:
         """Admitted candidates, and rare-surname names a person must confirm first."""
         review: List[FacultyCandidate] = []
+        if card_selector:
+            return cls._verified_card_candidates(html, base_url, card_selector)
         return cls.extract(html, base_url, review=review), review
+
+    @classmethod
+    def _verified_card_candidates(cls, html: str, base_url: str, selector: str):
+        """Account for each verified card; full-page mining cannot override its boundary."""
+        cards = BeautifulSoup(html, 'html.parser').select(selector)
+        if cards and all(card.name == 'img' for card in cards):
+            return cls.extract_with_review(html, base_url)
+        slots = []
+        for card in cards:
+            anchors = ([card] if card.name == 'a' else []) + card.find_all('a')
+            labels = []
+            for anchor in anchors:
+                raw = anchor.get_text(' ', strip=True)
+                if raw:
+                    href = first_href([anchor], base_url)
+                    labels.append((raw, href))
+                    labels.extend((token, href) for token in primary_tokens([anchor]))
+            labels.extend((token, None) for token in primary_tokens([card]))
+            linked_slots = {}
+            for raw, href in labels:
+                name, title = cls._clean_name(raw)
+                if href and name and name not in TITLE_KEYWORDS and name_prob(name) >= 0.5:
+                    linked_slots.setdefault((name, href), (name, title, href))
+            slot = None
+            for raw, href in labels:
+                name, title = cls._clean_name(raw)
+                if name and name not in TITLE_KEYWORDS and name_prob(name) >= 0.5:
+                    slot = (name, title, href)
+                    break
+            if slot is None and labels:
+                name, title = cls._clean_name(labels[0][0])
+                if name and name not in TITLE_KEYWORDS and len(name) <= 40:
+                    slot = (name, title, labels[0][1])
+            if slot is None:
+                continue
+            context = card.get_text(' ', strip=True)
+            for name, title, href in (list(linked_slots.values()) if len(linked_slots) > 1 else [slot]):
+                href = href or first_href([card], base_url)
+                if title == '教师':
+                    title = resolve_title(context)
+                reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'
+                slots.append((FacultyCandidate(name, href or base_url, title, context, reason), name_prob(name)))
+        trusted = sum(prob >= 0.5 for _, prob in slots)
+        linked = sum(person.url != base_url for person, _ in slots)
+        found, review = [], []
+        for person, prob in slots:
+            structural = (len(cards) >= 4 and trusted >= 3 and linked / len(cards) >= 0.8
+                          and person.url != base_url and bool(re.fullmatch(r'[\u4e00-\u9fff]{2,4}', person.name)))
+            (found if prob >= 0.5 or structural else review).append(person)
+        return found, review
 
     @classmethod
     def extract(
@@ -593,7 +638,7 @@ class LayoutAwareTokenizer:
     """Extracts text while strictly adhering to W3C physical CSS block boundaries."""
 
     @staticmethod
-    def get_clean_text(root: Tag) -> str:
+    def get_clean_text(root: Tag, *, preserve_content: bool = False) -> str:
         if not root:
             return ""
         tokens = []
@@ -622,7 +667,8 @@ class LayoutAwareTokenizer:
                         tokens.append('\n')
                 continue
 
-            if is_noise_element(curr):
+            if (curr.name in {'script', 'style', 'noscript', 'template'}
+                    or (not preserve_content and is_noise_element(curr))):
                 continue
 
             is_block = curr.name in BLOCK_ELEMENTS
@@ -659,19 +705,22 @@ class FacultyProfileExtractor:
     ]
 
     @classmethod
-    def extract(cls, html: str, base_url: str, fallback_name: str = "") -> FacultyProfile:
+    def extract(cls, html: str, base_url: str, fallback_name: str = "",
+                *, preserve_content: bool = False) -> FacultyProfile:
         if not html:
             return FacultyProfile(name=fallback_name, title="教师", email="", full_bio="")
 
         if DETAIL_MECC_AVAILABLE and DetailMECCExtractor is not None:
             try:
-                detail = DetailMECCExtractor.extract_single(html, base_url, fallback_name=fallback_name)
+                detail = DetailMECCExtractor.extract_single(
+                    html, base_url, fallback_name=fallback_name, preserve_content=preserve_content)
                 return FacultyProfile(
                     name=detail.name,
                     title=detail.title,
                     email=detail.email,
                     full_bio=detail.full_bio,
-                    emails=detail.emails
+                    emails=detail.emails,
+                    contact_emails=detail.contact_emails,
                 )
             except Exception as ex:
                 log.warning("DetailMECCExtractor.extract_single failed: %s; falling back", ex)
@@ -679,17 +728,18 @@ class FacultyProfileExtractor:
         soup = BeautifulSoup(html, 'html.parser')
 
         # Decompose universal chrome/footer zones that host institutional emails
-        for junk in soup(['script', 'style', 'noscript', 'svg', 'iframe', 'header', 'footer', 'nav']):
+        prune_tags = ['script', 'style', 'noscript', 'template'] if preserve_content else PRUNE_TAGS
+        for junk in soup(prune_tags):
             junk.decompose()
         for c in soup.find_all(string=lambda text: isinstance(text, Comment)):
             c.extract()
-        for junk_class in ['header', 'footer', 'nav', 'bottom', 'copyright']:
+        for junk_class in ([] if preserve_content else ['header', 'footer', 'nav', 'bottom', 'copyright']):
             for el in soup.find_all(class_=lambda c: c and junk_class in c.split()):
                 el.decompose()
 
         # Locate MECC (Minimal Enclosing Content Container)
         mecc = None
-        for sel in cls.CONTENT_SELECTORS:
+        for sel in ([] if preserve_content else cls.CONTENT_SELECTORS):
             mecc = soup.select_one(sel)
             if mecc:
                 break
@@ -697,12 +747,13 @@ class FacultyProfileExtractor:
             mecc = soup.body or soup
 
         # Extract text adhering to CSS block layout boundaries
-        full_bio = LayoutAwareTokenizer.get_clean_text(mecc)
+        full_bio = LayoutAwareTokenizer.get_clean_text(mecc, preserve_content=preserve_content)
 
         # Extract email strictly from the MECC text stream
         emails = [em for em in find_emails(full_bio)
                   if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))]
         valid_email = emails[0] if emails else ""
+        contacts = contact_email_candidates(mecc) if contact_email_candidates is not None else ()
 
         # Check for glued phone numbers (e.g. 0510-859112348843120007@...)
         if valid_email and DomainConventionModel:
@@ -729,7 +780,8 @@ class FacultyProfileExtractor:
             title=title,
             email=valid_email,
             full_bio=full_bio,
-            emails=tuple(emails)
+            emails=tuple(emails),
+            contact_emails=contacts,
         )
 
 
@@ -783,13 +835,15 @@ class FacultyHarvestPipeline:
         cands_on_page: List[FacultyCandidate],
         html: str,
         page_url: str,
-        dcm: Optional[DomainConventionModel] = None
+        dcm: Optional[DomainConventionModel] = None,
+        *, preserve_content: bool = False,
     ) -> Tuple[Dict[int, Dict[str, Any]], List[Dict[str, Any]]]:
         soup = BeautifulSoup(html, 'html.parser')
-        for tag_name in PRUNE_TAGS:
+        for tag_name in (['script', 'style', 'noscript', 'template'] if preserve_content else PRUNE_TAGS):
             for el in soup.find_all(tag_name):
                 el.decompose()
-        for el in soup.find_all(lambda t: is_noise_element(t) if isinstance(t, Tag) else False):
+        for el in ([] if preserve_content else
+                   soup.find_all(lambda t: is_noise_element(t) if isinstance(t, Tag) else False)):
             el.decompose()
 
         results = {}
@@ -805,7 +859,7 @@ class FacultyHarvestPipeline:
 
         for cand in cands_on_page:
             card = cand_cards.get(id(cand))
-            card_text = LayoutAwareTokenizer.get_clean_text(card) if card else ""
+            card_text = LayoutAwareTokenizer.get_clean_text(card, preserve_content=preserve_content) if card else ""
             card_emails = find_emails(card_text) if card_text else []
 
             matched_title = cand.title
@@ -860,11 +914,13 @@ class FacultyHarvestPipeline:
             }
 
         # Check page-level emails outside candidate exclusive cards
-        all_page_emails = [em.lower() for em in find_emails(LayoutAwareTokenizer.get_clean_text(soup))]
+        all_page_emails = [em.lower() for em in find_emails(
+            LayoutAwareTokenizer.get_clean_text(soup, preserve_content=preserve_content))]
         all_card_emails = set()
         for card in cand_cards.values():
             if card:
-                all_card_emails.update(em.lower() for em in find_emails(LayoutAwareTokenizer.get_clean_text(card)))
+                all_card_emails.update(em.lower() for em in find_emails(
+                    LayoutAwareTokenizer.get_clean_text(card, preserve_content=preserve_content)))
 
         uncontained_emails = [em for em in all_page_emails if em not in all_card_emails]
         for u_em in uncontained_emails:
@@ -906,6 +962,7 @@ class FacultyHarvestPipeline:
         agent_name: str = "Antigravity (IDE Agent)",
         date_str: str = "",
         profileless_urls: Optional[Set[str]] = None,
+        verified_profile_urls: Optional[Set[str]] = None,
     ) -> Dict:
         import datetime
         if not date_str:
@@ -960,7 +1017,8 @@ class FacultyHarvestPipeline:
         details_by_url = {}
         if successful_pages and DETAIL_MECC_AVAILABLE and DetailMECCExtractor is not None:
             try:
-                cluster_details = DetailMECCExtractor.extract_cluster(successful_pages)
+                cluster_details = DetailMECCExtractor.extract_cluster(
+                    successful_pages, scoped_urls=verified_profile_urls)
                 details_by_url = {d.url: d for d in cluster_details}
             except Exception as ex:
                 log.warning("DetailMECCExtractor.extract_cluster failed: %s; falling back", ex)
@@ -973,7 +1031,8 @@ class FacultyHarvestPipeline:
             for cand, html, status in fetch_results:
                 if status == "ok" and html:
                     single_profiles[cand.url] = FacultyProfileExtractor.extract(
-                        html, cand.url, fallback_name=cand.name
+                        html, cand.url, fallback_name=cand.name,
+                        preserve_content=cand.url in (verified_profile_urls or ())
                     )
 
             # detail-df fallback across single profiles
@@ -997,7 +1056,9 @@ class FacultyHarvestPipeline:
                 cands_on_page = [c for c in candidates if c.url == cand_url]
                 page_html = next((h for c, h, s in fetch_results if c.url == cand_url and s == "ok"), None)
                 if page_html:
-                    p_res, p_unres = cls._resolve_shared_page_candidates(cands_on_page, page_html, cand_url, dcm)
+                    p_res, p_unres = cls._resolve_shared_page_candidates(
+                        cands_on_page, page_html, cand_url, dcm,
+                        preserve_content=cand_url in (verified_profile_urls or ()))
                     shared_results_by_cand_id.update(p_res)
                     unresolved.extend(p_unres)
 
@@ -1032,6 +1093,17 @@ class FacultyHarvestPipeline:
                             break
 
                 # 2. Individual 1-to-1 profile page
+                contacts = tuple(prof.contact_emails) if prof else ()
+                if contacts:
+                    if len(contacts) != 1 or (email and email.lower() != contacts[0].lower()):
+                        unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                           "status": "ambiguous_email_assignment", "matches": list(contacts)})
+                    elif not email and contacts[0].lower() in assigned_emails:
+                        unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                           "status": "ambiguous_shared_email", "email": contacts[0]})
+                    elif not email:
+                        email = contacts[0]
+                        assigned_emails.add(email.lower())
                 if not email and prof:
                     cand_pool = []
                     if details_by_url and prof.email:
@@ -1040,11 +1112,14 @@ class FacultyHarvestPipeline:
                         if em not in cand_pool:
                             cand_pool.append(em)
 
-                    for em in cand_pool:
+                    for em in ([] if contacts else cand_pool):
                         if em.lower() not in assigned_emails and is_personal_email_for_scholar(em, cand.name):
                             email = em
                             assigned_emails.add(em.lower())
                             break
+                    if prof.emails and not email and not contacts:
+                        unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                           "status": "ambiguous_email_assignment", "matches": list(prof.emails)})
 
                 if email and dcm is not None:
                     try:

@@ -79,6 +79,21 @@ _PROBE = r"""async selectors => {
     const contained = Boolean(root && marker && root !== marker && root.contains(marker)
       && root !== document.body && root !== document.documentElement);
     const nodes = root ? [root, ...root.querySelectorAll('*')] : [];
+    const disabledPager = n => visible(n) && n.matches('button:disabled,input[type=button]:disabled,input[type=submit]:disabled,input[type=reset]:disabled')
+      && n.children.length === 0 && __facultyRecon.isPaginationControl(n)
+      && ![...n.attributes].some(a => /^on/i.test(a.name));
+    // Only inert controls and empty layout wrappers containing those controls
+    // are exempt. Hidden text, links, media and scripted wrappers remain content.
+    const inertPagerLayout = n => {
+      if (disabledPager(n)) return true;
+      const descendants=[...n.querySelectorAll('*')];
+      return descendants.length>0 && descendants.some(disabledPager)
+        && !n.matches('a,button,input,select,textarea,script,template,[contenteditable=true]')
+        && ![n,...descendants].some(p=>[...p.attributes].some(a=>/^on/i.test(a.name)))
+        && descendants.every(p=>disabledPager(p) || (p.children.length>0
+          && ![...p.childNodes].some(c=>c.nodeType===Node.TEXT_NODE && c.textContent.trim())))
+        && ![...n.childNodes].some(c=>c.nodeType===Node.TEXT_NODE && c.textContent.trim());
+    };
     let other = 0, media = 0, busy = 0;
     for (const n of nodes) {
       const style = getComputedStyle(n);
@@ -98,10 +113,10 @@ _PROBE = r"""async selectors => {
             && !['none','normal','""',"''"].includes(s.content)) other++;
       }
       if (n.getAttribute('aria-busy') === 'true') busy++;
-      if (n.matches('a[href],button,input,select,textarea,[contenteditable=true],script,template')) other++;
+      if (n.matches('a[href],button,input,select,textarea,[contenteditable=true],script,template') && !disabledPager(n)) other++;
       // Only the empty marker and its layout ancestors may occupy the container.
-      if (contained && n !== root && n !== marker && !n.contains(marker) && !marker.contains(n)) other++;
-      if (contained && !marker.contains(n) && n !== marker) {
+      if (contained && n !== root && n !== marker && !n.contains(marker) && !marker.contains(n) && !inertPagerLayout(n)) other++;
+      if (contained && !marker.contains(n) && n !== marker && !disabledPager(n)) {
         for (const child of n.childNodes)
           if (child.nodeType === Node.TEXT_NODE && child.textContent.trim()) other++;
       }
@@ -113,7 +128,7 @@ _PROBE = r"""async selectors => {
       marker_has_content: Boolean(marker && (marker.innerText || '').trim()),
       card_count: document.querySelectorAll(selectors.card_selector).length,
       other_content_count: other, media_count: media, busy_count: busy,
-      pagination_count: __facultyRecon.pagination().total,
+      pagination_count: __facultyRecon.pagination('body',0,12,true).total,
       ready: document.readyState === 'complete'};
   };
   const first = inspect();

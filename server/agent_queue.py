@@ -389,7 +389,8 @@ class AgentTaskQueue:
 
             # Verification of record uniqueness (一人一行: no duplicate person records)
             from server.faculty_identity import identity_review_issues
-            if identity_review_issues(records):
+            from server.identity_review import audit_pairs
+            if identity_review_issues(records, audit_pairs(records, stats, task_id)):
                 raise ValueError("person identity requires review for distinct profile URLs")
             seen_identities = set()
             for r in records:

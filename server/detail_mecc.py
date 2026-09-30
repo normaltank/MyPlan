@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
+from server.dom_regions import is_noise_element
 
 try:
     from server.titles import resolve_title
@@ -120,30 +121,11 @@ def is_institutional_email(email: str, scholar_name: str = "") -> bool:
         return not is_personal_email_for_scholar(email, scholar_name)
     return False
 
-def is_noise_element(tag: Tag) -> bool:
-    """Detects universal website chrome (header, footer, nav, sidebar, copyright)."""
-    if not isinstance(tag, Tag):
-        return False
-    if tag.name in PRUNE_TAGS:
-        return True
-    cls_str = " ".join(tag.get('class', [])).lower()
-    id_str = (tag.get('id') or "").lower()
-    combined = f"{cls_str} {id_str}"
-    # Footers, nav, sidebar, copyright, bottom are strictly noise regardless of 'profile'
-    if any(k in combined for k in ('footer', 'nav', 'menu', 'sidebar', 'copyright', 'bottom')):
-        return True
-    # Header is noise unless explicitly a profile/teacher/author container
-    if 'header' in combined:
-        if not any(k in combined for k in ('profile', 'teacher', 'author', 'person', 'faculty')):
-            return True
-    return False
-
-
 class LayoutAwareTokenizer:
     """Extracts text while strictly adhering to W3C physical CSS block boundaries."""
 
     @staticmethod
-    def get_clean_text(root: Tag) -> str:
+    def get_clean_text(root: Tag, *, preserve_content: bool = False) -> str:
         if not root:
             return ""
         tokens = []
@@ -177,7 +159,8 @@ class LayoutAwareTokenizer:
                         tokens.append('\n')
                 continue
 
-            if is_noise_element(curr):
+            if (curr.name in {'script', 'style', 'noscript', 'template'}
+                    or (not preserve_content and is_noise_element(curr))):
                 continue
 
             if is_block:
@@ -203,8 +186,31 @@ class ProfileDetail:
     email: str = ""
     full_bio: str = ""
     emails: Tuple[str, ...] = ()
+    contact_emails: Tuple[str, ...] = ()  # addresses explicitly labeled inside this person's content
     mecc_selector: str = ""
     status: str = "ok"  # 'ok', 'no_profile', 'fetch_failed'
+
+
+_CONTACT_FIELD = re.compile(r"^(?:(?:电子|联系)?(?:邮箱|邮件)|e-?mail)(?:\s*[:：]\s*|\s+|$)", re.I)
+
+
+def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
+    """Read positive contact-field evidence, without guessing from the local part."""
+    addresses = []
+    for node in [root, *root.find_all(['p', 'div', 'td', 'dd', 'span', 'a'])]:
+        # An outer container is not a contact field simply because its first
+        # paragraph is one; that would absorb addresses in the research prose.
+        if node.find(['p', 'div', 'table', 'section', 'article', 'li'], recursive=False):
+            continue
+        text = LayoutAwareTokenizer.get_clean_text(node, preserve_content=True)
+        label = node.find_previous_sibling(['th', 'dt']) if node.name in {'td', 'dd'} else None
+        labeled = bool(_CONTACT_FIELD.match(text) or (label and _CONTACT_FIELD.match(label.get_text(' ', strip=True))))
+        mailto = node.name == 'a' and str(node.get('href', '')).lower().startswith('mailto:')
+        if labeled or mailto:
+            addresses.extend(find_emails(text))
+    seen = set()
+    return tuple(address for address in addresses
+                 if not (address.lower() in seen or seen.add(address.lower())))
 
 
 def _find_lca(nodes: List[Tag]) -> Optional[Tag]:
@@ -322,14 +328,15 @@ class DetailMECCExtractor:
         return enclosing
 
     @classmethod
-    def extract_single(cls, html: str, page_url: str, fallback_name: str = "") -> ProfileDetail:
+    def extract_single(cls, html: str, page_url: str, fallback_name: str = "",
+                       *, preserve_content: bool = False) -> ProfileDetail:
         """Extract a single profile page without sibling context."""
         if not html or not html.strip():
             return ProfileDetail(name=fallback_name, url=page_url, status="no_profile")
 
         soup = BeautifulSoup(html, 'lxml')
-        mecc = cls._find_single_mecc(soup)
-        full_bio = LayoutAwareTokenizer.get_clean_text(mecc)
+        mecc = (soup.body or soup) if preserve_content else cls._find_single_mecc(soup)
+        full_bio = LayoutAwareTokenizer.get_clean_text(mecc, preserve_content=preserve_content)
         emails = [
             em for em in find_emails(full_bio)
             if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
@@ -348,7 +355,9 @@ class DetailMECCExtractor:
 
         target_name = name or fallback_name
         personal_emails = [em for em in emails if is_personal_email_for_scholar(em, target_name)]
-        valid_email = clean_email(personal_emails[0]) if personal_emails else ""
+        contact_emails = contact_email_candidates(mecc)
+        valid_email = (clean_email(contact_emails[0]) if len(contact_emails) == 1
+                       else clean_email(personal_emails[0]) if personal_emails and not contact_emails else "")
 
         return ProfileDetail(
             name=name or fallback_name,
@@ -357,11 +366,13 @@ class DetailMECCExtractor:
             email=valid_email,
             full_bio=full_bio,
             emails=tuple(emails),
+            contact_emails=contact_emails,
             status="ok"
         )
 
     @classmethod
-    def extract_cluster(cls, pages: List[Tuple[str, str, str]]) -> List[ProfileDetail]:
+    def extract_cluster(cls, pages: List[Tuple[str, str, str]],
+                        *, scoped_urls: Optional[Set[str]] = None) -> List[ProfileDetail]:
         """
         Extract a batch of sibling profile pages from the same department/college.
         pages: List of (url, html, fallback_name)
@@ -390,8 +401,10 @@ class DetailMECCExtractor:
                 continue
 
             siblings = [s for s in soups if s is not soup]
-            mecc = cls._find_cluster_mecc(soup, siblings) if siblings else cls._find_single_mecc(soup)
-            full_bio = LayoutAwareTokenizer.get_clean_text(mecc)
+            scoped = url in (scoped_urls or ())
+            mecc = ((soup.body or soup) if scoped else
+                    cls._find_cluster_mecc(soup, siblings) if siblings else cls._find_single_mecc(soup))
+            full_bio = LayoutAwareTokenizer.get_clean_text(mecc, preserve_content=scoped)
             raw_emails = [
                 em for em in find_emails(full_bio)
                 if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
@@ -405,6 +418,7 @@ class DetailMECCExtractor:
                 title=title,
                 full_bio=full_bio,
                 emails=tuple(raw_emails),
+                contact_emails=contact_email_candidates(mecc),
                 status="ok"
             ))
 
@@ -421,6 +435,8 @@ class DetailMECCExtractor:
                 valid = [em for em in d.emails if len(owners.get(em.lower(), set())) < 2]
                 # 2. Check scholar personal affinity
                 personal = [em for em in valid if is_personal_email_for_scholar(em, d.name)]
-                d.email = clean_email(personal[0]) if personal else ""
+                contacts = [em for em in d.contact_emails if len(owners.get(em.lower(), set())) < 2]
+                d.email = (clean_email(contacts[0]) if len(contacts) == 1 and len(d.contact_emails) == 1
+                           else clean_email(personal[0]) if personal and not d.contact_emails else "")
 
         return details
