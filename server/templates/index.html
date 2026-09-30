@@ -3,261 +3,347 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>高校师资采集平台 · 自动采集与大学交付</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <title>高校师资采集平台</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        .hidden { display: none !important; }
+/*base.css*/
+        /* 顶栏 */
+        .topbar { position: sticky; top: 0; z-index: 30; background: rgba(255,255,255,.92);
+                  backdrop-filter: saturate(1.4) blur(8px); border-bottom: 1px solid var(--border); }
+        .topbar-inner { max-width: 1240px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 16px; }
+        .brand { display: flex; align-items: center; gap: 10px; min-width: 0; margin-right: auto; }
+        .brand-name { font-weight: 700; font-size: 15.5px; line-height: 1.3; }
+        .brand-sub { color: var(--muted); font-size: 12px; }
+        .topbar-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .account { position: relative; }
+        .account > summary { list-style: none; display: flex; align-items: center; gap: 8px; height: 36px;
+                             padding: 0 8px 0 4px; border-radius: 999px; cursor: pointer; color: var(--text-2); }
+        .account > summary::-webkit-details-marker { display: none; }
+        .account > summary:hover, .account[open] > summary { background: var(--surface-2); }
+        .account > summary:focus-visible { outline: none; box-shadow: var(--ring); }
+        .avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+                  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; }
+        .account-panel { position: absolute; right: 0; top: calc(100% + 8px); width: 280px; padding: 16px;
+                         display: grid; gap: 10px; box-shadow: 0 12px 32px rgba(15,23,42,.12); }
+        .account-panel h3 { font-size: 13px; color: var(--muted); font-weight: 600; }
+        .account-panel hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+
+        /* 布局 */
+        /* minmax(0, 1fr)：列宽不被内容最小宽度撑开，宽表格在自己的框内滚动 */
+        .container { max-width: 1240px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+        .workspace { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; align-items: start; }
+        .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .card-head h2 { font-size: 16px; font-weight: 700; }
+        .section-title { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
+
+        /* 今日工作 */
+        .today { padding: 14px 20px; display: flex; align-items: center; gap: 12px 24px; flex-wrap: wrap; }
+        .today-label { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+        .today-controls { display: flex; gap: 6px; align-items: center; }
+        .today-controls .input { width: 150px; }
+        .today-summary { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--text-2); margin-right: auto; }
+        .kpi b { font-size: 17px; font-weight: 700; color: var(--text); margin: 0 1px; font-variant-numeric: tabular-nums; }
+        .kpi-bad b { color: var(--bad); }
+        .today-rows { flex-basis: 100%; overflow-x: auto; }
+        .today-rows .table { max-width: 760px; }
+        .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .table th, .table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+        .table th { color: var(--muted); font-weight: 600; background: var(--surface-2); }
+        .table td.n, .table th.n { text-align: right; font-variant-numeric: tabular-nums; }
+
+        /* 新建采集 */
+        .composer { padding: 20px; display: grid; gap: 18px; }
+        .segmented { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; gap: 4px; border-radius: 10px; background: #eaeef3; }
+        .segmented button { display: flex; align-items: center; justify-content: center; gap: 6px; height: 34px;
+                            border: 0; border-radius: 7px; background: transparent; color: var(--muted);
+                            font: inherit; font-weight: 600; cursor: pointer; }
+        .segmented button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(15,23,42,.1); }
+        .segmented button:focus-visible { outline: none; box-shadow: var(--ring); }
+        .form { display: grid; gap: 14px; }
+        .req { color: var(--bad); margin-left: 2px; }
+        .field-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .field-foot { display: flex; justify-content: space-between; gap: 12px; }
+        .how { border-top: 1px dashed var(--border); padding-top: 14px; }
+        .steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: step; }
+        .steps li { display: flex; gap: 10px; color: var(--text-2); font-size: 13px; }
+        .steps li::before { counter-increment: step; content: counter(step); flex: none; display: grid; place-items: center;
+                            width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; background: var(--accent-soft);
+                            color: var(--accent); font-size: 11.5px; font-weight: 700; }
+
+        /* 采集进度 */
+        .monitor { padding: 20px; display: grid; gap: 16px; }
+        .monitor-context { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+                           margin-top: -6px; color: var(--muted); font-size: 13px; }
+        .monitor-actions { display: flex; gap: 2px; }
+        .history { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); padding: 10px; }
+        .history-head { display: flex; gap: 8px; align-items: baseline; font-weight: 600; font-size: 13px; margin: 0 4px 8px; }
+        .history-list { display: grid; gap: 6px; max-height: 280px; overflow-y: auto; }
+        .history-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; text-align: left;
+                        border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+                        color: var(--text); font: inherit; cursor: pointer; }
+        .history-item:hover { border-color: var(--accent-line); background: var(--accent-soft); }
+        .history-item:focus-visible { outline: none; box-shadow: var(--ring); }
+        .history-main { min-width: 0; flex: 1; }
+        .history-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .history-meta { color: var(--muted); font-size: 12px; }
+        .history-more { justify-self: center; }
+        .history-note { color: var(--muted); font-size: 13px; padding: 6px 4px; }
+        .progress-meta { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 8px; color: var(--text-2); }
+        .percent { font-weight: 700; font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .progress { height: 8px; border-radius: 999px; background: #e8edf3; overflow: hidden; }
+        .progress-bar { height: 100%; border-radius: inherit; background: var(--accent); transition: width .5s ease; }
+
+        .result { display: grid; gap: 10px; }
+        .result-status { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 1px solid; border-radius: var(--radius-sm); }
+        .result-status[data-tone="success"] { background: var(--ok-soft); border-color: var(--ok-line); }
+        .result-status[data-tone="warn"] { background: var(--warn-soft); border-color: var(--warn-line); }
+        .result-status[data-tone="danger"] { background: var(--bad-soft); border-color: var(--bad-line); }
+        .result-status .icon[data-tone="success"] { color: var(--ok); }
+        .result-status .icon[data-tone="warn"] { color: var(--warn); }
+        .result-status .icon[data-tone="danger"] { color: var(--bad); }
+        .result-title { font-weight: 700; }
+        .result-summary { color: var(--text-2); font-size: 13px; }
+        .downloads { display: grid; gap: 8px; }
+        .downloads:empty { display: none; }
+        .download-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border);
+                        border-radius: var(--radius-sm); background: var(--surface); color: var(--text); }
+        .download-row:hover { text-decoration: none; border-color: var(--ok-line); background: var(--ok-soft); }
+        .download-row > .icon:first-child { color: var(--ok); }
+        .download-main { min-width: 0; flex: 1; }
+        .download-name { font-weight: 600; }
+        .download-meta { color: var(--muted); font-size: 12px; }
+        .download-count { color: var(--ok); font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+
+        .subtask-list { display: grid; gap: 6px; max-height: 360px; overflow-y: auto; }
+        .subtask { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px;
+                   border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+        .subtask-name { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+        .subtask-college { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .subtask-school { color: var(--muted); font-size: 12px; white-space: nowrap; }
+        .subtask-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+        .subtask-actions a { font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+
+        .log { max-height: 300px; overflow-y: auto; padding: 4px 14px; border: 1px solid var(--border);
+               border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted); font-size: 13px; }
+        .log:not(:has(.log-entry)) { padding: 12px 14px; }
+        .log-entry { position: relative; padding: 10px 0 10px 16px; border-bottom: 1px solid var(--border); color: var(--text); }
+        .log-entry:last-child { border-bottom: 0; }
+        .log-entry::before { content: ""; position: absolute; left: 0; top: 17px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+        .log-meta { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); }
+        .log-phase { font-weight: 600; color: var(--accent); }
+        .log-meta time { font-family: var(--mono); }
+        .log-action { color: var(--ok); font-size: 12.5px; }
+
+        /* 账号管理 */
+        .admin { padding: 20px; display: grid; gap: 12px; }
+        .admin-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 110px auto; gap: 8px; }
+
+        .footer { max-width: 1240px; margin: 0 auto; padding: 4px 20px 28px; color: var(--muted); font-size: 12px; text-align: center; }
+
+        @media (max-width: 1023px) {
+            .workspace { grid-template-columns: minmax(0, 1fr); }
+            .admin-form { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 640px) {
+            .topbar-inner { flex-wrap: wrap; padding: 10px 16px; gap: 8px 12px; }
+            .brand-sub, .account-name { display: none; }
+            .topbar-status { order: 3; flex-basis: 100%; }
+            .container { padding: 14px 16px; gap: 14px; }
+            .today { padding: 12px 16px; }
+            .composer, .monitor, .admin { padding: 16px; }
+            .admin-form { grid-template-columns: 1fr; }
+            .subtask { flex-wrap: wrap; }
+        }
     </style>
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-800">
-    <!-- Header -->
-    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-600 flex items-center justify-center text-white shadow-md">
-                    <i class="fa-solid fa-robot text-xl"></i>
-                </div>
+<body>
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+        <symbol id="i-logo" viewBox="0 0 24 24"><path d="M3 21h18M5 21V11M9.5 21V11M14.5 21V11M19 21V11M2.5 11 12 4.5 21.5 11z"/></symbol>
+        <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7zM2 17l10 5 10-5M2 12l10 5 10-5"/></symbol>
+        <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M4 19h16"/></symbol>
+        <symbol id="i-sheet" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8.5 12.5h7M8.5 16.5h7M12 12.5v4"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.7 2.7L16 9.5"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></symbol>
+        <symbol id="i-review" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H3"/></symbol>
+    </svg>
+
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">
+                <span class="brand-mark"><svg class="icon"><use href="#i-logo"/></svg></span>
                 <div>
-                    <div class="flex items-center space-x-2">
-                        <h1 class="text-xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">高校师资采集平台</h1>
-                        <span class="px-2 py-0.5 text-[11px] font-bold bg-indigo-100 text-indigo-700 rounded-md">自动采集</span>
-                    </div>
-                    <p class="text-xs text-slate-500">按学院采集 · 完整正文保留 · 按大学审核交付</p>
+                    <div class="brand-name">高校师资采集平台</div>
+                    <div class="brand-sub">按学院采集 · 按大学交付</div>
                 </div>
             </div>
-            <div class="flex items-center space-x-3">
-                <span id="queueStatsPill" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                    <i class="fa-solid fa-layer-group text-slate-500 mr-1.5"></i>
-                    <span id="queueStatsText">正在读取队列</span>
-                </span>
-                <span id="agentPill" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    <span id="workerStatusText">正在检查后台</span>
-                </span>
-                <span id="accountLabel" class="text-xs text-slate-600">正在读取账号</span>
-                <button onclick="logoutAccount()" class="text-xs font-semibold text-indigo-700">退出</button>
+            <div class="topbar-status">
+                <span id="agentPill" class="pill pill-dot" data-tone="neutral"><span id="workerStatusText">正在检查后台</span></span>
+                <span id="queueStatsPill" class="pill" title="全部工单的队列状态"><span id="queueStatsText" class="num">正在读取队列</span></span>
             </div>
+            <details class="account">
+                <summary aria-label="账号菜单">
+                    <span id="accountAvatar" class="avatar">·</span>
+                    <span id="accountLabel" class="account-name">正在读取账号</span>
+                    <svg class="icon"><use href="#i-chevron"/></svg>
+                </summary>
+                <div class="account-panel card">
+                    <h3>修改我的密码</h3>
+                    <input id="oldPassword" class="input" type="password" autocomplete="current-password" placeholder="当前密码">
+                    <input id="changedPassword" class="input" type="password" autocomplete="new-password" placeholder="新密码（至少 12 位）">
+                    <button type="button" class="btn btn-primary" onclick="changeMyPassword()">保存新密码</button>
+                    <p id="passwordStatus" class="hint"></p>
+                    <hr>
+                    <button type="button" class="btn btn-secondary" onclick="logoutAccount()"><svg class="icon"><use href="#i-logout"/></svg>退出登录</button>
+                </div>
+            </details>
         </div>
     </header>
 
-    <!-- Main Container -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        <details class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm mb-5">
-            <summary class="text-sm font-semibold cursor-pointer">修改我的密码</summary>
-            <div class="flex flex-wrap gap-2 mt-3">
-                <input id="oldPassword" type="password" autocomplete="current-password" placeholder="当前密码" class="border rounded-lg px-2 py-1.5 text-sm">
-                <input id="changedPassword" type="password" autocomplete="new-password" placeholder="新密码（至少12位）" class="border rounded-lg px-2 py-1.5 text-sm">
-                <button onclick="changeMyPassword()" class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm">保存新密码</button>
+    <main class="container">
+        <section class="today card" aria-label="今日工作">
+            <div class="today-label"><svg class="icon"><use href="#i-chart"/></svg>工作统计</div>
+            <div id="dailySummary" class="today-summary">正在读取</div>
+            <div class="today-controls">
+                <input id="reportDay" type="date" class="input input-sm" aria-label="统计日期" onchange="loadDailyReport()">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="loadDailyReport()">查看</button>
             </div>
-            <p id="passwordStatus" class="text-xs mt-2 text-slate-500"></p>
-        </details>
-        <section class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm mb-5">
-            <div class="flex flex-wrap items-center gap-3">
-                <span class="font-semibold text-sm">每日工作统计</span>
-                <input id="reportDay" type="date" class="border border-slate-300 rounded-lg px-2 py-1 text-sm">
-                <button onclick="loadDailyReport()" class="text-sm font-semibold text-indigo-700">查看</button>
-                <span id="dailySummary" class="text-xs text-slate-600">正在读取</span>
-            </div>
-            <div id="employeeDailyRows" class="hidden mt-3 text-xs text-slate-700 space-y-1"></div>
+            <div id="employeeDailyRows" class="today-rows hidden"></div>
         </section>
-        <section id="adminUsers" class="hidden bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm mb-5">
-            <div class="font-semibold text-sm mb-2">管理员 · 创建员工账号</div>
-            <a href="/review/legacy" class="text-xs font-semibold text-indigo-700">查看历史图片复核材料</a>
-            <div class="flex flex-wrap gap-2">
-                <input id="newUsername" autocomplete="off" placeholder="登录名（小写英文）" class="border rounded-lg px-2 py-1.5 text-sm">
-                <input id="newDisplayName" autocomplete="off" placeholder="员工姓名" class="border rounded-lg px-2 py-1.5 text-sm">
-                <input id="newPassword" type="password" autocomplete="new-password" placeholder="初始密码（至少12位）" class="border rounded-lg px-2 py-1.5 text-sm">
-                <select id="newRole" class="border rounded-lg px-2 py-1.5 text-sm"><option value="employee">员工</option><option value="admin">管理员</option></select>
-                <button onclick="createAccount()" class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm">创建</button>
-            </div>
-            <p id="createAccountStatus" class="text-xs mt-2 text-slate-500"></p>
-        </section>
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            
-            <!-- Left Form Area (7 Cols) -->
-            <div class="lg:col-span-7 space-y-6">
-                <!-- Info Banner -->
-                <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-500/15">
-                    <div class="flex items-center justify-between mb-2">
-                        <h2 class="text-lg font-bold flex items-center">
-                            <i class="fa-solid fa-microchip mr-2"></i> 提交学院，后台自动接单
-                        </h2>
-                        <span class="px-2 py-0.5 bg-white/20 text-xs font-medium rounded-full backdrop-blur-sm">真实浏览器</span>
-                    </div>
-                    <p class="text-indigo-100 text-sm leading-relaxed">
-                        每个学院独立采集：后台通过 dsh 与 DeepSeek 核实名录、分页和正文范围，使用真实浏览器访问页面，由确定性程序提取教师资料与完整简介。已验证的方案可复用；访问失败或信息冲突会明确显示，全部目标学院通过审核后提供大学 Excel。
-                    </p>
+
+        <div class="workspace">
+            <section class="card composer" aria-labelledby="composerTitle">
+                <div class="card-head"><h2 id="composerTitle">新建采集</h2></div>
+                <div class="segmented" role="tablist" aria-label="提交方式">
+                    <button id="tabSingle" type="button" role="tab" aria-selected="true" aria-controls="singleCard" onclick="switchTab('single')">
+                        <svg class="icon"><use href="#i-target"/></svg>单个学院</button>
+                    <button id="tabBatch" type="button" role="tab" aria-selected="false" aria-controls="batchCard" onclick="switchTab('batch')">
+                        <svg class="icon"><use href="#i-layers"/></svg>批量学院</button>
                 </div>
 
-                <!-- Mode Switch Tabs -->
-                <div class="flex bg-slate-200/80 p-1.5 rounded-xl text-sm font-semibold">
-                    <button id="tabSingle" onclick="switchTab('single')" class="flex-1 py-2 rounded-lg bg-white text-indigo-700 shadow-sm transition-all flex items-center justify-center space-x-2">
-                        <i class="fa-solid fa-crosshairs"></i>
-                        <span>单学院极速派发</span>
+                <form id="singleCard" class="form" role="tabpanel" novalidate onsubmit="event.preventDefault(); startSingleCollect();">
+                    <label class="field">
+                        <span class="field-label">高校全称<span class="req">*</span></span>
+                        <input type="text" id="schoolInput" class="input" placeholder="例如：华东师范大学" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span class="field-label">二级学院全称<span class="req">*</span></span>
+                        <input type="text" id="collegeInput" class="input" placeholder="例如：地理科学学院" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span class="field-label">学院官网或师资名录网址<span class="req">*</span></span>
+                        <input type="url" id="urlInput" class="input" placeholder="https://geo.ecnu.edu.cn/" autocomplete="off" inputmode="url">
+                        <span class="hint">填学院首页即可，后台会自己找到师资名录。</span>
+                    </label>
+                    <p id="singleError" class="form-error hidden" role="alert"></p>
+                    <button id="startSingleBtn" type="submit" class="btn btn-primary btn-lg btn-block">
+                        <svg class="icon"><use href="#i-send"/></svg><span>提交采集请求</span>
                     </button>
-                    <button id="tabBatch" onclick="switchTab('batch')" class="flex-1 py-2 rounded-lg text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center space-x-2">
-                        <i class="fa-solid fa-network-wired"></i>
-                        <span>批量提交学院任务</span>
+                </form>
+
+                <form id="batchCard" class="form hidden" role="tabpanel" novalidate onsubmit="event.preventDefault(); startBatchCollect();">
+                    <div class="field">
+                        <div class="field-row">
+                            <label class="field-label" for="batchInput">每行一个学院：高校 学院 官网网址</label>
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="insertSixCollegesExample()">填入示例</button>
+                        </div>
+                        <textarea id="batchInput" rows="8" class="input" oninput="updateBatchCount()" placeholder="复旦大学 哲学学院 https://philosophy.fudan.edu.cn/&#10;同济大学 环境科学与工程学院 https://sese.tongji.edu.cn/&#10;华东师范大学 地理科学学院 https://geo.ecnu.edu.cn/"></textarea>
+                        <div class="field-foot">
+                            <span class="hint">三项用空格分隔，都必须填写。</span>
+                            <span id="batchCount" class="hint num">0 个学院</span>
+                        </div>
+                    </div>
+                    <p id="batchError" class="form-error hidden" role="alert"></p>
+                    <button id="startBatchBtn" type="submit" class="btn btn-primary btn-lg btn-block">
+                        <svg class="icon"><use href="#i-layers"/></svg><span>提交批量采集请求</span>
                     </button>
+                </form>
+
+                <div class="how">
+                    <div class="section-title">提交之后</div>
+                    <ol class="steps">
+                        <li>后台自动接单，每个学院单独用真实浏览器核实名录与翻页。</li>
+                        <li>逐人访问个人主页，完整保留简介原文，不经 AI 改写。</li>
+                        <li>目标学院全部通过审核后，按大学生成双 Sheet Excel 供下载。</li>
+                    </ol>
+                </div>
+            </section>
+
+            <section class="card monitor" aria-labelledby="monitorTitle">
+                <div class="card-head">
+                    <h2 id="monitorTitle">采集进度</h2>
+                    <span id="taskBadge" class="pill pill-dot" data-tone="neutral" role="status">待提交</span>
+                </div>
+                <div class="monitor-context">
+                    <span id="requestContext">本次采集 · 尚未提交</span>
+                    <div class="monitor-actions">
+                        <button id="historyToggle" type="button" class="btn btn-ghost btn-sm" onclick="toggleHistory()" aria-controls="historyPanel">
+                            <svg class="icon"><use href="#i-clock"/></svg>历史工单</button>
+                        <button id="newRequestBtn" type="button" class="btn btn-ghost btn-sm" onclick="resetCurrentView()">
+                            <svg class="icon"><use href="#i-plus"/></svg>新建采集</button>
+                    </div>
+                </div>
+                <div id="historyPanel" class="history hidden">
+                    <div class="history-head">最近工单<span class="hint">点击查看结果，不会重新采集</span></div>
+                    <div id="historyList" class="history-list"></div>
                 </div>
 
-                <!-- Single Mode Card -->
-                <div id="singleCard" class="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm space-y-5">
-                    <div class="border-b border-slate-100 pb-3 flex items-center justify-between">
-                        <h3 class="font-bold text-slate-800 text-sm flex items-center">
-                            <i class="fa-solid fa-file-signature text-indigo-500 mr-2"></i> 单学院任务工单
-                        </h3>
-                        <span class="text-xs text-slate-400">可填写学院官网首页，由后台查找师资名录</span>
+                <div>
+                    <div class="progress-meta">
+                        <span id="stepText">填写左侧学院信息后提交采集请求</span>
+                        <span id="percentText" class="percent">0%</span>
                     </div>
+                    <div class="progress" role="progressbar" aria-label="采集进度"><div id="progressBar" class="progress-bar" style="width: 0%"></div></div>
+                </div>
 
-                    <div class="space-y-4">
+                <div id="resultArea" class="result hidden" aria-live="polite">
+                    <div id="resultStatusCard" class="result-status" data-tone="success">
+                        <svg id="resultStatusIcon" class="icon icon-lg" data-tone="success"><use href="#i-check"/></svg>
                         <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1">高校全称 <span class="text-red-500">*</span></label>
-                            <input type="text" id="schoolInput" placeholder="例如：华东师范大学" 
-                                class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1">二级学院全称 <span class="text-red-500">*</span></label>
-                            <input type="text" id="collegeInput" placeholder="例如：地理科学学院" 
-                                class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1">学院官网或师资列表 URL <span class="text-red-500">*</span></label>
-                            <input type="url" id="urlInput" placeholder="例如：https://geo.ecnu.edu.cn/" 
-                                class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
+                            <div class="result-title">交付状态</div>
+                            <div id="statSummary" class="result-summary">全库入库 0 位 | 有邮箱 0 位</div>
                         </div>
                     </div>
-
-                    <div class="pt-2">
-                        <button id="startSingleBtn" onclick="startSingleCollect()" 
-                            class="w-full py-3.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-sm shadow-md shadow-indigo-600/20 transition-all flex items-center justify-center space-x-2">
-                            <i class="fa-solid fa-paper-plane"></i>
-                            <span>提交采集请求</span>
-                        </button>
-                    </div>
+                    <div id="univDownloadBox" class="downloads"></div>
+                    <a id="reviewBtn" href="#" class="btn btn-warn btn-lg btn-block hidden">
+                        <svg class="icon"><use href="#i-review"/></svg>人工复核：图片文字、邮箱与生僻姓名</a>
+                    <a id="downloadBtn" href="#" class="btn btn-success btn-lg btn-block">
+                        <svg class="icon"><use href="#i-download"/></svg><span id="downloadBtnText">下载交付标准表</span></a>
                 </div>
 
-                <!-- Batch Mode Card -->
-                <div id="batchCard" class="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm space-y-5 hidden">
-                    <div class="border-b border-slate-100 pb-3 flex items-center justify-between">
-                        <h3 class="font-bold text-slate-800 text-sm flex items-center">
-                            <i class="fa-solid fa-list-check text-indigo-500 mr-2"></i> 批量并发工单池
-                        </h3>
-                        <button onclick="insertSixCollegesExample()" class="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg font-semibold transition-all">
-                            <i class="fa-solid fa-bolt mr-1 text-amber-500"></i>填入 6 所示范学院 (测试并发)
-                        </button>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-semibold text-slate-700 mb-1">每行一所学院 (格式：高校 学院 官网入口)；三项均必填：</label>
-                        <textarea id="batchInput" rows="7" placeholder="复旦大学 哲学学院 https://philosophy.fudan.edu.cn/&#10;同济大学 环境科学与工程学院 https://sese.tongji.edu.cn/&#10;华东师范大学 地理科学学院 https://geo.ecnu.edu.cn/&#10;上海外国语大学 国际金融贸易学院 https://sft.shisu.edu.cn/&#10;上海大学 计算机工程与科学学院 https://cs.shu.edu.cn/&#10;上海师范大学 环境与地理科学学院 https://segs.shnu.edu.cn/25639/list.htm" 
-                            class="w-full p-4 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-xs leading-relaxed"></textarea>
-                    </div>
-
-                    <div class="pt-2">
-                        <button id="startBatchBtn" onclick="startBatchCollect()" 
-                            class="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:opacity-95 active:opacity-90 text-white font-bold text-sm shadow-md shadow-indigo-600/20 transition-all flex items-center justify-center space-x-2">
-                            <i class="fa-solid fa-rocket"></i>
-                            <span>提交批量采集请求</span>
-                        </button>
-                    </div>
+                <div id="subtaskCardBox" class="hidden">
+                    <div class="section-title">各学院进度</div>
+                    <div id="subtaskList" class="subtask-list"></div>
                 </div>
 
-                <!-- Feature Badges -->
-                <div class="grid grid-cols-3 gap-3">
-                    <div class="bg-white p-4 rounded-xl border border-slate-200/60 text-center shadow-xs">
-                        <i class="fa-solid fa-users-gear text-indigo-500 text-lg mb-1"></i>
-                        <div class="text-xs font-bold text-slate-700">学院独立采集</div>
-                        <div class="text-[11px] text-slate-400">每个学院独立采集</div>
-                    </div>
-                    <div class="bg-white p-4 rounded-xl border border-slate-200/60 text-center shadow-xs">
-                        <i class="fa-solid fa-file-pdf text-purple-500 text-lg mb-1"></i>
-                        <div class="text-xs font-bold text-slate-700">断点与方案复用</div>
-                        <div class="text-[11px] text-slate-400">页面保存 · 本轮重新核验</div>
-                    </div>
-                    <div class="bg-white p-4 rounded-xl border border-slate-200/60 text-center shadow-xs">
-                        <i class="fa-solid fa-table text-emerald-500 text-lg mb-1"></i>
-                        <div class="text-xs font-bold text-slate-700">双 Sheet 守恒交付</div>
-                        <div class="text-[11px] text-slate-400">自动合并跨院全量总表</div>
-                    </div>
+                <div>
+                    <div class="section-title">执行记录与审计反馈</div>
+                    <div id="thoughtBox" class="log">提交后显示本次任务进度。已结束的旧任务可从“历史工单”查看。</div>
                 </div>
-            </div>
-
-            <!-- Right Status Area (5 Cols) -->
-            <div class="lg:col-span-5 space-y-6">
-                <!-- Monitor Card -->
-                <div class="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm flex flex-col h-full">
-                    <div class="border-b border-slate-100 pb-3 flex items-center justify-between">
-                        <h3 class="font-bold text-slate-800 text-base flex items-center">
-                            <i class="fa-solid fa-terminal text-indigo-500 mr-2"></i> 采集进度
-                        </h3>
-                        <span id="taskBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">待提交</span>
-                    </div>
-
-                    <div class="pt-3 text-xs text-slate-500 flex items-center justify-between gap-2">
-                        <span id="requestContext">本次采集 · 尚未提交</span>
-                        <div class="flex gap-3 shrink-0">
-                            <button id="historyToggle" onclick="toggleHistory()" class="text-indigo-700">历史工单</button>
-                            <button id="newRequestBtn" onclick="resetCurrentView()" class="text-indigo-700">新建采集</button>
-                        </div>
-                    </div>
-                    <div id="historyPanel" class="hidden mt-3 p-3 border border-slate-200 rounded-xl">
-                        <p class="text-xs text-slate-500 mb-2">最近工单；点击查看不会重新采集。</p>
-                        <div id="historyList" class="space-y-2 max-h-48 overflow-y-auto"></div>
-                    </div>
-                    <div class="py-4 space-y-3">
-                        <div class="flex justify-between text-xs text-slate-500 font-medium">
-                            <span id="stepText">填写左侧学院信息后提交采集请求</span>
-                            <span id="percentText">0%</span>
-                        </div>
-                        <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                            <div id="progressBar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
-                        </div>
-                    </div>
-
-                    <!-- Subtask Status Grid (for Batch Mode) -->
-                    <div id="subtaskCardBox" class="hidden mb-3 space-y-2 max-h-48 overflow-y-auto pr-1">
-                        <div class="text-xs font-semibold text-slate-500">并发学院进度卡片</div>
-                        <div id="subtaskList" class="space-y-1.5"></div>
-                    </div>
-
-                    <!-- Agent Thoughts Stream -->
-                    <div class="flex-1 flex flex-col min-h-[260px]">
-                        <div class="text-xs font-semibold text-slate-400 mb-1 flex items-center justify-between">
-                            <span>执行记录与审计反馈</span>
-                            <i class="fa-solid fa-brain text-indigo-400"></i>
-                        </div>
-                        <div id="thoughtBox" class="bg-slate-900 text-slate-200 p-3.5 rounded-xl font-mono text-xs overflow-y-auto max-h-64 flex-1 space-y-2">
-                            <div class="text-slate-500">提交后显示本次任务进度。已结束的旧任务可从“历史工单”查看。</div>
-                        </div>
-                    </div>
-
-                    <!-- Result Action Area -->
-                    <div id="resultArea" class="mt-5 pt-4 border-t border-slate-100 hidden space-y-3">
-                        <div id="resultStatusCard" class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center justify-between">
-                            <div>
-                                <div class="text-xs font-bold text-slate-800">任务结果与交付状态</div>
-                                <div id="statSummary" class="text-[11px] text-emerald-600">全库入库 0 位 | 有邮箱 0 位</div>
-                            </div>
-                            <i id="resultStatusIcon" class="fa-solid fa-circle-check text-emerald-500 text-2xl"></i>
-                        </div>
-                        <div id="univDownloadBox" class="space-y-2"></div>
-                        <a id="reviewBtn" href="#" class="hidden w-full py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm text-center">人工复核：图片文字、邮箱与生僻姓名</a>
-                        <a id="downloadBtn" href="#" 
-                            class="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-600/20 flex items-center justify-center space-x-2 transition-all">
-                            <i class="fa-solid fa-file-excel"></i>
-                            <span id="downloadBtnText">下载交付标准表</span>
-                        </a>
-                    </div>
-                </div>
-            </div>
-
+            </section>
         </div>
+
+        <section id="adminUsers" class="card admin hidden" aria-labelledby="adminTitle">
+            <div class="card-head">
+                <h2 id="adminTitle">账号管理</h2>
+                <a href="/review/legacy">查看历史复核材料</a>
+            </div>
+            <div class="admin-form">
+                <input id="newUsername" class="input" autocomplete="off" placeholder="登录名（小写英文）" aria-label="登录名">
+                <input id="newDisplayName" class="input" autocomplete="off" placeholder="员工姓名" aria-label="员工姓名">
+                <input id="newPassword" class="input" type="password" autocomplete="new-password" placeholder="初始密码（至少 12 位）" aria-label="初始密码">
+                <select id="newRole" class="input" aria-label="角色"><option value="employee">员工</option><option value="admin">管理员</option></select>
+                <button type="button" class="btn btn-primary" onclick="createAccount()">创建账号</button>
+            </div>
+            <p id="createAccountStatus" class="hint"></p>
+        </section>
     </main>
+    <footer class="footer">采集单位是学院，交付单位是大学 · 简介保留原文 · 有邮箱与无邮箱两张表合计等于已采集人数</footer>
 
     <script>
         let currentUser = null;
@@ -271,6 +357,23 @@
 
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
+        }
+
+        function icon(name) {
+            return `<svg class="icon"><use href="#i-${name}"/></svg>`;
+        }
+
+        function setBadge(text, tone = 'neutral', busy = false) {
+            const badge = document.getElementById('taskBadge');
+            badge.innerText = text;
+            badge.dataset.tone = tone;
+            badge.toggleAttribute('data-busy', busy);
+        }
+
+        function showError(id, message) {
+            const box = document.getElementById(id);
+            box.textContent = message || '';
+            box.classList.toggle('hidden', !message);
         }
 
         function requestKey() {
@@ -291,7 +394,7 @@
             document.getElementById('changedPassword').value = '';
             if (response.ok) { location.reload(); return; }
             const result = await response.json();
-            document.getElementById('passwordStatus').innerText = result.detail || '修改失败';
+            document.getElementById('passwordStatus').innerText = typeof result.detail === 'string' ? result.detail : '修改失败';
         }
 
         async function loadDailyReport() {
@@ -299,11 +402,19 @@
             const response = await fetch(`/api/reports/daily?day=${encodeURIComponent(day)}`);
             if (!response.ok) return;
             const report = await response.json();
-            document.getElementById('dailySummary').innerText = `提交 ${report.submitted_colleges} 个学院 · 完成 ${report.completed_colleges} 个学院 · 交付 ${report.delivered_record_rows} 条教师记录 · 失败 ${report.failed_colleges} 个学院`;
+            document.getElementById('dailySummary').innerHTML =
+                `<span class="kpi">提交 <b>${report.submitted_colleges}</b> 个学院</span>`
+                + `<span class="kpi">完成 <b>${report.completed_colleges}</b> 个学院</span>`
+                + `<span class="kpi">交付 <b>${report.delivered_record_rows}</b> 条教师记录</span>`
+                + `<span class="kpi${report.failed_colleges ? ' kpi-bad' : ''}">失败 <b>${report.failed_colleges}</b> 个学院</span>`;
             const rows = document.getElementById('employeeDailyRows');
             if (Array.isArray(report.employees)) {
                 rows.classList.remove('hidden');
-                rows.innerHTML = report.employees.map(item => `<div>${escapeHtml(item.display_name)}：提交 ${item.submitted_colleges} 院，完成 ${item.completed_colleges} 院，交付 ${item.delivered_record_rows} 条记录，失败 ${item.failed_colleges} 院</div>`).join('') || '今天还没有员工工单';
+                rows.innerHTML = report.employees.length
+                    ? `<table class="table"><thead><tr><th>员工</th><th class="n">提交学院</th><th class="n">完成学院</th><th class="n">交付记录</th><th class="n">失败学院</th></tr></thead><tbody>`
+                      + report.employees.map(item => `<tr><td>${escapeHtml(item.display_name)}</td><td class="n">${item.submitted_colleges}</td><td class="n">${item.completed_colleges}</td><td class="n">${item.delivered_record_rows}</td><td class="n">${item.failed_colleges}</td></tr>`).join('')
+                      + '</tbody></table>'
+                    : '<p class="hint">当天还没有员工工单</p>';
             } else {
                 rows.classList.add('hidden');
                 rows.replaceChildren();
@@ -328,10 +439,13 @@
             if (response.ok) loadDailyReport();
         }
 
+        // tone: true = 可交付，false = 待处理，也可直接传 'success' | 'warn' | 'danger'
         function setResultTone(ready) {
-            document.getElementById('resultStatusCard').className = `${ready ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} border rounded-xl p-3 flex items-center justify-between`;
-            document.getElementById('statSummary').className = `text-[11px] ${ready ? 'text-emerald-700' : 'text-amber-800'}`;
-            document.getElementById('resultStatusIcon').className = `fa-solid ${ready ? 'fa-circle-check text-emerald-500' : 'fa-circle-exclamation text-amber-500'} text-2xl`;
+            const tone = typeof ready === 'string' ? ready : (ready ? 'success' : 'warn');
+            document.getElementById('resultStatusCard').dataset.tone = tone;
+            const statusIcon = document.getElementById('resultStatusIcon');
+            statusIcon.dataset.tone = tone;
+            statusIcon.querySelector('use').setAttribute('href', tone === 'success' ? '#i-check' : '#i-alert');
         }
 
         function readSavedRequest() {
@@ -365,8 +479,7 @@
             if (clearPointer) {
                 try { localStorage.removeItem(requestKey()); } catch (_) {}
             }
-            document.getElementById('taskBadge').innerText = '待提交';
-            document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium';
+            setBadge('待提交');
             document.getElementById('requestContext').innerText = '本次采集 · 尚未提交';
             document.getElementById('stepText').innerText = '填写左侧学院信息后提交采集请求';
             document.getElementById('progressBar').style.width = '0%';
@@ -398,6 +511,9 @@
                 currentTaskId = request.id;
                 pollTaskStatus();
             }
+            if (window.innerWidth < 1024) {
+                document.querySelector('.monitor').scrollIntoView({behavior: 'smooth', block: 'start'});
+            }
         }
 
         async function toggleHistory() {
@@ -409,33 +525,50 @@
             await loadHistoryPage();
         }
 
+        function historyItem(request) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'history-item';
+            const main = document.createElement('span');
+            main.className = 'history-main';
+            const title = document.createElement('span');
+            title.className = 'history-title';
+            title.style.display = 'block';
+            title.textContent = request.schools.join('、');
+            const meta = document.createElement('span');
+            meta.className = 'history-meta';
+            meta.textContent = `${request.total_colleges} 个学院 · ${new Date(request.created_at * 1000).toLocaleString()}`;
+            main.append(title, meta);
+            const state = document.createElement('span');
+            state.className = 'pill pill-dot';
+            state.dataset.tone = request.active ? 'info' : 'neutral';
+            state.textContent = request.active ? '尚未结束' : '已结束，点击查看结果';
+            button.append(main, state);
+            button.onclick = () => openRequest(request, true);
+            return button;
+        }
+
         async function loadHistoryPage() {
             const panel = document.getElementById('historyPanel');
             const epoch = requestEpoch;
             const list = document.getElementById('historyList');
             const more = list.querySelector('[data-history-more]');
             if (more) more.remove();
-            if (!historyOffset) list.innerText = '正在读取历史工单…';
+            if (!historyOffset) list.innerHTML = '<div class="history-note">正在读取历史工单…</div>';
             try {
                 const response = await fetch(`/api/history?limit=20&offset=${historyOffset}`);
                 if (!response.ok) throw new Error('历史接口不可用');
                 const data = await response.json();
                 if (epoch !== requestEpoch || panel.classList.contains('hidden')) return;
                 if (!historyOffset) list.replaceChildren();
-                for (const request of data.requests) {
-                    const button = document.createElement('button');
-                    button.className = 'block w-full text-left text-xs p-2 rounded-lg bg-slate-50 hover:bg-indigo-50 text-slate-700';
-                    const date = new Date(request.created_at * 1000).toLocaleString();
-                    button.textContent = `${request.schools.join('、')} · ${request.total_colleges} 个学院 · ${request.active ? '尚未结束' : '已结束，点击查看结果'} · ${date}`;
-                    button.onclick = () => openRequest(request, true);
-                    list.appendChild(button);
-                }
+                for (const request of data.requests) list.appendChild(historyItem(request));
                 historyOffset += data.requests.length;
-                if (!historyOffset) list.innerText = '暂无历史工单';
+                if (!historyOffset) list.innerHTML = '<div class="history-note">暂无历史工单</div>';
                 if (data.requests.length === 20) {
                     const button = document.createElement('button');
+                    button.type = 'button';
                     button.dataset.historyMore = 'true';
-                    button.className = 'text-xs text-indigo-700 font-semibold p-2';
+                    button.className = 'btn btn-ghost btn-sm history-more';
                     button.textContent = '加载更多工单';
                     button.onclick = loadHistoryPage;
                     list.appendChild(button);
@@ -443,7 +576,7 @@
             } catch (_) {
                 if (epoch === requestEpoch && !panel.classList.contains('hidden')) {
                     const message = document.createElement('div');
-                    message.className = 'text-xs text-amber-700 p-2';
+                    message.className = 'history-note';
                     message.textContent = '暂时无法读取更多工单，请稍后重试';
                     if (!historyOffset) list.replaceChildren();
                     list.appendChild(message);
@@ -451,15 +584,16 @@
             }
         }
 
-        // Auto poll queue stats
+        // 顶栏的队列与后台状态
         async function fetchQueueStats() {
             try {
                 const res = await fetch('/api/queue/stats');
                 if (res.ok) {
                     const data = await res.json();
-                    document.getElementById('queueStatsText').innerText = `排队: ${data.queued} | 运行: ${data.running} | 历史结束: ${data.completed + data.failed}`;
+                    document.getElementById('queueStatsText').innerText = `排队 ${data.queued} · 运行 ${data.running} · 已结束 ${data.completed + data.failed}`;
                 }
             } catch (e) {}
+            const pill = document.getElementById('agentPill');
             try {
                 const response = await fetch('/api/worker/status');
                 if (!response.ok) throw new Error('后台状态不可用');
@@ -467,42 +601,55 @@
                 const failedCheck = !status.online && status.self_check && !status.self_check.ok
                     ? '后台接单离线 · 启动自检未通过：' + (status.self_check.problems[0] || '见 .runtime/local-worker.err.log') : '';
                 document.getElementById('workerStatusText').innerText = status.online ? '后台自动接单在线' : (failedCheck || '后台接单离线 · 请求将排队');
-                document.getElementById('agentPill').className = `inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${status.online ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`;
+                pill.dataset.tone = status.online ? 'success' : 'warn';
+                pill.title = failedCheck || '';
             } catch (_) {
                 document.getElementById('workerStatusText').innerText = '后台状态未知';
-                document.getElementById('agentPill').className = 'inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border bg-slate-100 text-slate-600';
+                pill.dataset.tone = 'neutral';
             }
         }
         setInterval(fetchQueueStats, 3000);
         fetchQueueStats();
 
-        function switchTab(mode) {
-            const singleTab = document.getElementById('tabSingle');
-            const batchTab = document.getElementById('tabBatch');
-            const singleCard = document.getElementById('singleCard');
-            const batchCard = document.getElementById('batchCard');
-
-            if (mode === 'single') {
-                singleTab.className = 'flex-1 py-2 rounded-lg bg-white text-indigo-700 shadow-sm transition-all flex items-center justify-center space-x-2';
-                batchTab.className = 'flex-1 py-2 rounded-lg text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center space-x-2';
-                singleCard.classList.remove('hidden');
-                batchCard.classList.add('hidden');
-            } else {
-                batchTab.className = 'flex-1 py-2 rounded-lg bg-white text-indigo-700 shadow-sm transition-all flex items-center justify-center space-x-2';
-                singleTab.className = 'flex-1 py-2 rounded-lg text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center space-x-2';
-                batchCard.classList.remove('hidden');
-                singleCard.classList.add('hidden');
+        // 账号菜单：点页面其他位置或按 Esc 收起
+        document.addEventListener('click', event => {
+            const menu = document.querySelector('.account');
+            if (menu.open && !menu.contains(event.target)) menu.open = false;
+        });
+        document.addEventListener('keydown', event => {
+            const menu = document.querySelector('.account');
+            if (event.key === 'Escape' && menu.open) {
+                menu.open = false;
+                menu.querySelector('summary').focus();
             }
+        });
+
+        function switchTab(mode) {
+            const single = mode === 'single';
+            document.getElementById('tabSingle').setAttribute('aria-selected', String(single));
+            document.getElementById('tabBatch').setAttribute('aria-selected', String(!single));
+            document.getElementById('singleCard').classList.toggle('hidden', !single);
+            document.getElementById('batchCard').classList.toggle('hidden', single);
+        }
+
+        function batchLines() {
+            return document.getElementById('batchInput').value.split('\n').filter(line => line.trim());
+        }
+
+        function updateBatchCount() {
+            document.getElementById('batchCount').innerText = `${batchLines().length} 个学院`;
+            showError('batchError', '');
         }
 
         function insertSixCollegesExample() {
-            document.getElementById('batchInput').value = 
+            document.getElementById('batchInput').value =
 `复旦大学 哲学学院 https://philosophy.fudan.edu.cn/
 同济大学 环境科学与工程学院 https://sese.tongji.edu.cn/
 华东师范大学 地理科学学院 https://geo.ecnu.edu.cn/
 上海外国语大学 国际金融贸易学院 https://sft.shisu.edu.cn/
 上海大学 计算机工程与科学学院 https://cs.shu.edu.cn/
 上海师范大学 环境与地理科学学院 https://segs.shnu.edu.cn/25639/list.htm`;
+            updateBatchCount();
         }
 
         async function startSingleCollect() {
@@ -515,10 +662,16 @@
                 const parsed = new URL(url);
                 validEntry = ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname) && !parsed.username && !parsed.password;
             } catch (_) {}
+            document.getElementById('schoolInput').setAttribute('aria-invalid', String(!school));
+            document.getElementById('collegeInput').setAttribute('aria-invalid', String(!college));
+            document.getElementById('urlInput').setAttribute('aria-invalid', String(!validEntry));
             if (!school || !college || !validEntry) {
-                alert('请填写学校、学院及有效的学院官网入口 URL（http/https）。');
+                showError('singleError', !school || !college
+                    ? '请填写高校和学院全称。'
+                    : '请填写有效的学院官网网址，以 http:// 或 https:// 开头。');
                 return;
             }
+            showError('singleError', '');
 
             resetCurrentView();
             lockUI();
@@ -535,17 +688,18 @@
                 openRequest({kind: 'task', id: data.task_id}, false, true);
             } catch (err) {
                 if (epoch !== requestEpoch) return;
-                alert('工单派发失败：' + err);
-                unlockUI();
+                resetCurrentView();
+                showError('singleError', '工单提交失败：' + (err.message || err));
             }
         }
 
         async function startBatchCollect() {
             const text = document.getElementById('batchInput').value.trim();
             if (!text) {
-                alert('请输入至少一所高校和学院！');
+                showError('batchError', '请至少填写一行：高校 学院 官网网址。');
                 return;
             }
+            showError('batchError', '');
 
             resetCurrentView();
             lockUI();
@@ -562,28 +716,45 @@
                 openRequest({kind: 'batch', id: data.batch_id}, false, true);
             } catch (err) {
                 if (epoch !== requestEpoch) return;
-                alert('批量工单派发失败：' + err);
-                unlockUI();
+                resetCurrentView();
+                showError('batchError', '批量工单提交失败：' + (err.message || err));
             }
         }
 
         function lockUI() {
             document.getElementById('startSingleBtn').disabled = true;
-            document.getElementById('startSingleBtn').classList.add('opacity-50', 'cursor-not-allowed');
             document.getElementById('startBatchBtn').disabled = true;
-            document.getElementById('startBatchBtn').classList.add('opacity-50', 'cursor-not-allowed');
-
-            document.getElementById('taskBadge').innerText = '正在提交';
-            document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium animate-pulse';
+            setBadge('正在提交', 'info', true);
             document.getElementById('resultArea').classList.add('hidden');
             document.getElementById('thoughtBox').innerText = '正在提交到队列，后台将自动认领。';
         }
 
         function unlockUI() {
             document.getElementById('startSingleBtn').disabled = false;
-            document.getElementById('startSingleBtn').classList.remove('opacity-50', 'cursor-not-allowed');
             document.getElementById('startBatchBtn').disabled = false;
-            document.getElementById('startBatchBtn').classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+
+        function renderThoughts(thoughts) {
+            if (!thoughts.length) return;
+            const box = document.getElementById('thoughtBox');
+            box.innerHTML = thoughts.map(th => `
+                <div class="log-entry">
+                    <div class="log-meta"><span class="log-phase">${th.college ? escapeHtml(th.college) + ' · ' : ''}${escapeHtml(th.phase)}</span><time>${escapeHtml(th.time)}</time></div>
+                    <div>${escapeHtml(th.thought)}</div>
+                    <div class="log-action">→ ${escapeHtml(th.action)}</div>
+                </div>`).join('');
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function showDownload(url, label) {
+            const button = document.getElementById('downloadBtn');
+            const filename = url.split('/').pop();
+            let shown = filename;
+            try { shown = decodeURIComponent(filename); } catch (_) {}
+            button.href = url;
+            button.setAttribute('download', filename);
+            document.getElementById('downloadBtnText').innerText = `${label}【${shown}】`;
+            button.classList.remove('hidden');
         }
 
         function pollTaskStatus() {
@@ -600,9 +771,8 @@
                             clearInterval(pollTimer);
                             forgetRequest('task', targetId);
                             unlockUI();
-                            document.getElementById('taskBadge').innerText = '待命中';
-                            document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium';
-                            document.getElementById('thoughtBox').innerHTML = '<div class="text-amber-400">> 提示：工单不存在或服务已重置，请刷新页面重新提交！</div>';
+                            setBadge('待命中');
+                            document.getElementById('thoughtBox').innerText = '工单不存在或服务已重置，请刷新页面重新提交。';
                             return;
                         }
                         return;
@@ -614,54 +784,42 @@
                     document.getElementById('percentText').innerText = task.status === 'running' && task.progress === 0 ? '侦察中' : `${task.progress}%`;
                     const taskScope = task.delivery_scope;
                     if (task.status === 'queued' || task.status === 'running' || task.status === 'compiling') {
-                        document.getElementById('taskBadge').innerText = task.status === 'queued' ? '排队待接单' : task.status === 'compiling' ? '交付审计中' : '自动采集中';
-                        document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium';
+                        setBadge(task.status === 'queued' ? '排队待接单' : task.status === 'compiling' ? '交付审计中' : '自动采集中',
+                                 'info', task.status !== 'queued');
                     }
                     document.getElementById('stepText').innerText = taskScope ? `本次范围：${taskScope.target_colleges.join('、')} · ${taskScope.state === 'ready' ? '可交付' : taskScope.state === 'blocked' ? '待复核' : '采集中'}；${task.current_step || ''}` : task.current_step || '';
 
-                    if (task.agent_thoughts && task.agent_thoughts.length > 0) {
-                        const box = document.getElementById('thoughtBox');
-                        box.innerHTML = task.agent_thoughts.map(th => `
-                            <div class="border-l-2 border-indigo-500 pl-2.5 py-1">
-                                <div class="text-[11px] text-indigo-400 font-bold">[${escapeHtml(th.phase)}] ${escapeHtml(th.time)}</div>
-                                <div class="text-slate-300">${escapeHtml(th.thought)}</div>
-                                <div class="text-emerald-400 text-[11px]">↳ ${escapeHtml(th.action)}</div>
-                            </div>
-                        `).join('');
-                        box.scrollTop = box.scrollHeight;
-                    }
+                    renderThoughts(task.agent_thoughts || []);
 
                     if (task.status === 'completed') {
                         clearInterval(pollTimer);
                         if (!viewingHistory) forgetRequest('task', targetId);
-                        setResultTone(!task.counts_basis && taskScope?.state === 'ready');
-                        document.getElementById('taskBadge').innerText = task.counts_basis ? '身份与人数待复核' : taskScope?.state === 'ready' ? '本次范围已完成' : '学院已完成，大学范围待处理';
-                        document.getElementById('taskBadge').className = `text-xs px-2.5 py-0.5 rounded-full font-medium ${task.counts_basis || taskScope?.state === 'blocked' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`;
+                        const ready = !task.counts_basis && taskScope?.state === 'ready';
+                        setResultTone(ready);
+                        setBadge(task.counts_basis ? '身份与人数待复核' : taskScope?.state === 'ready' ? '本次范围已完成' : '学院已完成，大学范围待处理',
+                                 task.counts_basis || taskScope?.state === 'blocked' ? 'warn' : 'success');
                         document.getElementById('statSummary').innerText = task.counts_basis ? `${task.college} 保留 ${task.stats.total || 0} 条页面观察，人数待核算` : `${task.college} 入库 ${task.stats.total || 0} 位 | 有邮箱 ${task.stats.with_email || 0} 位 | 无邮箱 ${task.stats.no_email || 0} 位`;
-                        document.getElementById('univDownloadBox').innerHTML = '';
-                        document.getElementById('downloadBtn').classList.toggle('hidden', !task.download_url);
-                        if (task.download_url) {
-                            document.getElementById('downloadBtn').href = task.download_url;
-                            document.getElementById('downloadBtn').setAttribute('download', task.download_url.split('/').pop());
-                            document.getElementById('downloadBtnText').innerText = `${taskScope?.state === 'ready' ? '下载本次范围交付' : '下载学院中间成果'}【${task.download_url.split('/').pop()}】`;
-                        }
+                        document.getElementById('univDownloadBox').replaceChildren();
+                        if (task.download_url) showDownload(task.download_url, taskScope?.state === 'ready' ? '下载本次范围交付' : '下载学院中间成果');
+                        else document.getElementById('downloadBtn').classList.add('hidden');
                         document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();
                     } else if (task.status === 'failed') {
                         clearInterval(pollTimer);
                         if (!viewingHistory && !task.review_url) forgetRequest('task', targetId);
-                        document.getElementById('taskBadge').innerText = '失败';
-                        document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium';
-                        document.getElementById('thoughtBox').innerText = task.error || task.current_step || '任务失败，请查看审计记录';
+                        setBadge('失败', 'danger');
+                        document.getElementById('downloadBtn').classList.add('hidden');
+                        document.getElementById('statSummary').innerText = task.error || task.current_step || '任务失败，请查看审计记录';
+                        setResultTone('danger');
                         if (task.review_url) {
                             const review = document.getElementById('reviewBtn');
                             review.href = task.review_url;
                             review.classList.remove('hidden');
-                            document.getElementById('downloadBtn').classList.add('hidden');
-                            document.getElementById('statSummary').innerText = '图片证据需要人工核对；完成后可重新采集本工单';
+                            setBadge('待人工复核', 'warn');
+                            document.getElementById('statSummary').innerText = '有图片文字、邮箱或生僻姓名需要人工核对；完成后可重新采集本工单。';
                             setResultTone(false);
-                            document.getElementById('resultArea').classList.remove('hidden');
                         }
+                        document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();
                     }
                 } catch (e) {
@@ -670,6 +828,36 @@
             };
             tick();
             pollTimer = setInterval(tick, 1000);
+        }
+
+        function subtaskRow(st) {
+            let tone = 'neutral', text = '排队中', busy = false;
+            if (st.status === 'running') { tone = 'info'; text = '采集中'; busy = true; }
+            if (st.status === 'completed') {
+                tone = st.counts_basis ? 'warn' : 'success';
+                text = st.counts_basis ? `待复核 (${st.stats?.total || 0}条观察)` : `完成 (${st.stats?.total || 0}人)`;
+            }
+            if (st.status === 'failed') { tone = 'danger'; text = '失败'; }
+            const download = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download title="下载该学院的双 Sheet Excel">${icon('download')}表格</a>` : '';
+            const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>` : '';
+            return `
+                <div class="subtask">
+                    <div class="subtask-name"><span class="subtask-college">${escapeHtml(st.college)}</span><span class="subtask-school">${escapeHtml(st.school)}</span></div>
+                    <div class="subtask-actions"><span class="pill pill-dot" data-tone="${tone}"${busy ? ' data-busy' : ''}>${text}</span>${download}${review}</div>
+                </div>`;
+        }
+
+        function universityDownloads(files) {
+            return `<div class="section-title">按大学交付（有邮箱、无邮箱两张表）</div>` + files.map(uf => `
+                <a class="download-row" href="${escapeHtml(uf.download_url)}" download="${escapeHtml(uf.filename)}">
+                    ${icon('sheet')}
+                    <span class="download-main">
+                        <span class="download-name" style="display:block">${escapeHtml(uf.filename)}</span>
+                        <span class="download-meta">本次 ${escapeHtml(uf.delivery_scope.target_colleges.join('、'))} · 版本 ${escapeHtml(uf.version)}${uf.current_snapshot_state === 'blocked' ? ' · 历史跨学院汇总待复核' : ''}</span>
+                    </span>
+                    <span class="download-count num">共 ${uf.total} 位 · 有邮箱 ${uf.with_email}</span>
+                    ${icon('download')}
+                </a>`).join('');
         }
 
         function pollBatchStatus() {
@@ -686,9 +874,8 @@
                             clearInterval(pollTimer);
                             forgetRequest('batch', targetId);
                             unlockUI();
-                            document.getElementById('taskBadge').innerText = '待命中';
-                            document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium';
-                            document.getElementById('thoughtBox').innerHTML = '<div class="text-amber-400">> 提示：该批次不存在或服务已重置，请刷新页面后重新派发！</div>';
+                            setBadge('待命中');
+                            document.getElementById('thoughtBox').innerText = '该批次不存在或服务已重置，请刷新页面后重新提交。';
                             return;
                         }
                         return;
@@ -698,8 +885,7 @@
                     if (['completed', 'failed', 'partially_failed'].includes(batch.status) && !viewingHistory
                             && !(batch.subtasks || []).some(st => st.review_url)) forgetRequest('batch', targetId);
                     if (batch.status === 'queued' || batch.status === 'running') {
-                        document.getElementById('taskBadge').innerText = batch.status === 'queued' ? '排队待接单' : '自动采集中';
-                        document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium';
+                        setBadge(batch.status === 'queued' ? '排队待接单' : '自动采集中', 'info', batch.status === 'running');
                     }
 
                     document.getElementById('progressBar').style.width = `${batch.progress}%`;
@@ -707,108 +893,47 @@
                     const scopeText = (batch.delivery_scopes || []).map(s => `${s.school}：本次 ${s.target_colleges.join('、')}，${s.state === 'ready' ? '可交付' : s.state === 'blocked' ? '待复核' : '采集中'}`).join('；');
                     document.getElementById('stepText').innerText = `[${batch.completed_colleges}/${batch.total_colleges} 院系完成] ${batch.current_step}${scopeText ? '；' + scopeText : ''}`;
 
-                    // Render subtasks list
                     if (batch.subtasks) {
-                        const sList = document.getElementById('subtaskList');
-                        sList.innerHTML = batch.subtasks.map(st => {
-                            let badgeCls = 'bg-slate-100 text-slate-500';
-                            let stText = '排队中';
-                            if (st.status === 'running') { badgeCls = 'bg-amber-100 text-amber-700 animate-pulse'; stText = '采集中'; }
-                            if (st.status === 'completed') { badgeCls = st.counts_basis ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'; stText = st.counts_basis ? `待复核 (${st.stats?.total || 0}条观察)` : `完成 (${st.stats?.total || 0}人)`; }
-                            if (st.status === 'failed') { badgeCls = 'bg-red-100 text-red-700'; stText = '失败'; }
-                            const dlBtn = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download class="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-bold flex items-center space-x-1" title="下载该学院双Sheet Excel"><i class="fa-solid fa-download"></i><span>表格</span></a>` : '';
-                            const reviewBtn = st.review_url ? `<a href="${escapeHtml(st.review_url)}" class="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">人工复核</a>` : '';
-                            return `
-                                <div class="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-200/60 text-xs">
-                                    <span class="font-medium text-slate-700 truncate max-w-[190px]">${escapeHtml(st.school)} - ${escapeHtml(st.college)}</span>
-                                    <div class="flex items-center space-x-1.5">
-                                        <span class="px-2 py-0.5 rounded text-[11px] font-semibold ${badgeCls}">${stText}</span>
-                                        ${dlBtn}
-                                        ${reviewBtn}
-                                    </div>
-                                </div>
-                            `;
-                        }).join('');
+                        document.getElementById('subtaskList').innerHTML = batch.subtasks.map(subtaskRow).join('');
                     }
 
-                    // Extract thoughts from all subtasks
-                    let allThoughts = [];
-                    batch.subtasks.forEach(st => {
-                        if (st.agent_thoughts) {
-                            st.agent_thoughts.forEach(th => {
-                                allThoughts.push({ college: st.college, ...th });
-                            });
-                        }
+                    const allThoughts = [];
+                    (batch.subtasks || []).forEach(st => {
+                        (st.agent_thoughts || []).forEach(th => allThoughts.push({ college: st.college, ...th }));
                     });
-
-                    if (allThoughts.length > 0) {
-                        const box = document.getElementById('thoughtBox');
-                        box.innerHTML = allThoughts.map(th => `
-                            <div class="border-l-2 border-indigo-500 pl-2.5 py-1">
-                                <div class="text-[11px] text-indigo-400 font-bold">[${escapeHtml(th.college || 'Agent')} - ${escapeHtml(th.phase)}] ${escapeHtml(th.time)}</div>
-                                <div class="text-slate-300">${escapeHtml(th.thought)}</div>
-                                <div class="text-emerald-400 text-[11px]">↳ ${escapeHtml(th.action)}</div>
-                            </div>
-                        `).join('');
-                        box.scrollTop = box.scrollHeight;
-                    }
+                    renderThoughts(allThoughts);
 
                     if (batch.status === 'completed' && batch.delivery_state === 'blocked') {
                         clearInterval(pollTimer);
                         setResultTone(false);
-                        document.getElementById('taskBadge').innerText = '大学交付待复核';
-                        document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium';
+                        setBadge('大学交付待复核', 'warn');
                         document.getElementById('statSummary').innerText = '原始页面观察已保留，身份与人数待核算';
                         document.getElementById('downloadBtn').classList.add('hidden');
-                        document.getElementById('univDownloadBox').innerText = '请先核实身份与来源，再生成大学交付。';
+                        document.getElementById('univDownloadBox').innerHTML = '<p class="hint">请先核实身份与来源，再生成大学交付。</p>';
                         document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();
                     } else if (batch.status === 'completed' && batch.delivery_state === 'ready') {
                         clearInterval(pollTimer);
                         setResultTone(true);
-                        document.getElementById('taskBadge').innerText = '批量全部完成';
-                        document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium';
+                        setBadge('批量全部完成', 'success');
                         document.getElementById('statSummary').innerText = `本次请求 ${batch.total_colleges} 个学院全部完成；学院记录 ${batch.stats.total} 位 | 有邮箱 ${batch.stats.with_email} 位；大学表按来源身份合并`;
-                        
                         const univBox = document.getElementById('univDownloadBox');
                         if (batch.university_files && batch.university_files.length > 0) {
-                            univBox.innerHTML = `
-                                <div class="text-xs font-bold text-slate-700 mb-1.5 flex items-center">
-                                    <i class="fa-solid fa-building-columns text-indigo-600 mr-1.5"></i>按大学交付成果（双Sheet守恒）：
-                                </div>
-                                <div class="space-y-2">
-                                    ${batch.university_files.map(uf => `
-                                        <a href="${escapeHtml(uf.download_url)}" download="${escapeHtml(uf.filename)}"
-                                            class="w-full py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200/80 text-indigo-950 font-bold text-xs flex items-center justify-between shadow-sm transition-all group">
-                                            <div class="flex items-center space-x-2">
-                                                <i class="fa-solid fa-file-excel text-emerald-600 text-sm group-hover:scale-110 transition-transform"></i>
-                                                <span class="text-sm text-indigo-900">${escapeHtml(uf.filename)}</span>
-                                            </div>
-                                            <div class="flex items-center space-x-2">
-                                                <span class="text-[11px] text-slate-600 font-normal">本次 ${escapeHtml(uf.delivery_scope.target_colleges.join('、'))} · 版本 ${escapeHtml(uf.version)}${uf.current_snapshot_state === 'blocked' ? ' · 历史跨学院汇总待复核' : ''}</span>
-                                                <span class="text-[11px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
-                                                    共 ${uf.total} 位 (邮箱 ${uf.with_email})
-                                                </span>
-                                                <i class="fa-solid fa-download text-indigo-500 text-xs ml-1"></i>
-                                            </div>
-                                        </a>
-                                    `).join('')}
-                                </div>
-                            `;
+                            univBox.innerHTML = universityDownloads(batch.university_files);
                             document.getElementById('downloadBtn').classList.add('hidden');
                         } else if (batch.download_url) {
-                            univBox.innerHTML = '';
-                            document.getElementById('downloadBtn').classList.remove('hidden');
-                            document.getElementById('downloadBtn').href = batch.download_url;
-                            document.getElementById('downloadBtn').setAttribute('download', batch.download_url.split('/').pop());
-                            document.getElementById('downloadBtnText').innerText = `下载交付表格【${batch.download_url.split('/').pop()}】`;
+                            univBox.replaceChildren();
+                            showDownload(batch.download_url, '下载交付表格');
                         }
                         document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();
                     } else if (batch.status === 'failed' || batch.status === 'partially_failed') {
                         clearInterval(pollTimer);
-                        document.getElementById('taskBadge').innerText = '任务异常';
-                        document.getElementById('taskBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium';
+                        setBadge('任务异常', 'danger');
+                        setResultTone('danger');
+                        document.getElementById('statSummary').innerText = `${batch.failed_colleges || 0} 个学院未通过，逐院状态见下方列表；需要人工复核的学院可点“人工复核”。`;
+                        document.getElementById('downloadBtn').classList.add('hidden');
+                        document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();
                     }
                 } catch (e) {
@@ -825,6 +950,7 @@
             currentUser = await identity.json();
             csrfToken = currentUser.csrf_token;
             document.getElementById('accountLabel').innerText = `${currentUser.display_name}（${currentUser.role === 'admin' ? '管理员' : '员工'}）`;
+            document.getElementById('accountAvatar').innerText = (currentUser.display_name || '·').slice(0, 1);
             if (currentUser.role === 'admin') document.getElementById('adminUsers').classList.remove('hidden');
             document.getElementById('reportDay').value = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
             loadDailyReport();

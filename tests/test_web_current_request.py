@@ -211,8 +211,8 @@ async def test_history_is_explicit_and_return_to_new_request_clears_old_results(
             assert await page.locator('#subtaskList > div').count() == 11
             assert '待复核' in await page.locator('#taskBadge').inner_text()
             assert await page.locator('#downloadBtn').is_hidden()
-            assert 'bg-amber-50' in await page.locator('#resultStatusCard').get_attribute('class')
-            assert 'fa-circle-exclamation' in await page.locator('#resultStatusIcon').get_attribute('class')
+            assert await page.locator('#resultStatusCard').get_attribute('data-tone') == 'warn'
+            assert await page.locator('#resultStatusIcon use').get_attribute('href') == '#i-alert'
             assert '历史' in await page.locator('#requestContext').inner_text()
             await page.locator('#newRequestBtn').click()
             assert await page.locator('#subtaskCardBox').is_hidden()
@@ -251,5 +251,86 @@ async def test_single_form_requires_entry_before_posting():
             await page.wait_for_timeout(100)
             assert '/api/collect' not in calls
             assert '待提交' in await page.locator('#taskBadge').inner_text()
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_account_menu_closes_on_outside_click_and_escape():
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            page, _ = await local_page(browser)
+            menu = page.locator('details.account')
+            await page.locator('details.account > summary').click()
+            assert await menu.get_attribute('open') is not None
+            await page.locator('#composerTitle').click()
+            assert await menu.get_attribute('open') is None
+            await page.locator('details.account > summary').click()
+            await page.keyboard.press('Escape')
+            assert await menu.get_attribute('open') is None
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_review_retry_shows_the_server_message_not_raw_json():
+    from server.image_bio_review import render_review_page
+    html = render_review_page([], [], retry_url='/retry')
+
+    async def route(request):
+        if urlparse(request.request.url).path == '/retry':
+            await request.fulfill(status=409, json={'detail': '请先完成全部图片文字、邮箱和姓名复核'})
+        else:
+            await request.fulfill(body=html, content_type='text/html; charset=utf-8')
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.route('**/*', route)
+            await page.goto('http://review.test/')
+            assert await page.get_by_text('返回采集平台').count() == 1
+            await page.locator('#retry-review').click()
+            await page.locator('#retry-status').get_by_text('未能重试').wait_for()
+            assert await page.locator('#retry-status').inner_text() == '未能重试：请先完成全部图片文字、邮箱和姓名复核'
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_admin_statistics_table_does_not_widen_the_phone_page():
+    """A wide no-wrap table scrolls inside its own box, not the whole page."""
+    html = await web.serve_ui()
+    employee = {'display_name': '信息工程学院采集组张敏老师', 'submitted_colleges': 12,
+                'completed_colleges': 10, 'delivered_record_rows': 12345, 'failed_colleges': 2}
+    values = {'/api/auth/me': {'id': 9, 'username': 'admin', 'display_name': '管理员', 'role': 'admin', 'csrf_token': 't'},
+              '/api/queue/stats': {'queued': 0, 'running': 0, 'completed': 0, 'failed': 0},
+              '/api/worker/status': {'online': True, 'online_count': 1},
+              '/api/reports/daily': {'submitted_colleges': 12, 'completed_colleges': 10,
+                                     'delivered_record_rows': 12345, 'failed_colleges': 2, 'employees': [employee]}}
+
+    async def route(request):
+        path = urlparse(request.request.url).path
+        if path == '/':
+            await request.fulfill(body=html, content_type='text/html; charset=utf-8')
+        elif path in values:
+            await request.fulfill(json=values[path])
+        else:
+            await request.abort()
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            page = await browser.new_page(viewport={'width': 390, 'height': 844})
+            await page.route('**/*', route)
+            await page.goto('http://frontend.test/')
+            await page.locator('#employeeDailyRows table').wait_for()
+            page_width, viewport = await page.evaluate(
+                '[document.documentElement.scrollWidth, document.documentElement.clientWidth]')
+            assert page_width <= viewport
         finally:
             await browser.close()
