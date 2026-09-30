@@ -206,7 +206,7 @@ def _name_cards(name_items: list[dict]) -> list[str]:
         profile = item.get("profile_url") or ""
         cards.append(
             '<section class="card name-card" data-id="' + escape(item["id"]) + '">'
-            '<h2>生僻姓氏待确认：' + escape(item["name"]) + '</h2>'
+            '<h2>姓名待确认：' + escape(item["name"]) + '</h2>'
             '<p class="meta">名录页 ' + _page_link(item["url"])
             + ('' if profile == item["url"] else ' · 个人页 ' + _page_link(profile)) + '</p>'
             '<p>卡片原文：</p><blockquote>' + escape(item.get("card_text", "")[:300]) + '</blockquote>'
@@ -294,8 +294,8 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
         body += '<h2>邮箱冲突</h2>' + "\n".join(email_cards)
     name_cards = _name_cards(name_items or [])
     if name_cards:
-        body += ('<h2>生僻姓氏</h2><p>这些名字的姓不在常用姓氏表里，也可能是普通词语。'
-                 '请打开名录页核对。</p>' + "\n".join(name_cards))
+        body += ('<h2>姓名待确认</h2><p>这些名字的姓不在常用姓氏表里，或是外籍译名等程序认不出的名字，'
+                 '也可能是普通词语。请打开名录页核对。</p>' + "\n".join(name_cards))
     if not body and not identity_items:
         body = '<p>当前没有需要人工复核的图片文字、邮箱或姓名。</p>'
     if identity_items:
@@ -448,7 +448,7 @@ def email_conflict_id(profile_url: str, owner_name: str, image_bio: str,
 
 def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
     """Expose only email conflicts backed by verified original image crops."""
-    from server.faculty_extractor import find_emails, is_personal_email_for_scholar
+    from server.faculty_extractor import own_text_emails
 
     audit_path = Path(audit_path).resolve()
     root = audit_path.parent
@@ -459,6 +459,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
         return []
     records_path = _inside(audit["records_path"], root)
     records = json.loads(records_path.read_text(encoding="utf-8"))
+    colleagues = {row.get("姓名") for row in records if row.get("姓名")}
     result = []
     for issue in issues:
         profile_url, owner_name = issue["url"], issue["name"]
@@ -485,14 +486,12 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
             image_parts.append(adjusted["text"].strip())
             for page in adjusted["pages"]:
                 for line in page["lines"]:
-                    for email in find_emails(line["text"]):
-                        if (is_personal_email_for_scholar(email, owner_name)
-                                and email not in crops_by_email and line.get("box")):
+                    for email in own_text_emails(line["text"], owner_name, colleagues):
+                        if email not in crops_by_email and line.get("box"):
                             crops_by_email[email] = _crop_original(
                                 original, item["kind"], page["page"], line["box"])
         image_bio = "\n\n".join(part for part in image_parts if part)
-        personal = list(dict.fromkeys(email for email in find_emails(image_bio)
-                                      if is_personal_email_for_scholar(email, owner_name)))
+        personal = own_text_emails(image_bio, owner_name, colleagues)
         existing = row.get("邮箱", "") or ""
         choices = list(dict.fromkeys(personal + ([existing] if existing else [])))
         if len(choices) < 2 or any(choice not in crops_by_email for choice in personal):

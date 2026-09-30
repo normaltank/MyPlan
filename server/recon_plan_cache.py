@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 
 def _contract() -> str:
     digest = hashlib.sha256(b"faculty-plan-cache-v2")
-    for name in ("recon_discovery.md", "recon_instructions.md", "recon_dom_probe.js"):
+    for name in ("recon_discovery.md", "recon_instructions.md", "recon_provided_links.md", "recon_dom_probe.js"):
         digest.update((HERE / name).read_bytes())
     return digest.hexdigest()
 

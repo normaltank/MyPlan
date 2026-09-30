@@ -58,6 +58,66 @@ def _word_hidden(node: Tag) -> bool:
     return 'mso-hide:all' in re.sub(r'\s+', '', str(node.get('style', ''))).lower()
 
 
+def _node_path(node: Tag, stop: Tag | None = None) -> str:
+    """A short structural path (tag, id, first classes) for scout feedback; no text."""
+    parts = []
+    for item in [node, *node.parents]:
+        if not isinstance(item, Tag) or item is stop or item.name in {'[document]', 'html'}:
+            break
+        part = item.name
+        if item.get('id'):
+            part += '#' + str(item['id'])
+        classes = item.get('class') or []
+        if classes:
+            part += ''.join('.' + value for value in classes[:2])
+        if item.parent is not None and not item.get('id'):
+            same = [sibling for sibling in item.parent.find_all(item.name, recursive=False)]
+            if len(same) > 1:
+                part += f':nth-of-type({same.index(item) + 1})'
+        parts.append(part)
+        if item.get('id') or len(parts) >= 4:
+            break
+    return ' > '.join(reversed(parts))
+
+
+def hidden_blockers(html: str, selector: str, *, start_selector: str | None = None,
+                    limit: int = 3) -> list[dict[str, Any]]:
+    """Where a profile_content_selector_hidden verdict comes from: paths and sizes only."""
+    soup = BeautifulSoup(html, 'html.parser')
+    try:
+        matches = soup.select(selector)
+    except Exception:
+        return []
+    if len(matches) != 1:
+        return []
+    node = matches[0]
+    found = []
+    for item in [node, *[ancestor for ancestor in node.parents if isinstance(ancestor, Tag)]]:
+        if _inline_hidden(item):
+            found.append({'where': 'container' if item is node else 'ancestor', 'path': _node_path(item)})
+    kept = list(node.children)
+    if start_selector:
+        try:
+            markers = soup.select(start_selector)
+        except Exception:
+            markers = []
+        if len(markers) == 1 and markers[0] in kept:
+            kept = kept[kept.index(markers[0]) + 1:]
+    seen: list[Tag] = []
+    for child in kept:
+        if not isinstance(child, Tag):
+            continue
+        for item in [child, *child.find_all(True)]:
+            if item.name in _NON_RENDERING or any(item in found_node.descendants for found_node in seen):
+                continue
+            if _inline_hidden(item) and not trivial_hidden(item):
+                seen.append(item)
+                found.append({'where': 'descendant', 'path': _node_path(item, stop=node),
+                              'text_chars': len(item.get_text('', strip=True)),
+                              'media': len(item.find_all(_MEDIA_TAGS))})
+    return found[:limit]
+
+
 def scope_profile_html(html: str, selector: str, url: str, *, start_selector: str | None = None
                        ) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
     """Return a complete selected subtree copy, evidence, or a blocking issue."""

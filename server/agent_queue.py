@@ -33,6 +33,8 @@ class AgentTask:
         self.url, self.mode, self.batch_id = url, mode, batch_id or task_id
         self.task_type, self.status = task_type, "queued"
         self.owner_user_id: int | None = None
+        # Roster links a person supplied with the college; leads for the scout.
+        self.roster_urls: list[str] = []
         self.worker_id: str | None = None
         self.lease_until: float | None = None
         self.lease_token: str | None = None
@@ -62,7 +64,7 @@ class AgentTask:
         self.current_step = f"[{phase}] {action}"
 
     def to_dict(self) -> dict[str, Any]:
-        fields = ("task_id", "school", "college", "url", "mode", "batch_id", "task_type",
+        fields = ("task_id", "school", "college", "url", "roster_urls", "mode", "batch_id", "task_type",
                   "owner_user_id",
                   "status", "worker_id", "lease_until", "lease_token", "cluster_key", "prompt_text",
                   "progress", "current_step", "logs", "agent_thoughts", "stats",
@@ -178,7 +180,7 @@ class AgentTaskQueue:
     def _meta(task: AgentTask) -> str:
         return _json({"progress": task.progress, "current_step": task.current_step,
                       "logs": task.logs, "agent_thoughts": task.agent_thoughts,
-                      "teachers_preview": task.teachers_preview})
+                      "teachers_preview": task.teachers_preview, "roster_urls": task.roster_urls})
 
     def _insert(self, con: sqlite3.Connection, task: AgentTask) -> None:
         con.execute("""INSERT INTO tasks (task_id, school, college, url, status, mode,
@@ -210,7 +212,7 @@ class AgentTaskQueue:
                 setattr(task, field, row[field])
         task.stats = json.loads(row["stats_json"])
         meta = json.loads(row["meta_json"])
-        for field in ("progress", "current_step", "logs", "agent_thoughts"):
+        for field in ("progress", "current_step", "logs", "agent_thoughts", "roster_urls"):
             if field in meta:
                 setattr(task, field, meta[field])
         task.records = [json.loads(r[0]) for r in con.execute(
@@ -242,9 +244,11 @@ class AgentTaskQueue:
 
     def submit_task(self, school: str, college: str, url: str | None = None,
                     mode: str = "single", batch_id: str | None = None,
-                    *, owner_user_id: int | None = None) -> AgentTask:
+                    *, owner_user_id: int | None = None,
+                    roster_urls: list[str] | None = None) -> AgentTask:
         task = AgentTask(uuid.uuid4().hex, school, college, url, mode, batch_id)
         task.owner_user_id = owner_user_id
+        task.roster_urls = list(roster_urls or [])
         with self._connect() as con:
             self._insert(con, task)
         return task
@@ -641,11 +645,17 @@ class AgentTaskQueue:
         with self._connect() as con:
             return university_snapshot(con, school)
 
-    def submit_batch(self, items: list[tuple[str, str, str | None]], batch_id: str,
+    def submit_batch(self, items: list[tuple], batch_id: str,
                      *, owner_user_id: int | None = None) -> list[AgentTask]:
-        """Expose the entire requested target set in one transaction before workers claim."""
-        tasks = [AgentTask(uuid.uuid4().hex, school, college, url, "batch", batch_id)
-                 for school, college, url in items]
+        """Expose the entire requested target set in one transaction before workers claim.
+
+        Each item is (school, college, url) or (school, college, url, roster_urls).
+        """
+        tasks = []
+        for school, college, url, *rest in items:
+            task = AgentTask(uuid.uuid4().hex, school, college, url, "batch", batch_id)
+            task.roster_urls = list(rest[0] or []) if rest else []
+            tasks.append(task)
         for task in tasks:
             task.owner_user_id = owner_user_id
         with self._connect() as con:

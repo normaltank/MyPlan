@@ -9,3 +9,6 @@ hitting www.lzsdyyy.cn doctor pages). Tests must stay hermetic and offline.
 import os
 
 os.environ.setdefault("HARVEST_DISABLE_NATIVE_CHROME_FALLBACK", "1")
+# The post-harvest navigation census opens the college's live menu pages;
+# tests that need it enable it explicitly with a fake census.
+os.environ.setdefault("HARVEST_CROSS_CHECK", "0")

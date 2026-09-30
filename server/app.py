@@ -186,7 +186,8 @@ class CollectRequest(BaseModel):
     url: Optional[str] = None
 
 class BatchCollectRequest(BaseModel):
-    items_text: str  # Multi-line text
+    items_text: str  # Multi-line text: 大学 学院 学院主页 [师资链接]
+    confirm_warnings: bool = False  # the person has seen the data warnings
 
 class TaskSyncRequest(BaseModel):
     records: List[dict] = []
@@ -375,33 +376,25 @@ async def start_single_collection(req: CollectRequest, request: Request = None):
 
 @app.post("/api/collect_batch")
 async def start_batch_collection(req: BatchCollectRequest, request: Request = None):
-    lines = [l.strip() for l in req.items_text.split('\n') if l.strip()]
-    if not lines:
+    from server.intake import parse_batch
+    parsed = parse_batch(req.items_text)
+    if parsed.errors:
+        raise HTTPException(status_code=400, detail="；".join(parsed.errors[:5]))
+    if not parsed.colleges:
         raise HTTPException(status_code=400, detail="请输入院校名单")
     limit = _max_batch_colleges()
-    if len(lines) > limit:
+    if len(parsed.colleges) > limit:
         raise HTTPException(status_code=400,
-                            detail=f'单次最多提交 {limit} 个学院（本次 {len(lines)} 行），请分批提交')
-    
+                            detail=f'单次最多提交 {limit} 个学院（本次 {len(parsed.colleges)} 个），请分批提交')
+    if parsed.warnings and not req.confirm_warnings:
+        # Nothing is queued until a person has looked at suspicious rows.
+        return JSONResponse(status_code=409, content={
+            "detail": "名单里有需要确认的行", "warnings": parsed.warnings[:20]})
     batch_id = str(uuid.uuid4())[:8]
-    items = []
-    seen: dict[tuple[str, str], int] = {}
-    for number, line in enumerate(lines, 1):
-        parts = line.split()
-        if len(parts) != 3:
-            raise HTTPException(status_code=400, detail=f'第 {number} 行需填写高校、学院和官网入口')
-        try:
-            entry = _verified_entry_url(parts[2])
-        except HTTPException:
-            raise HTTPException(status_code=400, detail=f'第 {number} 行需有效的学院官网入口') from None
-        first = seen.setdefault((parts[0], parts[1]), number)
-        if first != number:
-            raise HTTPException(status_code=400,
-                                detail=f'第 {number} 行与第 {first} 行是同一学院，请删除重复行')
-        items.append((parts[0], parts[1], entry))
-
+    items = [(entry.school, entry.college, entry.url, entry.roster_urls) for entry in parsed.colleges]
     agent_queue.submit_batch(items, batch_id, owner_user_id=_user(request).id)
-    return {"batch_id": batch_id, "total_queued": len(items)}
+    return {"batch_id": batch_id, "total_queued": len(items),
+            "with_roster_links": sum(bool(entry.roster_urls) for entry in parsed.colleges)}
 
 def present_task(data, scope):
     data["delivery_scope"] = scope

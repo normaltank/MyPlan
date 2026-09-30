@@ -27,7 +27,7 @@ from bs4 import BeautifulSoup
 from server import excel_export, name_review
 from server.faculty_extractor import (
     FacultyCandidate, FacultyDirectoryExtractor, FacultyHarvestPipeline, FacultyProfileExtractor,
-    find_emails, is_personal_email_for_scholar,
+    own_text_emails,
 )
 from server.harvest_eligibility import classify_candidates
 from server.harvest_workflow import capture_profiles, capture_sources, commit_records, reconcile_rosters
@@ -682,6 +682,7 @@ def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_eviden
 
 def _enrich_extracted_records(pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted):
     unresolved = []
+    college_names = {record["姓名"] for record in pipeline_records if record.get("姓名")}
     for record in pipeline_records:
         segment = segment_records.get((record["主页"], record["姓名"]))
         if segment is None:
@@ -703,9 +704,9 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
                 + "</article>", record["主页"], fallback_name=record["姓名"])
             if record["职称"] == "教师" and parsed_image.title != "教师":
                 record["职称"] = parsed_image.title
-            personal_emails = list(dict.fromkeys(
-                email for email in find_emails(image_bio)
-                if is_personal_email_for_scholar(email, record["姓名"])))
+            # The owner's own biography image: an address there is theirs,
+            # whatever its domain, unless it spells a colleague's name.
+            personal_emails = own_text_emails(image_bio, record["姓名"], college_names)
             if len(personal_emails) > 1 or (personal_emails and record["邮箱"]
                                              and record["邮箱"].lower() != personal_emails[0].lower()):
                 from server.image_bio_review import email_conflict_id, resolve_email_conflict

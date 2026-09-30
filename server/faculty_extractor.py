@@ -6,6 +6,7 @@ Zero keyword blacklists. Based on:
 3. Minimal Enclosing Content Container (MECC Scoping)
 """
 
+import functools
 import re
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Set, Tuple, Any
@@ -27,7 +28,7 @@ _OPUS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 if _OPUS_DIR not in sys.path:
     sys.path.insert(0, _OPUS_DIR)
 try:
-    from iso_mining import (VirtualNode, first_href, mine_records, primary_tokens,
+    from iso_mining import (VirtualNode, first_href, mine_records, name_prob, primary_tokens,
                             rare_surname_name, strip_invisible)
     from email_matching import DomainConventionModel
     from text_lists import email_spans, _AT as _AT_PATTERN
@@ -36,7 +37,7 @@ try:
 except ImportError as _ex:                          # never silently: log it
     log.error("L2 algorithm layer unavailable: %s", _ex)
     mine_records = DomainConventionModel = VirtualNode = first_href = primary_tokens = email_spans = None
-    rare_surname_name = None
+    rare_surname_name = name_prob = None
     L2_AVAILABLE = False
 
     # _clean_name is called on every extraction path, including this degraded
@@ -66,6 +67,10 @@ except ImportError:
     from titles import TITLE_KEYWORDS, resolve_title
 
 # '李星教授介绍': a 2-4 character name, a title keyword, then an introduction suffix.
+# Below this prior, text repeated on most cards is template ('查看详情'), not a name.
+TEMPLATE_NAME_PRIOR = 0.7
+_NAME_SHAPED = re.compile(r"[\u4e00-\u9fff]{2,4}|[\u4e00-\u9fff]{1,8}(?:[·•][\u4e00-\u9fff]{1,8}){1,3}")
+_DEGREE_AFTER_NAME = re.compile(r"^([\u4e00-\u9fff]{2,4}?)(?:博士|硕士)$")
 _INTRODUCED_NAME = re.compile(
     r"^([\u4e00-\u9fff]{2,4}?)(" + "|".join(map(re.escape, TITLE_KEYWORDS))
     + r")(?:个人简介|简介|介绍|个人主页|主页)$")
@@ -141,6 +146,80 @@ def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
     if dom in FREE_MAIL_DOMAINS:
         return True
     return True
+
+_AFFINITY_MODEL = None
+
+
+@functools.lru_cache(maxsize=65536)
+def email_name_affinity(email: str, scholar_name: str) -> bool:
+    """The local part spells the person's name (full pinyin or initials).
+
+    This is supporting evidence only. Many teachers use a personal address
+    (163.com, qq.com, a nickname) that spells nothing; ownership comes from
+    where the address appears, see ``own_email``.
+    """
+    global _AFFINITY_MODEL
+    if not email or '@' not in email or not scholar_name or DomainConventionModel is None:
+        return False
+    local_part = email.lower().partition('@')[0]
+    clean_local = re.sub(r'[-_.]', '', local_part)
+    try:
+        if _AFFINITY_MODEL is None:
+            _AFFINITY_MODEL = DomainConventionModel()
+        dcm = _AFFINITY_MODEL
+        if dcm._pinyin_match(clean_local, scholar_name) or dcm._pinyin_match(local_part, scholar_name):
+            return True
+        for syl in dcm.readings(scholar_name):
+            initials = "".join(s[0] for s in syl if s).lower()
+            if len(initials) >= 2 and clean_local.startswith(initials):
+                return True
+            full_py = "".join(s for s in syl if s).lower()
+            if len(full_py) >= 3 and clean_local.startswith(full_py):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def own_email(name: str, own: List[str], holders: Dict[str, Set[Any]], key: Any,
+              colleagues: Set[str], taken: Set[str]) -> str:
+    """The address a teacher's own card or profile body gives, by location.
+
+    ``own`` lists the addresses inside this teacher's own card and verified
+    profile container, in page order; ``holders`` maps each address to every
+    teacher whose own card or profile contains it. Domain and spelling do not
+    decide ownership:
+
+    * an address on several teachers' own pages is a shared contact (college
+      office, lab), unless it spells exactly one of them;
+    * an address that spells a colleague's name and not this teacher's is the
+      colleague's;
+    * among several own addresses, one that spells the name comes first, then
+      page order.
+    """
+    ranked = []
+    for index, email in enumerate(own):
+        low = email.lower()
+        if low in taken:
+            continue
+        mine = email_name_affinity(email, name)
+        if not mine and any(email_name_affinity(email, other) for other in colleagues if other != name):
+            continue
+        sharers = holders.get(low, set()) - {key}
+        if sharers and not (mine and not any(email_name_affinity(email, holder[0]) for holder in sharers
+                                             if holder[0] != name)):
+            continue
+        ranked.append((not mine, index, email))
+    return min(ranked)[2] if ranked else ""
+
+
+def own_text_emails(text: str, name: str, colleagues=()) -> List[str]:
+    """Addresses in a teacher's own biography text (e.g. an OCR'd resume image),
+    in order, except one that spells a colleague's name and not this teacher's."""
+    return [email for email in dict.fromkeys(find_emails(text))
+            if email_name_affinity(email, name)
+            or not any(email_name_affinity(email, other) for other in colleagues if other != name)]
+
 
 def is_institutional_email(email: str, scholar_name: str = "") -> bool:
     if not email or '@' not in email:
@@ -241,6 +320,11 @@ class FacultyDirectoryExtractor:
         else:
             name = re.sub(r'\s+', ' ', raw).strip()
 
+        # A degree after the name ('林海 博士') is not part of it and not a title.
+        degree = _DEGREE_AFTER_NAME.match(name)
+        if degree:
+            name = degree.group(1)
+
         # A supervisor list links each person as '李星教授介绍' / '张慧副教授简介'.
         introduced = _INTRODUCED_NAME.match(name)
         if introduced:
@@ -311,6 +395,13 @@ class FacultyDirectoryExtractor:
                         if a is not res.best and a is not g
                         and (_region(a)[0] == bc or _region(a)[1] == bp)]
         pairs = [(grp, r, p) for grp in groups for r, p in zip(grp.records, grp.record_probs)]
+        # Text every card repeats ('查看详情 >>', a field label) is template, not a
+        # name; such a card is named by its first name-shaped text of its own.
+        repeated: Dict[int, Counter] = {}
+        for grp in groups:
+            if not isinstance(grp.records[0][0], VirtualNode):
+                repeated[id(grp)] = Counter(token for rec in grp.records
+                                            for token in set(primary_tokens(rec, k=16)))
         out, seen = [], set()
         for idx, (grp, r, p) in enumerate(pairs):
             needs_review = False
@@ -344,6 +435,12 @@ class FacultyDirectoryExtractor:
             else:
                 toks = primary_tokens(r)
                 raw = toks[0] if toks else ""
+                shared = repeated.get(id(grp), Counter())
+                # Homonyms ('王伟' on two cards) repeat too, but they read as names.
+                if (raw and grp.size >= 2 and shared[raw] >= max(2, (grp.size + 1) // 2)
+                        and name_prob(raw) < TEMPLATE_NAME_PRIOR):
+                    raw = next((token for token in primary_tokens(r, k=16)
+                                if shared[token] == 1 and _NAME_SHAPED.fullmatch(token)), "")
                 card = " ".join(n.get_text(separator=' ', strip=True) for n in r)
                 href = first_href(r, base_url)
                 section = ""
@@ -802,6 +899,9 @@ class FacultyHarvestPipeline:
 
         surname_counts = Counter(c.name[0] for c in cands_on_page if c.name)
         assigned_emails = set()
+        card_email_sets = {
+            id(c): {em.lower() for em in find_emails(LayoutAwareTokenizer.get_clean_text(cand_cards[id(c)]))}
+            for c in cands_on_page if cand_cards.get(id(c))}
 
         for cand in cands_on_page:
             card = cand_cards.get(id(cand))
@@ -817,16 +917,19 @@ class FacultyHarvestPipeline:
 
             valid_card_emails = []
             for em in card_emails:
-                if not is_personal_email_for_scholar(em, cand.name):
-                    other_matches = [p.name for p in cands_on_page if p is not cand and is_personal_email_for_scholar(em, p.name)]
-                    if other_matches:
-                        unresolved.append({
-                            "姓名": cand.name, "主页": page_url,
-                            "status": "conflicting_card_email",
-                            "email": em,
-                            "reason": f"Card for '{cand.name}' contains email '{em}' which matches peer(s) {other_matches}"
-                        })
+                # The exclusive card locates the owner; the spelling does not.
+                mine = email_name_affinity(em, cand.name)
+                other_matches = [p.name for p in cands_on_page if p is not cand and email_name_affinity(em, p.name)]
+                if other_matches and not mine:
+                    unresolved.append({
+                        "姓名": cand.name, "主页": page_url,
+                        "status": "conflicting_card_email",
+                        "email": em,
+                        "reason": f"Card for '{cand.name}' contains email '{em}' which matches peer(s) {other_matches}"
+                    })
                     continue
+                if sum(em.lower() in card_email_sets.get(id(peer), set()) for peer in cands_on_page) > 1:
+                    continue  # one address in several cards is a shared contact
 
                 local_part = em.split('@')[0].lower()
                 clean_local = re.sub(r'[-_.]', '', local_part)
@@ -843,15 +946,12 @@ class FacultyHarvestPipeline:
 
                 valid_card_emails.append(em)
 
-            if len(valid_card_emails) == 1:
-                email = valid_card_emails[0]
+            if valid_card_emails:
+                # Several addresses in one person's own card are all theirs:
+                # one that spells the name first, then card order.
+                email = min(valid_card_emails, key=lambda em: (not email_name_affinity(em, cand.name),
+                                                               valid_card_emails.index(em)))
                 assigned_emails.add(email.lower())
-            elif len(valid_card_emails) > 1:
-                unresolved.append({
-                    "姓名": cand.name, "主页": page_url,
-                    "status": "ambiguous_email_assignment",
-                    "matches": valid_card_emails
-                })
 
             results[id(cand)] = {
                 "email": email,
@@ -987,6 +1087,25 @@ class FacultyHarvestPipeline:
         assigned_emails: Set[str] = set()
         dcm = DomainConventionModel() if DomainConventionModel is not None else None
 
+        # Addresses inside each teacher's own card and own profile body, and
+        # every teacher holding each address, so a shared contact is visible.
+        own_pools: Dict[int, List[str]] = {}
+        email_holders: Dict[str, Set[Any]] = {}
+        college_names = {cand.name for cand in candidates if cand.name}
+        for cand, html, status in fetch_results:
+            if url_counts.get(cand.url, 0) > 1 and cand.url != base_url:
+                continue  # several people on one page: resolved card by card below
+            pool = list(find_emails(cand.card_context))
+            prof = (details_by_url.get(cand.url) or single_profiles.get(cand.url)) if status == "ok" and html else None
+            if prof:
+                if details_by_url and prof.email:
+                    pool.append(prof.email)
+                pool.extend(prof.emails)
+            pool = list(dict.fromkeys(pool))
+            own_pools[id(cand)] = pool
+            for em in pool:
+                email_holders.setdefault(em.lower(), set()).add((cand.name, cand.url))
+
         sheet1_with_email, sheet2_no_email, unresolved = [], [], []
         cand_indices_1, cand_indices_2 = set(), set()
 
@@ -1022,29 +1141,12 @@ class FacultyHarvestPipeline:
                 if status == "ok" and html:
                     prof = details_by_url.get(cand.url) or single_profiles.get(cand.url)
 
-                # 1. Candidate's own card container (MECC from directory listing)
-                card_emails = [em for em in find_emails(cand.card_context) if is_personal_email_for_scholar(em, cand.name)]
-                if card_emails:
-                    for em in card_emails:
-                        if em.lower() not in assigned_emails:
-                            email = em
-                            assigned_emails.add(em.lower())
-                            break
-
-                # 2. Individual 1-to-1 profile page
-                if not email and prof:
-                    cand_pool = []
-                    if details_by_url and prof.email:
-                        cand_pool.append(prof.email)
-                    for em in prof.emails:
-                        if em not in cand_pool:
-                            cand_pool.append(em)
-
-                    for em in cand_pool:
-                        if em.lower() not in assigned_emails and is_personal_email_for_scholar(em, cand.name):
-                            email = em
-                            assigned_emails.add(em.lower())
-                            break
+                # The candidate's own card, then its own 1-to-1 profile body:
+                # an address there is the teacher's whatever its domain.
+                email = own_email(cand.name, own_pools.get(id(cand), []), email_holders,
+                                  (cand.name, cand.url), college_names, assigned_emails)
+                if email:
+                    assigned_emails.add(email.lower())
 
                 if email and dcm is not None:
                     try:

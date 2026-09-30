@@ -249,12 +249,12 @@
                 <form id="batchCard" class="form hidden" role="tabpanel" novalidate onsubmit="event.preventDefault(); startBatchCollect();">
                     <div class="field">
                         <div class="field-row">
-                            <label class="field-label" for="batchInput">每行一个学院：高校 学院 官网网址</label>
+                            <label class="field-label" for="batchInput">每行：高校 学院 学院主页 [师资链接]</label>
                             <button type="button" class="btn btn-ghost btn-sm" onclick="insertSixCollegesExample()">填入示例</button>
                         </div>
                         <textarea id="batchInput" rows="8" class="input" oninput="updateBatchCount()" placeholder="复旦大学 哲学学院 https://philosophy.fudan.edu.cn/&#10;同济大学 环境科学与工程学院 https://sese.tongji.edu.cn/&#10;华东师范大学 地理科学学院 https://geo.ecnu.edu.cn/"></textarea>
                         <div class="field-foot">
-                            <span class="hint">三项用空格分隔，都必须填写。</span>
+                            <span class="hint">可直接粘贴表格。第四列师资链接可选；同一学院的多条链接各占一行，会合并成一张工单。</span>
                             <span id="batchCount" class="hint num">0 个学院</span>
                         </div>
                     </div>
@@ -636,9 +636,23 @@
             return document.getElementById('batchInput').value.split('\n').filter(line => line.trim());
         }
 
+        let confirmedBatchText = '';
+
+        function batchColleges() {
+            // One task per school + college; several roster-link rows share it.
+            const keys = new Set();
+            for (const line of batchLines()) {
+                const parts = line.includes('\t') ? line.split('\t').map(p => p.trim()).filter(Boolean)
+                                                  : line.trim().split(/[\s,，]+/);
+                if (parts.length >= 2 && !/^https?:/i.test(parts[0])) keys.add(parts[0] + '\u0000' + parts[1]);
+            }
+            return keys.size;
+        }
+
         function updateBatchCount() {
-            document.getElementById('batchCount').innerText = `${batchLines().length} 个学院`;
+            document.getElementById('batchCount').innerText = `${batchColleges()} 个学院`;
             showError('batchError', '');
+            confirmedBatchText = '';
         }
 
         function insertSixCollegesExample() {
@@ -696,7 +710,7 @@
         async function startBatchCollect() {
             const text = document.getElementById('batchInput').value.trim();
             if (!text) {
-                showError('batchError', '请至少填写一行：高校 学院 官网网址。');
+                showError('batchError', '请至少填写一行：高校 学院 学院主页 [师资链接]。');
                 return;
             }
             showError('batchError', '');
@@ -708,8 +722,17 @@
                 const resp = await fetch('/api/collect_batch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                    body: JSON.stringify({ items_text: text })
+                    body: JSON.stringify({ items_text: text, confirm_warnings: confirmedBatchText === text })
                 });
+                if (resp.status === 409) {
+                    // Suspicious rows: show them; submitting the same text again confirms.
+                    const data = await resp.json();
+                    if (epoch !== requestEpoch) return;
+                    resetCurrentView();
+                    confirmedBatchText = text;
+                    showError('batchError', '请先确认以下情况，无误后再次点击提交：\n' + (data.warnings || []).join('\n'));
+                    return;
+                }
                 if (!resp.ok) throw new Error((await resp.json()).detail || '服务未接受请求');
                 const data = await resp.json();
                 if (epoch !== requestEpoch) return;
@@ -798,7 +821,10 @@
                         setResultTone(ready);
                         setBadge(task.counts_basis ? '身份与人数待复核' : taskScope?.state === 'ready' ? '本次范围已完成' : '学院已完成，大学范围待处理',
                                  task.counts_basis || taskScope?.state === 'blocked' ? 'warn' : 'success');
-                        document.getElementById('statSummary').innerText = task.counts_basis ? `${task.college} 保留 ${task.stats.total || 0} 条页面观察，人数待核算` : `${task.college} 入库 ${task.stats.total || 0} 位 | 有邮箱 ${task.stats.with_email || 0} 位 | 无邮箱 ${task.stats.no_email || 0} 位`;
+                        const fieldFlags = task.stats?.field_check?.flagged_records || 0;
+                        const crossCheck = (task.stats?.cross_check?.summary ? ` | 人数核对：${task.stats.cross_check.summary}` : '')
+                            + (fieldFlags ? ` | 字段核对：${fieldFlags} 条记录待看` : '');
+                        document.getElementById('statSummary').innerText = (task.counts_basis ? `${task.college} 保留 ${task.stats.total || 0} 条页面观察，人数待核算` : `${task.college} 入库 ${task.stats.total || 0} 位 | 有邮箱 ${task.stats.with_email || 0} 位 | 无邮箱 ${task.stats.no_email || 0} 位`) + crossCheck;
                         document.getElementById('univDownloadBox').replaceChildren();
                         if (task.download_url) showDownload(task.download_url, taskScope?.state === 'ready' ? '下载本次范围交付' : '下载学院中间成果');
                         else document.getElementById('downloadBtn').classList.add('hidden');
@@ -836,6 +862,7 @@
             if (st.status === 'completed') {
                 tone = st.counts_basis ? 'warn' : 'success';
                 text = st.counts_basis ? `待复核 (${st.stats?.total || 0}条观察)` : `完成 (${st.stats?.total || 0}人)`;
+                if (!st.counts_basis && st.stats?.cross_check?.status === 'difference') { tone = 'warn'; text += ' · 人数有差额待确认'; }
             }
             if (st.status === 'failed') { tone = 'danger'; text = '失败'; }
             const download = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download title="下载该学院的双 Sheet Excel">${icon('download')}表格</a>` : '';

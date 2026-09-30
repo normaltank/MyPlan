@@ -81,7 +81,7 @@ select.input { padding-right: 8px; }
 .field { display: grid; gap: 6px; }
 .field-label { font-weight: 600; color: var(--text-2); }
 .hint { color: var(--muted); font-size: 12.5px; }
-.form-error { padding: 8px 12px; border: 1px solid var(--bad-line); border-radius: var(--radius-sm);
+.form-error { white-space: pre-line; padding: 8px 12px; border: 1px solid var(--bad-line); border-radius: var(--radius-sm);
               background: var(--bad-soft); color: var(--bad); font-size: 13px; }
 
 .pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;

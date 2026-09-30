@@ -348,6 +348,8 @@ async def test_structure_error_reconnoiters_and_passes_only_verified_branch(tmp_
         model_kwargs.append(kwargs)
         recon = recon_result()
         recon.plan = copy.deepcopy(plan)
+        if len(model_kwargs) > 1:  # the repair changes the broken branch
+            recon.plan["branches"][0]["card_selector"] = "main ol > li"
         return recon
     async def browser(active, directory):
         runs.append(active)
