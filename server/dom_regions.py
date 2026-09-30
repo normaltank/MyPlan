@@ -10,6 +10,10 @@ _CHROME_NAME = re.compile(
     re.I,
 )
 _HEADER_NAME = re.compile(r"^(?:(?:site|page|global|wp|main)[-_])?header$", re.I)
+# The head noun of a compound name ('profile-footer', 'left_nav', 'col_menu')
+# names a chrome region; a leading word ('bottom-up-research', 'menu-research')
+# only modifies authored content and never does.
+_CHROME_HEAD = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*[-_](?:footer|nav|menu|sidebar|copyright)$", re.I)
 
 
 def is_noise_element(tag: Tag) -> bool:
@@ -19,6 +23,6 @@ def is_noise_element(tag: Tag) -> bool:
     if tag.name in _CHROME_TAGS:
         return True
     names = [*tag.get("class", []), tag.get("id") or ""]
-    if any(_CHROME_NAME.fullmatch(name) for name in names):
+    if any(_CHROME_NAME.fullmatch(name) or _CHROME_HEAD.fullmatch(name) for name in names):
         return True
     return any(_HEADER_NAME.fullmatch(name) for name in names)

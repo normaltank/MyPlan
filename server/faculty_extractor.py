@@ -74,15 +74,20 @@ _INTRODUCED_NAME = re.compile(
     + r")(?:个人简介|简介|介绍|个人主页|主页)$")
 
 try:
-    from server.detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer, contact_email_candidates
+    from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
+                                    contact_email_candidates, labeled_text_emails)
     DETAIL_MECC_AVAILABLE = True
 except ImportError:
     try:
-        from detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer, contact_email_candidates
+        from detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
+                                 contact_email_candidates, labeled_text_emails)
         DETAIL_MECC_AVAILABLE = True
     except ImportError as _ex:
         log.warning("Detail MECC extractor unavailable: %s", _ex)
         DetailMECCExtractor = ProfileDetail = LayoutAwareTokenizer = contact_email_candidates = None
+
+        def labeled_text_emails(text):  # no evidence reader: nothing is labelled
+            return []
         DETAIL_MECC_AVAILABLE = False
 
 _DEFAULT_L1_EXECUTOR = None
@@ -151,6 +156,7 @@ def is_institutional_email(email: str, scholar_name: str = "") -> bool:
     if scholar_name:
         return not is_personal_email_for_scholar(email, scholar_name)
     return False
+
 
 @dataclass(frozen=True)
 class FacultyCandidate:
@@ -857,55 +863,84 @@ class FacultyHarvestPipeline:
         surname_counts = Counter(c.name[0] for c in cands_on_page if c.name)
         assigned_emails = set()
 
+        card_texts, card_contacts, card_addresses, holders = {}, {}, {}, {}
         for cand in cands_on_page:
             card = cand_cards.get(id(cand))
-            card_text = LayoutAwareTokenizer.get_clean_text(card, preserve_content=preserve_content) if card else ""
-            card_emails = find_emails(card_text) if card_text else []
+            card_texts[id(cand)] = (LayoutAwareTokenizer.get_clean_text(card, preserve_content=preserve_content)
+                                    if card else "")
+            contacts = (list(contact_email_candidates(card))
+                        if card is not None and contact_email_candidates is not None else [])
+            card_contacts[id(cand)] = {em.lower() for em in contacts}
+            # A mailto link may carry an address its visible text does not show.
+            addresses = {}
+            for em in find_emails(card_texts[id(cand)]) + contacts:
+                addresses.setdefault(em.lower(), em)
+            card_addresses[id(cand)] = list(addresses.values())
+            for em in addresses:
+                holders.setdefault(em, set()).add(id(cand))
+
+        def surname_only(em: str, cand: FacultyCandidate) -> bool:
+            if dcm is None or not cand.name or surname_counts.get(cand.name[0], 1) < 2:
+                return False
+            clean_local = re.sub(r'[-_.]', '', em.split('@')[0].lower())
+            return any(len(syl) > 1 and clean_local == syl[0] for syl in dcm.readings(cand.name))
+
+        flagged = set()
+        for cand in cands_on_page:
+            card_text = card_texts[id(cand)]
+            card_emails = card_addresses[id(cand)]
 
             matched_title = cand.title
             if card_text:
                 matched_title = next((t for t in TITLE_KEYWORDS if t in card_text), cand.title)
 
-            email = ""
-            same_sur_count = surname_counts.get(cand.name[0], 1) if cand.name else 1
+            def flag(status: str, **detail):
+                flagged.add(id(cand))
+                unresolved.append({"姓名": cand.name, "主页": page_url, "status": status, **detail})
 
-            valid_card_emails = []
+            # Ownership evidence inside this teacher's exclusive card: a contact
+            # field (label, label cell, mailto) first, else the spelling of the
+            # name. An address spelling a colleague, or only a shared surname,
+            # is never guessed at.
+            labelled, spelled, unowned = [], [], []
             for em in card_emails:
-                if not is_personal_email_for_scholar(em, cand.name):
-                    other_matches = [p.name for p in cands_on_page if p is not cand and is_personal_email_for_scholar(em, p.name)]
+                key = em.lower()
+                own_spelling = is_personal_email_for_scholar(em, cand.name)
+                if not own_spelling:
+                    other_matches = [p.name for p in cands_on_page
+                                     if p is not cand and is_personal_email_for_scholar(em, p.name)]
                     if other_matches:
-                        unresolved.append({
-                            "姓名": cand.name, "主页": page_url,
-                            "status": "conflicting_card_email",
-                            "email": em,
-                            "reason": f"Card for '{cand.name}' contains email '{em}' which matches peer(s) {other_matches}"
-                        })
-                    continue
-
-                local_part = em.split('@')[0].lower()
-                clean_local = re.sub(r'[-_.]', '', local_part)
-                # Disallow surname-only matching when multiple peers share this surname
-                if same_sur_count > 1 and dcm is not None:
-                    if any(len(syl) > 1 and clean_local == syl[0] for syl in dcm.readings(cand.name)):
-                        unresolved.append({
-                            "姓名": cand.name, "主页": page_url,
-                            "status": "ambiguous_surname_email",
-                            "email": em,
-                            "reason": f"Surname-only email '{em}' on shared page with multiple peers sharing surname '{cand.name[0]}'"
-                        })
+                        flag("conflicting_card_email", email=em,
+                             reason=f"Card for '{cand.name}' contains email '{em}' which matches peer(s) {other_matches}")
                         continue
+                if surname_only(em, cand):
+                    flag("ambiguous_surname_email", email=em,
+                         reason=f"Surname-only email '{em}' on shared page with multiple peers sharing surname '{cand.name[0]}'")
+                    continue
+                if key in card_contacts[id(cand)]:
+                    labelled.append(em)
+                elif own_spelling:
+                    spelled.append(em)
+                elif len(holders.get(key, ())) < 2:
+                    unowned.append(em)
+                # An unlabelled address on several cards is a public contact.
 
-                valid_card_emails.append(em)
+            owned = labelled or spelled
+            repeated = [em for em in owned if len(holders.get(em.lower(), ())) > 1]
+            for em in repeated:
+                flag("ambiguous_shared_email", email=em)
+            owned = [em for em in owned if em not in repeated]
 
-            if len(valid_card_emails) == 1:
-                email = valid_card_emails[0]
+            email = ""
+            if len(owned) == 1:
+                email = owned[0]
                 assigned_emails.add(email.lower())
-            elif len(valid_card_emails) > 1:
-                unresolved.append({
-                    "姓名": cand.name, "主页": page_url,
-                    "status": "ambiguous_email_assignment",
-                    "matches": valid_card_emails
-                })
+            elif len(owned) > 1:
+                flag("ambiguous_email_assignment", matches=owned)
+            elif unowned and id(cand) not in flagged:
+                # An address stands in this teacher's card with no evidence
+                # of whose it is: a person decides, not the no-email sheet.
+                flag("ambiguous_email_assignment", matches=unowned)
 
             results[id(cand)] = {
                 "email": email,
@@ -916,13 +951,7 @@ class FacultyHarvestPipeline:
         # Check page-level emails outside candidate exclusive cards
         all_page_emails = [em.lower() for em in find_emails(
             LayoutAwareTokenizer.get_clean_text(soup, preserve_content=preserve_content))]
-        all_card_emails = set()
-        for card in cand_cards.values():
-            if card:
-                all_card_emails.update(em.lower() for em in find_emails(
-                    LayoutAwareTokenizer.get_clean_text(card, preserve_content=preserve_content)))
-
-        uncontained_emails = [em for em in all_page_emails if em not in all_card_emails]
+        uncontained_emails = [em for em in dict.fromkeys(all_page_emails) if em not in holders]
         for u_em in uncontained_emails:
             matching_cands = [c for c in cands_on_page if is_personal_email_for_scholar(u_em, c.name)]
             if len(matching_cands) > 1:
@@ -934,18 +963,14 @@ class FacultyHarvestPipeline:
                     })
             elif len(matching_cands) == 1:
                 mc = matching_cands[0]
-                if not results[id(mc)]["email"] and u_em not in assigned_emails:
-                    local_part = u_em.split('@')[0].lower()
-                    clean_local = re.sub(r'[-_.]', '', local_part)
-                    same_sur_count = surname_counts.get(mc.name[0], 1) if mc.name else 1
-                    if same_sur_count > 1 and dcm is not None:
-                        if any(len(syl) > 1 and clean_local == syl[0] for syl in dcm.readings(mc.name)):
-                            unresolved.append({
-                                "姓名": mc.name, "主页": page_url,
-                                "status": "ambiguous_surname_email",
-                                "email": u_em
-                            })
-                            continue
+                if not results[id(mc)]["email"] and id(mc) not in flagged and u_em not in assigned_emails:
+                    if surname_only(u_em, mc):
+                        unresolved.append({
+                            "姓名": mc.name, "主页": page_url,
+                            "status": "ambiguous_surname_email",
+                            "email": u_em
+                        })
+                        continue
                     results[id(mc)]["email"] = u_em
                     assigned_emails.add(u_em.lower())
 
@@ -1026,7 +1051,6 @@ class FacultyHarvestPipeline:
 
         # Fallback to single page extractor if cluster extraction was not used
         single_profiles = {}
-        owners: Dict[str, set] = {}
         if not details_by_url:
             for cand, html, status in fetch_results:
                 if status == "ok" and html:
@@ -1035,11 +1059,25 @@ class FacultyHarvestPipeline:
                         preserve_content=cand.url in (verified_profile_urls or ())
                     )
 
-            # detail-df fallback across single profiles
-            for cand, _, status in fetch_results:
-                prof = single_profiles.get(cand.url)
-                for em in (prof.emails if prof else ()):
-                    owners.setdefault(em.lower(), set()).add((cand.name, cand.url))
+        # detail-df: an address on several sibling profile pages (a template
+        # block such as '地址… 邮箱：college@…', or a colleague quoted) is
+        # evidence for nobody, labelled or not, unless it spells exactly one
+        # of the teachers whose pages show it.
+        page_holders: Dict[str, Dict[str, List[str]]] = {}
+        for cand, _, status in fetch_results:
+            prof = details_by_url.get(cand.url) or single_profiles.get(cand.url)
+            for em in {em.lower() for em in (*(prof.emails if prof else ()), *(prof.contact_emails if prof else ()))}:
+                page_holders.setdefault(em, {}).setdefault(cand.url, []).append(cand.name)
+        sibling_owner: Dict[str, Optional[Tuple[str, str]]] = {}
+        for em, holders_by_url in page_holders.items():
+            if len(holders_by_url) > 1:
+                spelled = [(url, name) for url, names in holders_by_url.items() for name in names
+                           if is_personal_email_for_scholar(em, name)]
+                sibling_owner[em] = spelled[0] if len(spelled) == 1 else None
+
+        def usable_on_profile(em: str, cand: FacultyCandidate) -> bool:
+            key = em.lower()
+            return key not in sibling_owner or sibling_owner[key] == (cand.url, cand.name)
 
         # Step 4: Assemble dual sheets with strict conservation
         url_counts = Counter(cand.url for cand in candidates if cand.url)
@@ -1062,10 +1100,29 @@ class FacultyHarvestPipeline:
                     shared_results_by_cand_id.update(p_res)
                     unresolved.extend(p_unres)
 
+        # Roster-card contact fields. A card that also names another teacher
+        # is not this teacher's alone, so its labels prove nothing.
+        roster_names = {c.name for c in candidates if c.name and len(c.name) >= 2}
+        card_labels: Dict[int, List[str]] = {}
+        label_holders: Dict[str, set] = {}
+        card_holders: Dict[str, set] = {}
+        for cand in candidates:
+            if not cand.card_context or id(cand) in shared_results_by_cand_id:
+                continue
+            for em in {em.lower() for em in find_emails(cand.card_context)}:
+                card_holders.setdefault(em, set()).add(id(cand))
+            if any(other != cand.name and other not in cand.name and other in cand.card_context
+                   for other in roster_names):
+                continue
+            card_labels[id(cand)] = labeled_text_emails(cand.card_context)
+            for em in card_labels[id(cand)]:
+                label_holders.setdefault(em.lower(), set()).add(id(cand))
+
         for cand_idx, (cand, html, status) in enumerate(fetch_results):
             if status.startswith("fetch_failed"):
                 unresolved.append({"姓名": cand.name, "主页": cand.url, "status": status})
                 continue
+            issues_before = len(unresolved)
 
             email = ""
             title = cand.title
@@ -1083,17 +1140,49 @@ class FacultyHarvestPipeline:
                 if status == "ok" and html:
                     prof = details_by_url.get(cand.url) or single_profiles.get(cand.url)
 
-                # 1. Candidate's own card container (MECC from directory listing)
-                card_emails = [em for em in find_emails(cand.card_context) if is_personal_email_for_scholar(em, cand.name)]
-                if card_emails:
-                    for em in card_emails:
+                # 1. Candidate's own card container (MECC from directory listing):
+                #    a labelled contact field first, else the spelling of the name.
+                labels = card_labels.get(id(cand), [])
+                spelled = [em for em in find_emails(cand.card_context) if is_personal_email_for_scholar(em, cand.name)]
+                card_unowned = []
+                if labels:
+                    for em in labels:
+                        if len(label_holders.get(em.lower(), ())) > 1:
+                            unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                               "status": "ambiguous_shared_email", "email": em})
+                    labels = [em for em in labels if len(label_holders.get(em.lower(), ())) < 2]
+                    if len(labels) > 1:
+                        unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                           "status": "ambiguous_email_assignment", "matches": labels})
+                    elif labels and labels[0].lower() in assigned_emails:
+                        unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                           "status": "ambiguous_shared_email", "email": labels[0]})
+                    elif labels:
+                        email = labels[0]
+                        assigned_emails.add(email.lower())
+                elif spelled:
+                    for em in spelled:
                         if em.lower() not in assigned_emails:
                             email = em
                             assigned_emails.add(em.lower())
                             break
+                elif id(cand) in card_labels:
+                    # An exclusive card showing an address it does not label or spell.
+                    card_unowned = [em for em in dict.fromkeys(find_emails(cand.card_context))
+                                    if len(card_holders.get(em.lower(), ())) < 2]
 
                 # 2. Individual 1-to-1 profile page
-                contacts = tuple(prof.contact_emails) if prof else ()
+                # A colleague named on this page and spelled by the address owns it.
+                colleagues = ([name for name in roster_names if name != cand.name and name not in cand.name
+                               and name in (prof.full_bio or "")] if prof else [])
+
+                def usable(em: str) -> bool:
+                    return usable_on_profile(em, cand) and not (
+                        colleagues and not is_personal_email_for_scholar(em, cand.name)
+                        and any(is_personal_email_for_scholar(em, name) for name in colleagues))
+
+                contacts = tuple(em for em in prof.contact_emails if usable(em)) if prof else ()
+                page_emails = [em for em in prof.emails if usable(em)] if prof else []
                 if contacts:
                     if len(contacts) != 1 or (email and email.lower() != contacts[0].lower()):
                         unresolved.append({"姓名": cand.name, "主页": cand.url,
@@ -1106,9 +1195,9 @@ class FacultyHarvestPipeline:
                         assigned_emails.add(email.lower())
                 if not email and prof:
                     cand_pool = []
-                    if details_by_url and prof.email:
+                    if details_by_url and prof.email and usable(prof.email):
                         cand_pool.append(prof.email)
-                    for em in prof.emails:
+                    for em in page_emails:
                         if em not in cand_pool:
                             cand_pool.append(em)
 
@@ -1117,9 +1206,12 @@ class FacultyHarvestPipeline:
                             email = em
                             assigned_emails.add(em.lower())
                             break
-                    if prof.emails and not email and not contacts:
+                    if page_emails and not email and not contacts:
                         unresolved.append({"姓名": cand.name, "主页": cand.url,
-                                           "status": "ambiguous_email_assignment", "matches": list(prof.emails)})
+                                           "status": "ambiguous_email_assignment", "matches": page_emails})
+                if card_unowned and not email and len(unresolved) == issues_before:
+                    unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                       "status": "ambiguous_email_assignment", "matches": card_unowned})
 
                 if email and dcm is not None:
                     try:

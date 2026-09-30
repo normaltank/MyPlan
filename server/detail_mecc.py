@@ -13,6 +13,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import unquote
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from server.dom_regions import is_noise_element
@@ -192,22 +193,66 @@ class ProfileDetail:
 
 
 _CONTACT_FIELD = re.compile(r"^(?:(?:电子|联系)?(?:邮箱|邮件)|e-?mail)(?:\s*[:：]\s*|\s+|$)", re.I)
+# A table cell standing beside the value is a label only when it holds nothing else.
+_CONTACT_LABEL_CELL = re.compile(r"^(?:(?:电子|联系)?(?:邮箱|邮件|信箱)(?:地址)?|e-?mail(?:\s*address)?)\s*[:：]?$", re.I)
+
+
+# A label right before an address. It must start a field: '学院公共邮箱' or
+# '课题组邮箱' qualify a mailbox as someone else's and are not this label.
+_TEXT_CONTACT_LABEL = re.compile(
+    r"(?<![一-鿿A-Za-z])(?:个人|联系|工作)?(?:电子)?(?:邮箱|邮件|信箱|e-?mail)(?:地址|\s*address)?\s*[:：]?\s*$",
+    re.I)
+_CONTACT_JOINER = re.compile(r"^\s*(?:[;；,，、/]|或|or)\s*$", re.I)
+
+
+def labeled_text_emails(text: str) -> List[str]:
+    """Addresses a contact label introduces in running text ('电话：… 邮箱：a@x；b@y').
+
+    The text form of contact-field evidence: an address counts only when a
+    label, or a labelled address and a list separator, stands right before it.
+    """
+    if not text:
+        return []
+    if email_spans is not None and _AT_RE is not None:
+        spans = [(a, b, re.sub(r"\s+", "", _AT_RE.sub("@", text[a:b])).strip("."))
+                 for a, b, _ in email_spans(text)]
+    else:
+        spans = [(m.start(), m.end(), m.group(0).lower()) for m in EMAIL_REGEX.finditer(text)]
+    found, previous_end, previous_labeled = [], 0, False
+    for start, end, address in spans:
+        labeled = bool(_TEXT_CONTACT_LABEL.search(text[max(0, start - 24):start])) or (
+            previous_labeled and _CONTACT_JOINER.match(text[previous_end:start]) is not None)
+        if labeled and address.lower() not in {item.lower() for item in found}:
+            found.append(address)
+        previous_end, previous_labeled = end, labeled
+    return found
+
+
+def _mailto_address(node: Tag) -> List[str]:
+    target = str(node.get('href', '')).strip()
+    return find_emails(unquote(target[len('mailto:'):].split('?', 1)[0])) if target.lower().startswith('mailto:') else []
 
 
 def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
     """Read positive contact-field evidence, without guessing from the local part."""
     addresses = []
-    for node in [root, *root.find_all(['p', 'div', 'td', 'dd', 'span', 'a'])]:
+    for node in [root, *root.find_all(['p', 'div', 'td', 'dd', 'li', 'span', 'a'])]:
         # An outer container is not a contact field simply because its first
         # paragraph is one; that would absorb addresses in the research prose.
         if node.find(['p', 'div', 'table', 'section', 'article', 'li'], recursive=False):
             continue
         text = LayoutAwareTokenizer.get_clean_text(node, preserve_content=True)
-        label = node.find_previous_sibling(['th', 'dt']) if node.name in {'td', 'dd'} else None
-        labeled = bool(_CONTACT_FIELD.match(text) or (label and _CONTACT_FIELD.match(label.get_text(' ', strip=True))))
-        mailto = node.name == 'a' and str(node.get('href', '')).lower().startswith('mailto:')
+        label = node.find_previous_sibling(['th', 'dt', 'td']) if node.name in {'td', 'dd'} else None
+        label_text = label.get_text(' ', strip=True) if label else ''
+        labeled = bool(_CONTACT_FIELD.match(text) or (label and (
+            _CONTACT_FIELD.match(label_text) if label.name in {'th', 'dt'} else _CONTACT_LABEL_CELL.match(label_text))))
+        mailto = _mailto_address(node) if node.name == 'a' else []
         if labeled or mailto:
-            addresses.extend(find_emails(text))
+            # A mailto link whose visible text is a word ('写信') still names its address.
+            addresses.extend(find_emails(text) or mailto)
+        else:
+            # A field inside a line that starts with another one ('电话：… 邮箱：…').
+            addresses.extend(labeled_text_emails(text))
     seen = set()
     return tuple(address for address in addresses
                  if not (address.lower() in seen or seen.add(address.lower())))
