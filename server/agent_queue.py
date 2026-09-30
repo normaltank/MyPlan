@@ -19,6 +19,16 @@ _LEGACY = _HERE / "agent_queue.json"
 _LOG = logging.getLogger(__name__)
 
 
+def default_db_path() -> Path:
+    """The queue database used when no path is given: ``HARVEST_TASK_DB`` or server/tasks.db.
+
+    Every component that falls back to the default (Web app, worker, extractor
+    cache, sync CLI) resolves it here, so one override moves all of them.
+    """
+    override = os.environ.get("HARVEST_TASK_DB")
+    return Path(override) if override else _HERE / "tasks.db"
+
+
 class LeaseConflictError(RuntimeError):
     """A worker lost ownership or its lease expired."""
 
@@ -94,13 +104,14 @@ def _site_type_registry():
 class AgentTaskQueue:
     def __init__(self, db_path: str | Path | None = None,
                  legacy_json_path: str | Path | None = None) -> None:
-        self.db_path = Path(db_path) if db_path is not None else _HERE / "tasks.db"
+        builtin = db_path is None and not os.environ.get("HARVEST_TASK_DB")
+        self.db_path = Path(db_path) if db_path is not None else default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         # SQLite is the only task store. The former in-memory views were written
         # but never read, and loaded every task with all records at import time.
         self._active_task: AgentTask | None = None
         self._init_schema()
-        source = legacy_json_path if legacy_json_path is not None else (_LEGACY if db_path is None else None)
+        source = legacy_json_path if legacy_json_path is not None else (_LEGACY if builtin else None)
         if source is not None:
             self._migrate_legacy(Path(source))
         # Failure types are reconciled when a task fails and before statistics

@@ -121,44 +121,22 @@ FREE_MAIL_DOMAINS = {
     "live.com", "yahoo.com", "aliyun.com", "139.com", "189.cn", "icloud.com"
 }
 
-def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
-    """
-    Determines if an email belongs to a scholar using information-theoretic
-    and naming-convention affinity (zero keyword blacklists).
-    """
-    if not email or '@' not in email:
-        return False
-    local_part, _, dom = email.lower().partition('@')
-    clean_local = re.sub(r'[-_.]', '', local_part)
-    if clean_local.isdigit():
-        return True
-    if scholar_name:
-        if DomainConventionModel is not None:
-            try:
-                dcm = DomainConventionModel()
-                if dcm._pinyin_match(clean_local, scholar_name) or dcm._pinyin_match(local_part, scholar_name):
-                    return True
-                for syl in dcm.readings(scholar_name):
-                    initials = "".join(s[0] for s in syl if s).lower()
-                    if len(initials) >= 2 and clean_local.startswith(initials):
-                        return True
-                    full_py = "".join(s for s in syl if s).lower()
-                    if len(full_py) >= 3 and clean_local.startswith(full_py):
-                        return True
-                return False
-            except Exception:
-                pass
-        return False
-    if dom in FREE_MAIL_DOMAINS:
-        return True
-    return True
+if DETAIL_MECC_AVAILABLE:
+    # One definition of "this address spells this teacher" for every path
+    # (profile pages, shared pages, roster cards, OCR biographies).
+    from server.detail_mecc import is_institutional_email, is_personal_email_for_scholar  # noqa: E402,F401
+else:
+    def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
+        """Degraded mode: without the pinyin model only numeric IDs identify a person."""
+        if not email or '@' not in email:
+            return False
+        local = re.sub(r'[-_.]', '', email.lower().partition('@')[0])
+        return local.isdigit() or not scholar_name
 
-def is_institutional_email(email: str, scholar_name: str = "") -> bool:
-    if not email or '@' not in email:
-        return False
-    if scholar_name:
-        return not is_personal_email_for_scholar(email, scholar_name)
-    return False
+    def is_institutional_email(email: str, scholar_name: str = "") -> bool:
+        if not email or '@' not in email:
+            return False
+        return bool(scholar_name) and not is_personal_email_for_scholar(email, scholar_name)
 
 
 @dataclass(frozen=True)

@@ -207,11 +207,28 @@ _EMAIL_SPAN = re.compile(r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9][A-Za-z0-9._%+\-]{0,
 MASK = "\ue000"
 
 
+def _glued_label_cut(raw: str) -> int:
+    """Length of ``raw`` without an English word glued onto its top-level domain.
+
+    Inline fields ('Email: a@b.edu.cn' then 'Tel: ...' in the next <span>) reach
+    the text stream as 'a@b.edu.cnTel'. A top-level domain is one case; a
+    capital that starts a new word ('cnTel', 'CNTel') is where the address ends.
+    """
+    dot = raw.rfind(".")
+    label = raw[dot + 1:]
+    for i in range(2, len(label)):
+        if label[i].isupper() and (label[i - 1].islower()
+                                   or (i + 1 < len(label) and label[i + 1].islower())):
+            return dot + 1 + i
+    return len(raw)
+
+
 def email_spans(s: str) -> list[tuple[int, int, str]]:
     out = []
     for m in _EMAIL_SPAN.finditer(s):
-        addr = re.sub(r"\s+", "", re.sub(_AT, "@", m.group(0))).lower().strip(".")
-        out.append((m.start(), m.end(), addr))
+        end = m.start() + _glued_label_cut(m.group(0))
+        addr = re.sub(r"\s+", "", re.sub(_AT, "@", s[m.start():end])).lower().strip(".")
+        out.append((m.start(), end, addr))
     return out
 
 

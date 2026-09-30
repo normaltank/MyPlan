@@ -455,7 +455,8 @@ async def serve(*, phase: str | None = None, session: str | None = None, target:
             session = session or os.environ.get("FACULTY_RECON_SESSION", "standalone")
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session):
                 session = hashlib.sha256(session.encode()).hexdigest()
-            scout = BrowserScout(await context.new_page(), HERE / "outputs/recon-evidence" / session / uuid.uuid4().hex,
+            from server.agent_recon import recon_evidence_root
+            scout = BrowserScout(await context.new_page(), recon_evidence_root() / session / uuid.uuid4().hex,
                                  phase, target)
             while line := await asyncio.to_thread(sys.stdin.readline):
                 request = json.loads(line)

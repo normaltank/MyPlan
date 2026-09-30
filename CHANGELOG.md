@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-09-30 · 采集内核调用链审查（分支 claude/core-chain-review，未部署）
+
+- 测试不再写入正式队列库和 server/outputs：`HARVEST_TASK_DB`、`FACULTY_RECON_EVIDENCE_ROOT` 统一决定默认路径，conftest 强制指向临时目录。
+- 邮箱拼音归属收紧：同姓他人（wanglei≠王芳）、两位首字母的办公室邮箱（jwc、zsb、yjs）不再算本人；无法证明归属的地址进入复核，不静默交付。
+- 邮箱后紧跟英文标签（…edu.cnTel）按大小写切开；翻页变化按已核实卡片判断，生僻姓氏页不再误报 pagination_unchanged。
+- 事件循环阻塞（P1-3）与职称优先级（P2-6）已确认未修。调用链、证据与边界见 [内核调用链审查](docs/audits/2026-09-30-core-chain-review.md)。
+
 ## 2026-09-30 · 远端审核与本地同步
 
 - 合并邮箱证据分支与侦察提速/师资链接输入分支，保留正文、卡片、DOM 和邮箱歧义门禁。

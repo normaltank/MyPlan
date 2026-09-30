@@ -231,6 +231,14 @@ def pinyin_variants(syl: list[str]) -> set[str]:
 
 
 
+def _given_name_spellings(syl: list[str]) -> set[str]:
+    """The variants of ``pinyin_variants`` that carry the complete given name."""
+    if len(syl) < 2:
+        return set()
+    sur, g = syl[0], "".join(syl[1:])
+    return {sur + g, g + sur, sur[:1] + g}
+
+
 class DomainConventionModel:
     """Learns per-domain local-part scheme: P(pinyin | D), numeric length dist."""
 
@@ -295,9 +303,20 @@ class DomainConventionModel:
         if not clean:
             return False
         for syl in readings:
-            v = pinyin_variants(syl)
-            if clean in v or any(len(x) >= 4 and clean.startswith(x) for x in v):
+            if clean in pinyin_variants(syl):
                 return True
+            # A longer local part is accepted only after the whole given name is
+            # spelled ('wangfanghnu'). After a bare surname or an initial the
+            # extra letters are another person's name ('wanglei' is not 王芳,
+            # 'wangfei' is not 王芬), so those forms must match exactly.
+            if any(len(x) >= 4 and clean.startswith(x) for x in _given_name_spellings(syl)):
+                return True
+            # A given name cut short by a length limit ('wangxiaof' for 王小芳)
+            # still spells it when at least its first syllable is complete.
+            if len(syl) >= 2 and clean.startswith(syl[0]):
+                rest = clean[len(syl[0]):]
+                if len(rest) >= max(2, len(syl[1])) and "".join(syl[1:]).startswith(rest):
+                    return True
         return False
 
     def log_lr(self, addr: str, name: str) -> float:

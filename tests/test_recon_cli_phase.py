@@ -7,7 +7,6 @@ import subprocess
 import sys
 import threading
 import uuid
-from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import pytest
 import yaml
@@ -51,7 +50,8 @@ async def test_actual_mcp_process_honors_cli_stage_and_saves_discovery_namespace
         assert 'browser_navigation' in names and 'browser_verify' not in names
         result=await request(3,'tools/call',{'name':'browser_navigate','arguments':{'url':f'http://127.0.0.1:{server.server_port}/'}})
         assert not result['isError']
-        root=Path(__file__).parents[1]/'server/outputs/recon-evidence'/sid
+        from server.agent_recon import recon_evidence_root
+        root=recon_evidence_root()/sid  # isolated by conftest, inherited by the MCP child
         evidence=list(root.glob('*/*.discovery.json'))
         assert evidence
         saved=json.loads(evidence[0].read_text(encoding='utf-8'))
@@ -65,5 +65,5 @@ async def test_actual_mcp_process_honors_cli_stage_and_saves_discovery_namespace
         process.stderr.close()
         server.shutdown()
         server.server_close()
-        # The MCP child writes under the real outputs folder; leave nothing behind.
-        shutil.rmtree(Path(__file__).parents[1]/'server/outputs/recon-evidence'/sid, ignore_errors=True)
+        from server.agent_recon import recon_evidence_root
+        shutil.rmtree(recon_evidence_root()/sid, ignore_errors=True)

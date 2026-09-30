@@ -760,6 +760,16 @@ class ReconResult:
         }
 
 
+def recon_evidence_root() -> Path:
+    """Where browser-tool evidence is written and read back: one root for every reader.
+
+    ``FACULTY_RECON_EVIDENCE_ROOT`` moves it (the test suite does, so that MCP
+    subprocesses never write into the production server/outputs directory).
+    """
+    override = os.environ.get("FACULTY_RECON_EVIDENCE_ROOT")
+    return Path(override) if override else Path(__file__).resolve().parent / "outputs" / "recon-evidence"
+
+
 def write_runtime_patch(path: Path, *, phase: str = "full", session_id: str = "standalone",
                         target: dict | None = None) -> None:
     """Resolve project resources before the MCP subprocess starts."""
@@ -767,7 +777,7 @@ def write_runtime_patch(path: Path, *, phase: str = "full", session_id: str = "s
     entries = yaml.safe_load((here / "recon_runtime.cordis.yml").read_text(encoding="utf-8"))
     for entry in entries:
         if entry.get("id") == "spill-local":
-            entry["config"]["root"] = str(here / "outputs" / "recon-evidence")
+            entry["config"]["root"] = str(recon_evidence_root())
     import sys
     args = ["-m", "server.recon_browser_mcp", "--phase", phase, "--session", session_id]
     if target is not None:
@@ -865,7 +875,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             raise
         current = getattr(result, "events", []) or []
         metric = {"phase": phase, "session_id": sid, "effort": phase_cfg.get("effort"),
-                       "evidence_root": str(Path(__file__).parent / "outputs/recon-evidence" / sid),
+                       "evidence_root": str(recon_evidence_root() / sid),
                        **run_metrics(current)}
         if getattr(result, "finish_reason", None) != "completed":
             error = ReconError("阶段侦察未正常完成")
@@ -889,8 +899,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             discovery_session_id = resumed_discovery["session_id"]
             phases.append({"phase": "discovery", "reused": True,
                            "session_id": discovery_session_id, "model_calls": 0,
-                           "evidence_root": str(Path(__file__).parent / "outputs/recon-evidence"
-                                                / discovery_session_id)})
+                           "evidence_root": str(recon_evidence_root() / discovery_session_id)})
         else:
             discovery, discovery_events, metric = run("discovery", target["url"], "discover")
             events.extend(discovery_events)
@@ -922,7 +931,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                                 "session_id": discovery_session_id}
         plan = {**discovery, "branches": []}
         from server.recon_templates import inspect_templates, verify_template
-        evidence_root = Path(__file__).parent / "outputs/recon-evidence" / session_id
+        evidence_root = recon_evidence_root() / session_id
         fingerprints = (inspect_templates(urls, evidence_root / "templates",
                         max(0.01, min(60, deadline - time.monotonic())))
                         if template_reuse and len(urls) > 1 else {})

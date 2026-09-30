@@ -16,7 +16,7 @@ import httpx
 
 
 OUTPUT_ROOT = Path(__file__).resolve().parent / "outputs"
-TASK_DB = Path(__file__).resolve().parent / "tasks.db"
+TASK_DB = None  # the queue default (HARVEST_TASK_DB or server/tasks.db), resolved per call
 FIELDS = {"序号", "姓名", "职称", "邮箱", "学校", "学院", "采集人", "采集日期", "简介", "主页"}
 
 
@@ -68,7 +68,7 @@ def build_payload(report_path: str | Path, worker_id: str, lease_token: str,
 
 async def sync_report(task_id: str, report_path: str | Path, worker_id: str,
                       lease_token: str, *, output_root: str | Path = OUTPUT_ROOT,
-                      db_path: str | Path = TASK_DB,
+                      db_path: str | Path | None = TASK_DB,
                       client: httpx.AsyncClient) -> dict:
     payload = build_payload(report_path, worker_id, lease_token, output_root)
     report = json.loads(Path(report_path).read_text(encoding="utf-8"))
@@ -78,6 +78,9 @@ async def sync_report(task_id: str, report_path: str | Path, worker_id: str,
     safe_school = re.sub(r'[\\/:*?"<>|]', "", school).strip() or "高校"
     root = Path(output_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
+    if db_path is None:
+        from server.agent_queue import default_db_path
+        db_path = default_db_path()
     database = Path(db_path)
     # The historical minimal database schema remains supported for offline clients.
     # Production queues have persisted college and batch scope and never use that fallback.

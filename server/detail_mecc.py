@@ -82,12 +82,16 @@ def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
     Determines if an email belongs to a scholar using information-theoretic
     and naming-convention affinity (zero keyword blacklists).
     1. Pure numeric employee ID (e.g. 8843120002@...) -> personal.
-    2. Free mail provider (qq.com, 163.com, gmail.com, etc.) -> personal.
-    3. If scholar name is known: check pinyin / initials naming convention affinity.
+    2. If scholar name is known: the local part spells that name
+       (``DomainConventionModel._pinyin_match``). Surname and two-letter
+       initial forms match exactly; a spelled full given name, or the three
+       initials of a three-character name ('lsjwork' for 刘圣洁), may carry a
+       suffix. So 'zsb' (招生办) is not 张三 and 'wanglei' is not 王芳.
+    3. Without a name nothing distinguishes the address: personal.
     """
     if not email or '@' not in email:
         return False
-    local_part, _, dom = email.lower().partition('@')
+    local_part, _, _dom = email.lower().partition('@')
     clean_local = re.sub(r'[-_.]', '', local_part)
     if clean_local.isdigit():
         return True
@@ -95,21 +99,15 @@ def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
         if DomainConventionModel is not None:
             try:
                 dcm = DomainConventionModel()
-                if dcm._pinyin_match(clean_local, scholar_name) or dcm._pinyin_match(local_part, scholar_name):
+                if dcm._pinyin_match(local_part, scholar_name):
                     return True
-                for syl in dcm.readings(scholar_name):
-                    initials = "".join(s[0] for s in syl if s).lower()
-                    if len(initials) >= 2 and clean_local.startswith(initials):
-                        return True
-                    full_py = "".join(s for s in syl if s).lower()
-                    if len(full_py) >= 3 and clean_local.startswith(full_py):
-                        return True
-                return False
+                # Two initials are also a typical office abbreviation (jwc, zsb,
+                # yjs); three are specific enough to take a suffix.
+                return any(len(syl) >= 3 and clean_local.startswith("".join(s[0] for s in syl if s))
+                           for syl in dcm.readings(scholar_name))
             except Exception:
                 pass
         return False
-    if dom in FREE_MAIL_DOMAINS:
-        return True
     return True
 
 def is_institutional_email(email: str, scholar_name: str = "") -> bool:

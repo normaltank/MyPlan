@@ -65,7 +65,8 @@ async def navigation_evidence(page: Any) -> dict:
 
 
 def discovery_evidence(session_id: str) -> list[dict]:
-    root = HERE / "outputs/recon-evidence" / f"{session_id}-discover"
+    from server.agent_recon import recon_evidence_root
+    root = recon_evidence_root() / f"{session_id}-discover"
     pages = {}
     for path in sorted(root.glob("*/*.discovery.json")):
         try:
@@ -282,7 +283,8 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
             if branch.get("next_selector") and first.get("nextCount") == 1 and not first.get("nextDisabled"):
                 before = await page.content()
                 await tool("browser_click", {"selector": branch["next_selector"]})
-                if await _wait_for_change(page, before, page.url) is None:
+                if await _wait_for_change(page, before, page.url,
+                                          unit_selector=branch["card_selector"]) is None:
                     return outcome(valid=False, reason="pagination_unchanged")
                 await tool("browser_verify", {"card_selector": branch["card_selector"]})
             if branch.get("profile_content_selector"):

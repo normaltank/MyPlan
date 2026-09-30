@@ -87,7 +87,13 @@ class SQLiteWrapperRegistry:
     """SQLite-backed immutable wrapper versions with a persistent circuit flag."""
 
     def __init__(self, db_path: str | Path | None = None) -> None:
-        self.db_path = Path(db_path) if db_path is not None else Path(__file__).with_name("wrappers.db")
+        if db_path is None:
+            try:
+                from server.agent_queue import default_db_path
+            except ImportError:  # flat layout (server/ on sys.path)
+                from agent_queue import default_db_path
+            db_path = default_db_path().with_name("wrappers.db")  # beside the queue it tickets
+        self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         with self._connect() as con:

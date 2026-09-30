@@ -248,13 +248,43 @@ async def _probe_single_page(context: Any, html: str, url: str, card_selector: s
     return unresolved
 
 
-async def _wait_for_change(page: Any, before: str, url: str, seconds: float = 3.5) -> str | None:
-    """Wait for a changed roster, ignoring unrelated clocks and page chrome."""
-    previous = _roster_signature(before, url)
+def _unit_signature(html: str, url: str, selector: str) -> tuple:
+    """What each verified card shows: its text, its links, and for a card
+    without text (an image roster) the images it declares.
+
+    Attribute churn is not a page turn: lazy loaders copy data-src into src,
+    so the declared source is read first.
+    """
+    signature = []
+    for card in BeautifulSoup(html, "html.parser").select(selector):
+        anchors = ([card] if card.name == "a" else []) + card.find_all("a", href=True)
+        links = tuple(urljoin(url, a["href"]) for a in anchors if a.get("href"))
+        text = card.get_text(" ", strip=True)
+        images = () if text else tuple(
+            img.get("data-src") or img.get("data-original") or img.get("src") or ""
+            for img in ([card] if card.name == "img" else card.find_all("img")))
+        signature.append((text, links, images))
+    return tuple(signature)
+
+
+async def _wait_for_change(page: Any, before: str, url: str, seconds: float = 3.5, *,
+                           unit_selector: str | None = None) -> str | None:
+    """Wait for a changed roster, ignoring unrelated clocks and page chrome.
+
+    With a verified card (or segment start) selector the cards decide: the
+    name miner cannot read every page (rare surnames await review), and an
+    empty reading must not stop pagination as 'unchanged'.
+    """
+    if unit_selector:
+        def signature(html: str, current_url: str) -> tuple:
+            return _unit_signature(html, current_url, unit_selector)
+    else:
+        signature = _roster_signature
+    previous = signature(before, url)
     deadline = asyncio.get_running_loop().time() + seconds
     while asyncio.get_running_loop().time() < deadline:
         current = await page.content()
-        sig = _roster_signature(current, page.url)
+        sig = signature(current, page.url)
         if current != before and sig and sig != previous:
             return current
         await asyncio.sleep(0.1)
@@ -466,7 +496,8 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 return captured, unresolved, evidence
             before = await page.content()
             await target.click()
-            if await _wait_for_change(page, before, page.url) is None:
+            if await _wait_for_change(page, before, page.url,
+                                      unit_selector=_unit_selector(branch) or None) is None:
                 unresolved.append({"url": url, "status": "initial_control_unchanged", "selector": selector})
                 return captured, unresolved, evidence
 
@@ -522,7 +553,8 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 break
             await next_control.click()
             evidence["next_clicks"] += 1
-            if await _wait_for_change(page, html, page.url) is None:
+            if await _wait_for_change(page, html, page.url,
+                                      unit_selector=_unit_selector(branch) or None) is None:
                 unresolved.append({"url": page.url, "page": page_number,
                                    "status": "pagination_unchanged", "selector": next_selector})
                 break
