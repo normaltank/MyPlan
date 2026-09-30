@@ -65,6 +65,11 @@ try:
 except ImportError:
     from titles import TITLE_KEYWORDS, resolve_title
 
+# '李星教授介绍': a 2-4 character name, a title keyword, then an introduction suffix.
+_INTRODUCED_NAME = re.compile(
+    r"^([\u4e00-\u9fff]{2,4}?)(" + "|".join(map(re.escape, TITLE_KEYWORDS))
+    + r")(?:个人简介|简介|介绍|个人主页|主页)$")
+
 try:
     from server.detail_mecc import DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer
     DETAIL_MECC_AVAILABLE = True
@@ -236,6 +241,10 @@ class FacultyDirectoryExtractor:
         else:
             name = re.sub(r'\s+', ' ', raw).strip()
 
+        # A supervisor list links each person as '李星教授介绍' / '张慧副教授简介'.
+        introduced = _INTRODUCED_NAME.match(name)
+        if introduced:
+            return introduced.group(1), (introduced.group(2) if title_found == "教师" else title_found)
         for kw in TITLE_KEYWORDS:
             if name.endswith(kw) and len(name) > len(kw):
                 if title_found == "教师":

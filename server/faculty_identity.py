@@ -81,3 +81,46 @@ def resolve_broken_profile_aliases(candidates, profile_html, errors, profile_evi
             continue
         aliases[dead] = live
     return aliases
+
+
+def merge_same_name_observations(candidates, candidate_sources, list_urls):
+    """同名合并（用户 2026-09-30 决定：唯一同名即合并）。
+
+    ``list_urls`` are the roster pages themselves: a candidate whose URL is one
+    of them has no personal page (a name on a supplementary list such as a
+    教研室 roster or a 导师分专业名录). Within one college ticket:
+
+    * exactly one personal page for a name: every no-page observation of that
+      name is the same person; the personal-page candidate is kept and the
+      lists are recorded as further sources;
+    * no personal page: several no-page observations of one name are one person
+      (kept once, first in plan order);
+    * two or more personal pages: unchanged, the identity stays for review.
+    """
+    by_name = defaultdict(list)
+    for candidate in candidates:
+        by_name[candidate.name].append(candidate)
+    dropped = set()
+    merges = []
+    sources = {key: set(value) for key, value in candidate_sources.items()}
+    for name, group in by_name.items():
+        listed = [c for c in group if c.url in list_urls]
+        pages = list(dict.fromkeys(c.url for c in group if c.url not in list_urls))
+        if len(pages) > 1 or not listed:
+            continue
+        if pages:
+            kept_url, merged = pages[0], listed
+            rule = "unique_personal_page"
+        elif len({c.url for c in listed}) > 1:
+            kept_url, merged = listed[0].url, [c for c in listed if c.url != listed[0].url]
+            rule = "same_name_lists_without_pages"
+        else:
+            continue
+        for candidate in merged:
+            dropped.add((candidate.name, candidate.url))
+            sources.setdefault((name, kept_url), set()).update(
+                sources.pop((candidate.name, candidate.url), set()))
+        merges.append({"name": name, "kept_url": kept_url, "merged_list_urls": sorted({c.url for c in merged}),
+                       "rule": rule})
+    kept = [c for c in candidates if (c.name, c.url) not in dropped]
+    return kept, sources, merges

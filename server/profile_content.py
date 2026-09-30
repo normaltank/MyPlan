@@ -47,8 +47,15 @@ def trivial_hidden(node: Tag) -> bool:
     and still blocks, because hidden profile content may be a collapsed section.
     """
     text = node.get_text(' ', strip=True)
-    return (not node.find(_MEDIA_TAGS) and len(text) <= TRIVIAL_HIDDEN_CHARS
-            and not _MEANINGFUL.search(text))
+    if node.find(_MEDIA_TAGS) or len(text) > TRIVIAL_HIDDEN_CHARS:
+        return False
+    # Word marks its own never-displayed text (the '窗体顶端' / '窗体底端' form
+    # boundaries of a pasted document) with mso-hide:all; no reader ever sees it.
+    return not _MEANINGFUL.search(text) or _word_hidden(node)
+
+
+def _word_hidden(node: Tag) -> bool:
+    return 'mso-hide:all' in re.sub(r'\s+', '', str(node.get('style', ''))).lower()
 
 
 def scope_profile_html(html: str, selector: str, url: str, *, start_selector: str | None = None

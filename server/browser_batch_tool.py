@@ -703,6 +703,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     unique = {(cand.name, cand.url): cand for cand in candidates}
     candidates = list(unique.values())
     roster_urls = {url for url, _ in all_pages}
+    # 同名合并：补充名单上的名字与学院里唯一的同名个人主页是同一人。
+    from server.faculty_identity import merge_same_name_observations
+    candidates, candidate_sources, identity_merges = merge_same_name_observations(
+        candidates, candidate_sources, roster_urls)
     profile_urls = sorted({cand.url for cand in candidates if cand.url and cand.url not in roster_urls})
     profile_args = {"state": state} if state else {}
     profile_live_evidence = {}
@@ -981,6 +985,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                                       and item.get("assigned_name") == row["姓名"]],
         **profile_scope_evidence.get(row["主页"], {})} for index, row in enumerate(records, 1)]
     coverage["profile_aliases"] = profile_aliases
+    coverage["identity_merges"] = identity_merges
     coverage_path = out / f"{name}_coverage.json"
     coverage_path.write_text(json.dumps(coverage, ensure_ascii=False, indent=2), encoding="utf-8")
     ready = bool(extraction["delivery_ready"] and not unresolved and coverage["complete"])
@@ -1010,6 +1015,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "with_email": sum(bool(str(row.get("邮箱", "")).strip()) for row in records),
         "branches": branches, "roster_observations": roster_observations,
         "profile_aliases": profile_aliases,
+        "identity_merges": identity_merges,
         "image_biography_evidence": media_audit["evidence"],
         "segment_name_evidence": segment_naming["evidence"],
         "unresolved": unresolved, "snapshots": snapshots,

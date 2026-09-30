@@ -21,7 +21,34 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 _OCR_CACHE_VERSION = 1
+# A photo's scene text (a sign, a blackboard, a banner) stays short; a written
+# biography image on a coloured photo background is rare and, when it is the
+# only biography, the image-only profile check still blocks the record.
+SCENE_TEXT_CHARS = 600
 
+
+def page_appearance(data: bytes) -> dict:
+    """Whether an image looks like paper (a scanned or photographed page).
+
+    Paper is light and nearly colourless; a portrait photo has skin, hair and
+    clothing colours. Measured on a small copy: the share of light pixels and
+    the share of clearly coloured pixels. Anything unreadable stays
+    document-like, so the conservative review path is kept.
+    """
+    try:
+        from PIL import Image
+        with Image.open(BytesIO(data)) as source:
+            image = source.convert("RGB")
+        image.thumbnail((256, 256))
+        pixels = image.size[0] * image.size[1]
+        light = sum(value >= 170 for value in image.convert("L").getdata()) / pixels
+        hsv = image.convert("HSV")
+        coloured = sum(s >= 60 and v >= 60 for s, v in zip(hsv.getchannel("S").getdata(),
+                                                             hsv.getchannel("V").getdata())) / pixels
+    except Exception:
+        return {"document_like": True, "reason": "unmeasurable"}
+    return {"document_like": light >= 0.4 and coloured <= 0.10,
+            "light_share": round(light, 3), "coloured_share": round(coloured, 3)}
 
 @dataclass(frozen=True)
 class MediaReference:
@@ -284,8 +311,13 @@ async def audit_profile_media(
                 size = scanned.get("image_size", [0, 0])
                 ratio = size[0] / size[1] if size[1] else 0
                 if min(size) >= 700 and 0.58 <= ratio <= 0.78:
-                    unresolved.append({**source, "status": "image_bio_ocr_incomplete",
-                                       "ocr_path": str(ocr_path)})
+                    # A page-shaped image with almost no text may be a scanned
+                    # resume OCR could not read, or simply a 2:3 portrait photo.
+                    appearance = page_appearance(original)
+                    record["page_appearance"] = appearance
+                    if appearance["document_like"]:
+                        unresolved.append({**source, "status": "image_bio_ocr_incomplete",
+                                           "ocr_path": str(ocr_path), "page_appearance": appearance})
                 continue
             if not text:
                 continue
@@ -310,6 +342,14 @@ async def audit_profile_media(
                         if found:
                             other_page_names.update(found)
                             break
+            if ref.kind == "image" and not matched and len(compact) < SCENE_TEXT_CHARS:
+                # A photo of the teacher in front of a sign or blackboard has a
+                # few lines of scene text but is not a written biography.
+                appearance = page_appearance(original)
+                if not appearance["document_like"]:
+                    record["page_appearance"] = appearance
+                    record["classified_as"] = "photo_with_scene_text"
+                    continue
             if (len(matched) != 1 or (ref.kind == "pdf" and len(owners[profile_url]) != 1)
                     or (matched and other_page_names - {matched[0]})):
                 unresolved.append({**source, "status": "image_bio_owner_unresolved",

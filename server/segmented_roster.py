@@ -249,6 +249,7 @@ def text_name(segment: Segment) -> tuple[str | None, str, int]:
     """Return (name, title, extra heading lines) read from the record's own text."""
     lines = [line.strip() for line in segment.text.splitlines() if line.strip()]
     name, title, shape = None, "教师", None
+    extra = 0
     for index, line in enumerate(lines[:TEXT_NAME_LINES]):
         shape = heading_shape(line)
         if shape:
@@ -256,8 +257,10 @@ def text_name(segment: Segment) -> tuple[str | None, str, int]:
             title = (_title_in(line) or next((found for found in map(_title_in, lines[:2]) if found), None)
                      or "教师")
             rest = lines[index + 1:]
+            # '陈厚、尤再进、董平……' is a list of people, not one record's heading.
+            from server.name_list import people_chains
+            extra += sum(len(chain.names) + len(chain.rare) - 1 for chain in people_chains(line))
             break
-    extra = 0
     if name and (shape[1] or shape[2] != "other"):
         for line in rest:
             other = heading_shape(line)

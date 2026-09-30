@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 
-_FACTS = """args => {
+_FACTS = r"""args => {
   const nodes=[...document.querySelectorAll(args.selector)];
   const visible=n=>{
     if(!n || !n.getClientRects().length) return false;
@@ -28,8 +28,10 @@ _FACTS = """args => {
     && ((n.textContent||'').trim() || n.matches(media)));
   // Same rule as profile_content.trivial_hidden: an editor placeholder such as
   // 'invisible' is not hidden profile content; names, numbers, e-mails or Chinese are.
+  const wordHidden=n=>(n.getAttribute('style')||'').replace(/\s+/g,'').toLowerCase().includes('mso-hide:all');
   const trivial=n=>!n.matches(media) && !n.querySelector(media)
-    && (n.textContent||'').trim().length<=args.trivialChars && !/[\u4e00-\u9fff@\d]/.test(n.textContent||'');
+    && (n.textContent||'').trim().length<=args.trivialChars
+    && (!/[\u4e00-\u9fff@\d]/.test(n.textContent||'') || wordHidden(n));
   const hidden=relevant.filter(n=>!visible(n) && !trivial(n)).length;
   const active=root?root.getAnimations({subtree:true}).filter(a=>
     a.playState==='running' && (a.effect?.target===root || retained.includes(a.effect?.target))).length:0;
