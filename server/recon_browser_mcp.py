@@ -34,6 +34,12 @@ PAGE_PREVIEW_CHARS = 600
 SURVEY_MAX_URLS = 8
 SURVEY_PREVIEW_CHARS = 300
 SURVEY_MAX_NEW_LINKS = 20
+PROFILE_MAX_URLS = 3
+PROFILE_TRANSIENT_REASONS = frozenset({"network_not_idle", "dom_unstable"})
+PROFILE_RETRY_SECONDS = 1.5
+PROFILE_CANDIDATES = 4
+PROFILE_CANDIDATES_PER_SAMPLE = 3
+PROFILE_ALTERNATIVES = 3
 SCREENSHOT_MAX_WIDTH = 1280
 SCREENSHOT_MAX_HEIGHT = 2000
 RANGE = {"selector": STRING, "offset": {"type": "integer", "minimum": 0},
@@ -61,8 +67,13 @@ TOOLS = [
          "starting each person's record. Returns segment counts and shapes only.",
          {"container_selector": STRING, "record_start_selector": STRING},
          ("container_selector", "record_start_selector")),
-    tool("browser_verify_profile", "Verify a complete profile DOM container and optional direct-child start boundary; structure only.",
-         {"profile_content_selector": STRING, "profile_content_start_selector": STRING}, ("profile_content_selector",)),
+    tool("browser_verify_profile", "Verify a complete profile DOM container and optional direct-child start "
+         "boundary; structure only. Pass urls (up to 3 linked profile samples) to open and check each in one call. "
+         "Without profile_content_selector it returns candidate containers (CSS path, text size, images, static "
+         "check) for each page and the candidates that pass on every page. A failed proof lists hidden_blockers "
+         "and passing alternatives.",
+         {"profile_content_selector": STRING, "profile_content_start_selector": STRING,
+          "urls": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 3}}),
     tool("browser_click", "Click a unique, verified CSS selector in the real browser.", {"selector": STRING}, ("selector",)),
     tool("browser_evaluate", "Run read-only JS only for questions probes cannot answer. Return compact structure. "
          "DOM edits invalidate verification evidence and require reloading the official URL.",
@@ -117,20 +128,32 @@ class BrowserScout:
         return path
 
     def _page_summary(self, summary: Any, max_chars: int = PAGE_PREVIEW_CHARS) -> Any:
-        """Keep only text lines not shown earlier in this session, as a short preview."""
+        """Keep only text lines not shown earlier in this session, as a short preview.
+
+        A line counts as shown only once it was returned whole. Lines past the
+        preview budget stay unseen, so opening the page again continues where
+        the last preview stopped instead of reporting an empty page.
+        """
         if not isinstance(summary, dict) or not isinstance(summary.get("lines"), list):
             return summary
-        fresh, used, repeated = [], 0, 0
+        fresh, used, repeated, unshown = [], 0, 0, 0
         for line in summary.pop("lines"):
             if line in self._seen_lines:
                 repeated += 1
                 continue
-            self._seen_lines.add(line)
-            if used < max_chars:
-                fresh.append(line[:max_chars - used])
-                used += len(fresh[-1])
+            if used >= max_chars:
+                unshown += 1
+                continue
+            piece = line[:max_chars - used]
+            fresh.append(piece)
+            used += len(piece)
+            if piece == line:
+                self._seen_lines.add(line)
+            else:
+                unshown += 1
         summary["new_text"] = "\n".join(fresh)
-        summary["new_text_truncated"] = used >= max_chars
+        summary["new_text_truncated"] = unshown > 0
+        summary["unshown_lines"] = unshown
         summary["repeated_lines_omitted"] = repeated
         return summary
 
@@ -196,6 +219,80 @@ class BrowserScout:
         ])
         return reply
 
+    async def _people(self) -> dict | None:
+        """Whether the page lists people, as counts only (names stay local)."""
+        try:
+            from server.headcount_check import people_signals
+            return people_signals(await self.page.content())
+        except Exception:
+            return None
+
+    async def _profile_here(self, selector: str | None, start: str | None, *, candidate_limit: int) -> dict:
+        from server.profile_structure import failure_details, profile_candidates, verify_profile_container
+        if not selector:
+            await self.snapshot()
+            return {"url": self.page.url, "candidates": await profile_candidates(
+                self.page, html=await self.page.content(), limit=candidate_limit)}
+        captured = {}
+        value = await verify_profile_container(self.page, selector, start, local_capture=captured)
+        if value.get("reason") in PROFILE_TRANSIENT_REASONS:
+            # Late requests or a settling page pass with time; one more look
+            # here saves the scout a round trip for a condition no selector changes.
+            await asyncio.sleep(PROFILE_RETRY_SECONDS)
+            captured = {}
+            value = await verify_profile_container(self.page, selector, start, local_capture=captured)
+        if "html" in captured:
+            self.save("html", captured["html"])
+        else:
+            await self.snapshot()
+        if value.get("confirmed") is not True:
+            html = captured.get("html") or await self.page.content()
+            if value.get("scope_issue") and "settle_samples" not in value:
+                # The live checks never ran; their initial values are not observations.
+                for key in ("container_count", "container_visible", "dom_stable", "network_idle"):
+                    value.pop(key, None)
+                value["live_checks"] = "not_run_after_static_issue"
+            value.update(await failure_details(self.page, html, value))
+            alternatives = [item for item in await profile_candidates(self.page, selector, html=html)
+                            if item.get("static_check") == "ok"]
+            if alternatives:
+                value["alternatives"] = alternatives[:PROFILE_ALTERNATIVES]
+        return value
+
+    async def _verify_profiles(self, arguments: dict) -> dict:
+        selector = arguments.get("profile_content_selector") or None
+        start = arguments.get("profile_content_start_selector") or None
+        if start and not selector:
+            raise ValueError("profile_content_start_selector requires profile_content_selector")
+        urls = arguments.get("urls")
+        if not urls:
+            return await self._profile_here(selector, start, candidate_limit=PROFILE_CANDIDATES)
+        results = []
+        for url in list(urls)[:PROFILE_MAX_URLS]:
+            if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                results.append({"requested_url": url, "error": "http(s) URL required"})
+                continue
+            try:
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                item = await self._profile_here(selector, start, candidate_limit=10)
+            except Exception as exc:  # one unreachable sample must not hide the others
+                item = {"url": self.page.url, "error": f"{type(exc).__name__}: {exc}"[:200]}
+            results.append({"requested_url": url, **item})
+        value = {"url": self.page.url, "results": results}
+        if selector:
+            value["confirmed_count"] = sum(item.get("confirmed") is True for item in results)
+            return value
+        # A selector string that names a passing container on every sample page.
+        pages = [[selector for entry in item.get("candidates", []) if entry.get("static_check") == "ok"
+                  for selector in entry["selectors"]] for item in results if "candidates" in item]
+        value["common_candidates"] = ([selector for selector in dict.fromkeys(pages[0])
+                                       if all(selector in other for other in pages[1:])][:PROFILE_CANDIDATES]
+                                      if pages else [])
+        for item in results:
+            if "candidates" in item:
+                item["candidates"] = item["candidates"][:PROFILE_CANDIDATES_PER_SAMPLE]
+        return value
+
     async def _browser_call(self, name: str, arguments: dict) -> dict:
         if self._dom_modified and name in {
             "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click"
@@ -215,6 +312,7 @@ class BrowserScout:
                     "() => ({url: location.href, page: __facultyRecon.summary(), navigation: __facultyRecon.navigation('body',0,64)})")
                 value["navigation"] = self._omit_seen_links(value["navigation"])
                 value["page"] = self._page_summary(value["page"])
+                value["page"]["people"] = await self._people()
             elif self.phase == "branch":
                 value = await self.page.evaluate("() => ({url:location.href,page:__facultyRecon.summary(),structure:__facultyRecon.structure('body',0,8),pagination:__facultyRecon.pagination()})")
                 value["page"] = self._page_summary(value["page"])
@@ -234,9 +332,12 @@ class BrowserScout:
                         "() => ({page: __facultyRecon.summary(), navigation: __facultyRecon.navigation('body',0,64)})")
                     links = self._omit_seen_links(probe["navigation"])
                     items = links.get("items", []) if isinstance(links, dict) else []
+                    summary = self._page_summary(probe["page"], SURVEY_PREVIEW_CHARS)
+                    if isinstance(summary, dict):
+                        summary["people"] = await self._people()
                     pages.append({"url": url, "final_url": self.page.url,
                                   "status": response.status if response is not None else None,
-                                  "page": self._page_summary(probe["page"], SURVEY_PREVIEW_CHARS),
+                                  "page": summary,
                                   "new_links": items[:SURVEY_MAX_NEW_LINKS],
                                   "more_new_links": max(0, len(items) - SURVEY_MAX_NEW_LINKS),
                                   "links_total": links.get("total") if isinstance(links, dict) else None})
@@ -281,15 +382,7 @@ class BrowserScout:
                 "selector => __facultyRecon.pagination('body',0,12,false,selector)", arguments["container_selector"])
             await self.snapshot()
         elif name == "browser_verify_profile":
-            from server.profile_structure import verify_profile_container
-            captured = {}
-            value = await verify_profile_container(self.page, arguments["profile_content_selector"],
-                                                    arguments.get("profile_content_start_selector"),
-                                                    local_capture=captured)
-            if "html" in captured:
-                self.save("html", captured["html"])
-            else:
-                await self.snapshot()
+            value = await self._verify_profiles(arguments)
         elif name == "browser_click":
             target = self.page.locator(arguments["selector"])
             if await target.count() != 1:

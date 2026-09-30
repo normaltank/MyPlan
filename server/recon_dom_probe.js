@@ -111,6 +111,68 @@
         url: n.href || null, label: (n.textContent || '').trim().slice(0, 16)}));
       return page(candidates, offset, limit);
     },
+    profileCandidates(selector = null, limit = 6) {
+      // Nested containers that could hold a complete profile: unique CSS
+      // selectors, sizes and counts only. With a rejected selector, look inside
+      // it and at its nearest ancestors; otherwise rank the page's text blocks.
+      let base = null;
+      if (selector) {
+        try { const found = document.querySelectorAll(selector); if (found.length === 1) base = found[0]; }
+        catch (e) { base = null; }
+      }
+      const chrome = 'header, footer, nav, script, style, noscript, template';
+      const blocks = 'div, section, article, main, td';
+      const own = n => {
+        const text = collapse(n.innerText).length;
+        const linked = [...n.querySelectorAll('a')].reduce((sum, a) => sum + collapse(a.innerText).length, 0);
+        return {text, plain: Math.max(0, text - linked)};
+      };
+      let pool = base ? [base, ...base.querySelectorAll(blocks)] : [...document.querySelectorAll(blocks)];
+      if (base) for (let p = base.parentElement, k = 0; p && p !== document.body && k < 3; p = p.parentElement, k++) pool.push(p);
+      pool = pool.filter(n => n !== document.body && !n.matches(chrome) && !n.closest('header, footer, nav'));
+      const facts = new Map(pool.map(n => [n, own(n)]));
+      const top = Math.max(0, ...[...facts.values()].map(f => f.plain));
+      const depth = n => { let d = 0; for (let p = n; p; p = p.parentElement) d++; return d; };
+      const kept = pool.filter(n => top > 0 && facts.get(n).plain >= top * 0.4);
+      // A wrapper whose only rendered child carries the same text and images is
+      // the same content: one candidate that answers to either node's selectors.
+      const only = n => {
+        const kids = [...n.children].filter(c => !c.matches('script, style, noscript, template, br'));
+        return kids.length === 1 ? kids[0] : null;
+      };
+      const same = (a, b) => facts.get(a).text === facts.get(b).text
+        && a.querySelectorAll('img').length === b.querySelectorAll('img').length;
+      const groupOf = new Map(kept.map(n => [n, [n]]));
+      for (const n of [...kept].sort((a, b) => depth(b) - depth(a))) {
+        const child = only(n);
+        if (child && groupOf.has(child) && same(n, child)) {
+          const merged = [...groupOf.get(child), ...groupOf.get(n)];
+          for (const member of merged) groupOf.set(member, merged);
+        }
+      }
+      const unique = s => { try { return document.querySelectorAll(s).length === 1; } catch (e) { return false; } };
+      const selectorsOf = group => {
+        const classes = [], ids = [];
+        for (const n of group) {
+          const tag = n.tagName.toLowerCase();
+          for (const c of n.classList) { const s = tag + '.' + CSS.escape(c); if (unique(s)) classes.push(s); }
+          if (n.id && unique('#' + CSS.escape(n.id))) ids.push('#' + CSS.escape(n.id));
+        }
+        return [...new Set([...classes, ...ids, path(group[0])])].filter(s => s && !/[㐀-鿿]/.test(s));
+      };
+      const groups = [...new Set(groupOf.values())].filter(group => !group.includes(base))
+        .sort((a, b) => depth(b[0]) - depth(a[0]));
+      const items = groups.slice(0, Math.max(1, Math.min(10, Number(limit) || 6))).map(group => {
+        const n = group[0];
+        return {selectors: selectorsOf(group).slice(0, 4), text_chars: facts.get(n).text,
+          text_share: top ? Math.round(facts.get(n).plain / top * 100) / 100 : 0,
+          images: n.querySelectorAll('img').length, links: n.querySelectorAll('a[href]').length,
+          tables: n.querySelectorAll('table').length,
+          inside_rejected: Boolean(base && base.contains(n)),
+          wraps_rejected: Boolean(base && group[group.length - 1].contains(base))};
+      }).filter(item => item.selectors.length);
+      return {url: location.href, items};
+    },
     check(cardSelector, nextSelector = null) {
       const cards = [...document.querySelectorAll(cardSelector)];
       const visible = node => {

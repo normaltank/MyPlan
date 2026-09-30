@@ -61,7 +61,9 @@ async def test_worker_returns_to_recon_after_failed_audit(tmp_path, monkeypatch)
 
     async def recon(*args, **kwargs):
         feedbacks.append(kwargs.get("feedback"))
-        return agent_recon.ReconResult(plan, 0.1, "completed", "sample")
+        # The repair proposes a different selector; an identical plan would stop early.
+        branch = {**plan["branches"][0], "card_selector": f"main ul:nth-of-type({len(feedbacks)}) > li"}
+        return agent_recon.ReconResult({**plan, "branches": [branch]}, 0.1, "completed", "sample")
 
     async def collect(_plan, _output):
         if len(feedbacks) == 1:

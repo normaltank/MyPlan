@@ -49,7 +49,8 @@ async def test_name_review_alone_does_not_spend_structure_repair(tmp_path, monke
 
     async def recon(*args, **kwargs):
         calls.append(1)
-        return agent_recon.ReconResult(plan, 0, "completed", "fixture")
+        branch = {**plan["branches"][0], "card_selector": f"#roster li:nth-of-type(n+{len(calls)})"}
+        return agent_recon.ReconResult({**plan, "branches": [branch]}, 0, "completed", "fixture")
 
     async def collect(*args):
         return {"delivery_ready": False, "unresolved": unresolved}
@@ -163,7 +164,7 @@ def test_review_page_lists_the_name_with_its_evidence_and_safe_links(tmp_path):
     item = dict(_reconcile().unresolved[0], profile_url="javascript:alert(1)")
     item["id"] = name_review.review_id(item["url"], item["profile_url"], item["name"], item["card_text"])
     html = render_review_page([], [], name_items=[item], name_decision_url="/api/x/review/name")
-    assert "生僻姓氏待确认：阚文涛" in html and "研究方向：数据库" in html
+    assert "姓名待确认：阚文涛" in html and "研究方向：数据库" in html
     assert 'href="https://cs.x.edu.cn/list.htm"' in html
     assert 'href="javascript' not in html
     assert "/api/x/review/name" in html
@@ -202,7 +203,7 @@ def test_name_review_through_the_web_and_retry(tmp_path, monkeypatch):
     owner, headers = login("alice", "alice password 12345")
     other, other_headers = login("bob", "bob password 12345")
     page = owner.get(f"/review/task/{task.task_id}")
-    assert page.status_code == 200 and "生僻姓氏待确认：阚文涛" in page.text
+    assert page.status_code == 200 and "姓名待确认：阚文涛" in page.text
     assert owner.get(f"/api/task/{task.task_id}").json()["review_url"] == f"/review/task/{task.task_id}"
     url = f"/api/task/{task.task_id}/review/name"
     retry = f"/api/task/{task.task_id}/review/retry"

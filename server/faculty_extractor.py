@@ -68,6 +68,9 @@ try:
 except ImportError:
     from titles import TITLE_KEYWORDS, resolve_title
 
+TEMPLATE_NAME_PRIOR = 0.7
+_NAME_SHAPED = re.compile(r"[\u4e00-\u9fff]{2,4}|[\u4e00-\u9fff]{1,8}(?:[·•][\u4e00-\u9fff]{1,8}){1,3}")
+
 # '李星教授介绍': a 2-4 character name, a title keyword, then an introduction suffix.
 _INTRODUCED_NAME = re.compile(
     r"^([\u4e00-\u9fff]{2,4}?)(" + "|".join(map(re.escape, TITLE_KEYWORDS))
@@ -309,6 +312,11 @@ class FacultyDirectoryExtractor:
                         if a is not res.best and a is not g
                         and (_region(a)[0] == bc or _region(a)[1] == bp)]
         pairs = [(grp, r, p) for grp in groups for r, p in zip(grp.records, grp.record_probs)]
+        repeated: Dict[int, Counter] = {}
+        for grp in groups:
+            if not isinstance(grp.records[0][0], VirtualNode):
+                repeated[id(grp)] = Counter(token for rec in grp.records
+                                            for token in set(primary_tokens(rec, k=16)))
         out, seen = [], set()
         for idx, (grp, r, p) in enumerate(pairs):
             needs_review = False
@@ -342,6 +350,11 @@ class FacultyDirectoryExtractor:
             else:
                 toks = primary_tokens(r)
                 raw = toks[0] if toks else ""
+                shared = repeated.get(id(grp), Counter())
+                if (raw and grp.size >= 2 and shared[raw] >= max(2, (grp.size + 1) // 2)
+                        and name_prob(raw) < TEMPLATE_NAME_PRIOR):
+                    raw = next((token for token in primary_tokens(r, k=16)
+                                if shared[token] == 1 and _NAME_SHAPED.fullmatch(token)), "")
                 card = " ".join(n.get_text(separator=' ', strip=True) for n in r)
                 href = first_href(r, base_url)
                 section = ""

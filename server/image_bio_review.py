@@ -206,8 +206,7 @@ def _name_cards(name_items: list[dict]) -> list[str]:
         profile = item.get("profile_url") or ""
         cards.append(
             '<section class="card name-card" data-id="' + escape(item["id"]) + '">'
-            '<h2>' + ('姓名待确认：' if item.get('reason') == 'unrecognized_name_slot'
-                       else '生僻姓氏待确认：') + escape(item["name"]) + '</h2>'
+            '<h2>姓名待确认：' + escape(item["name"]) + '</h2>'
             '<p class="meta">名录页 ' + _page_link(item["url"])
             + ('' if profile == item["url"] else ' · 个人页 ' + _page_link(profile)) + '</p>'
             '<p>卡片原文：</p><blockquote>' + escape(item.get("card_text", "")[:300]) + '</blockquote>'
@@ -295,8 +294,8 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
         body += '<h2>邮箱冲突</h2>' + "\n".join(email_cards)
     name_cards = _name_cards(name_items or [])
     if name_cards:
-        body += ('<h2>生僻姓氏</h2><p>这些名字的姓不在常用姓氏表里，也可能是普通词语。'
-                 '请打开名录页核对。</p>' + "\n".join(name_cards))
+        body += ('<h2>姓名待确认</h2><p>这些名字的姓不在常用姓氏表里，或是外籍译名等程序认不出的名字，'
+                 '也可能是普通词语。请打开名录页核对。</p>' + "\n".join(name_cards))
     if not body and not identity_items:
         body = '<p>当前没有需要人工复核的图片文字、邮箱或姓名。</p>'
     if identity_items:

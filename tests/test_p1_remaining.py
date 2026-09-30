@@ -81,7 +81,9 @@ async def _run_repairs(tmp_path, monkeypatch, deadline):
 
     async def scout(*_args, **kwargs):
         timeouts.append(kwargs["timeout_seconds"])
-        return ReconResult(PLAN, 0, "completed", "deadline-scout")
+        # Each repair proposes a different selector; an unchanged plan stops early.
+        branch = {**PLAN["branches"][0], "card_selector": f"main ul:nth-of-type({len(timeouts)}) > li"}
+        return ReconResult({**PLAN, "branches": [branch]}, 0, "completed", "deadline-scout")
 
     async def browser(*_args):
         return {"delivery_ready": False,

@@ -384,8 +384,29 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
                     "container_count", "email_count"):
             if type(item.get(key)) is int:
                 issue[key] = item[key]
+        owner = _profile_issue_branch(plan, issue)
+        if owner:
+            issue["branch_url"] = owner
         issues.append(issue)
     return {"previous_plan": plan, "issues": issues}
+
+
+def _profile_issue_branch(plan: dict[str, Any], issue: dict[str, Any]) -> str | None:
+    """The one branch whose verified profile selector a profile-page issue names.
+
+    Profile issues carry the profile URL, not the roster. When exactly one branch
+    declared the failing selector, the repair can stay inside that branch.
+    """
+    urls = {branch.get("url") for branch in plan.get("branches", []) if isinstance(branch, dict)}
+    if any(issue.get(key) in urls for key in ("url", "directory_url", "branch_url")):
+        return None
+    selector = issue.get("selector")
+    if not selector:
+        return None
+    owners = [branch["url"] for branch in plan.get("branches", []) if isinstance(branch, dict)
+              and selector in (branch.get("profile_content_selector"),
+                               (branch.get("child_branch") or {}).get("profile_content_selector"))]
+    return owners[0] if len(owners) == 1 else None
 
 
 def run_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -439,6 +460,18 @@ def browser_url_aliases(events: list[dict[str, Any]]) -> dict[str, str]:
                     except (TypeError, ValueError):
                         continue
                     if not isinstance(result, dict) or result.get("error"):
+                        continue
+                    if name == "mcp__playwright__browser_verify_profile":
+                        # Samples opened by the proof tool itself, including redirects.
+                        for item in result.get("results") or []:
+                            if not isinstance(item, dict) or item.get("error"):
+                                continue
+                            source, destination = item.get("requested_url"), item.get("url")
+                            if (isinstance(source, str) and _URL.match(source) and isinstance(destination, str)
+                                    and _URL.match(destination) and source != destination):
+                                aliases[source] = destination
+                        if result.get("results"):
+                            last_verify = None
                         continue
                     if name == "mcp__playwright__browser_survey":
                         for item in (result.get("pages") or {}).get("items", []):
@@ -516,7 +549,10 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
                         elif name == "mcp__playwright__browser_verify_segments":
                             segment_observations.append((args, result, index))
                         elif name == "mcp__playwright__browser_verify_profile":
-                            profile_observations.append((args, result, index))
+                            # One call may open several samples; each keeps its own proof.
+                            samples = result.get("results") if isinstance(result.get("results"), list) else [result]
+                            profile_observations.extend((args, item, index) for item in samples
+                                                        if isinstance(item, dict))
                         else:
                             observations.append((args, result, index))
     issues = []
@@ -697,6 +733,7 @@ def observed_browser_urls(events: list[dict[str, Any]]) -> set[str]:
 # ── 侦察提示词 ─────────────────────────────────────────────────────────────
 PROMPT = Path(__file__).with_name("recon_instructions.md").read_text(encoding="utf-8")
 DISCOVERY_PROMPT = Path(__file__).with_name("recon_discovery.md").read_text(encoding="utf-8")
+PROVIDED_LINKS_PROMPT = Path(__file__).with_name("recon_provided_links.md").read_text(encoding="utf-8")
 
 
 @dataclass
@@ -709,6 +746,8 @@ class ReconResult:
     session_id: str
     event_count: int = 0
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    # Accepted discovery (plan, browser events, session) for a branch-only repair.
+    discovery_checkpoint: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -774,6 +813,11 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
     verified_branches = dict(cfg.get("verified_branches") or {})
     errors = []
 
+    def scoped_issues(url: str) -> list[dict]:
+        return [item for item in feedback.get("issues", [])
+                if isinstance(item, dict) and url in
+                (item.get("url"), item.get("directory_url"), item.get("branch_url"))]
+
     def run(phase: str, url: str, suffix: str) -> tuple[dict, list, dict]:
         remaining = deadline - time.monotonic()
         if cfg.get("cancel_event") is not None and cfg["cancel_event"].is_set():
@@ -786,9 +830,13 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
         if remaining <= 0:
             raise ReconError("阶段侦察超过总时限")
         phase_cfg = {**cfg, "phase": phase, "timeout_seconds": remaining,
+                     "effort": (cfg.get("phase_efforts") or {}).get(phase) or cfg.get("effort"),
                      "phase_call_limit": (cfg.get("phase_call_limits") or {}).get(phase, 0)}
         template = DISCOVERY_PROMPT if phase == "discovery" else PROMPT
         prompt = template.format(school=target["school"], college=target["college"], url=url)
+        provided = [item for item in cfg.get("provided_urls") or [] if _is_structure_url(item)]
+        if phase == "discovery" and provided:
+            prompt += "\n" + PROVIDED_LINKS_PROMPT + "给定链接：\n" + "\n".join(provided)
         if feedback:
             if phase == "discovery":
                 scoped = {"known_urls": required_urls}
@@ -796,10 +844,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                 previous = next((branch for branch in
                     (feedback.get("previous_plan") or {}).get("branches", [])
                     if isinstance(branch, dict) and branch.get("url") == url), None)
-                issues = [item for item in feedback.get("issues", [])
-                          if isinstance(item, dict) and url in
-                          (item.get("url"), item.get("directory_url"), item.get("branch_url"))]
-                scoped = {"issues": issues}
+                scoped = {"issues": scoped_issues(url)}
                 if previous:
                     scoped["previous_branch"] = previous
             if scoped.get("issues") or scoped.get("known_urls") or scoped.get("previous_branch"):
@@ -819,7 +864,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             exc.phase_session_id = sid
             raise
         current = getattr(result, "events", []) or []
-        metric = {"phase": phase, "session_id": sid,
+        metric = {"phase": phase, "session_id": sid, "effort": phase_cfg.get("effort"),
                        "evidence_root": str(Path(__file__).parent / "outputs/recon-evidence" / sid),
                        **run_metrics(current)}
         if getattr(result, "finish_reason", None) != "completed":
@@ -964,7 +1009,11 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
         first, followers = [], []
         for index, url in enumerate(urls):
             fingerprint = fingerprints.get(url)
-            if fingerprint and fingerprint in leaders and url not in verified_branches:
+            # A branch the harvest found wrong gets its own scout with its issues;
+            # copying a sibling's selectors would reproduce the same failure.
+            if scoped_issues(url):
+                first.append((index, url))
+            elif fingerprint and fingerprint in leaders and url not in verified_branches:
                 followers.append((index, url, leaders[fingerprint]))
             else:
                 first.append((index, url))
@@ -1000,7 +1049,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             raise error
         return SimpleNamespace(final_response=json.dumps(plan, ensure_ascii=False), finish_reason="completed",
                                 events=events, phase_metrics=phases,
-                                discovery_session_id=discovery_session_id)
+                                discovery_session_id=discovery_session_id,
+                                discovery_checkpoint=discovery_checkpoint)
     except ReconError as exc:
         if isinstance(exc, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled)):
             if getattr(exc, "aggregated", False):
@@ -1162,6 +1212,10 @@ def _config_from_env() -> dict[str, Any]:
         "provider": os.environ.get("DSH_PROVIDER", "deepseek-official"),
         "model": os.environ.get("DSH_MODEL", "deepseek-flash"),
         "effort": os.environ.get("DSH_EFFORT", "high"),
+        # Optional per-phase reasoning effort (off, low, high, max); unset phases use DSH_EFFORT.
+        "phase_efforts": {phase: value for phase, value in (
+            ("discovery", os.environ.get("DSH_EFFORT_DISCOVERY")),
+            ("branch", os.environ.get("DSH_EFFORT_BRANCH"))) if value},
         "api_key": api_key,
         "patches": (str(here / "recon_runtime.cordis.yml"),),
         "parallel_branches": os.environ.get("FACULTY_RECON_PARALLEL", "1") != "0",
@@ -1183,6 +1237,7 @@ async def reconnoiter(
     resume_discovery: dict[str, Any] | None = None,
     budget: ReconBudget | None = None,
     phase_call_limits: dict[str, int] | None = None,
+    provided_urls: list[str] | None = None,
 ) -> ReconResult:
     """让 Agent 侦察目标学院，返回**已通过双重门禁**的采集计划。
 
@@ -1214,6 +1269,9 @@ async def reconnoiter(
             budget.price_override = json.loads(raw_price)
             rates(budget.provider, budget.model, time.time(), budget.price_override)
     cfg["phase_call_limits"] = phase_call_limits or {}
+    # Roster links a person supplied: the discovery phase checks these instead of
+    # searching the whole site. They are leads; every branch is still verified.
+    cfg["provided_urls"] = list(provided_urls or [])
     cancel_event = threading.Event()
     cfg["cancel_event"] = cancel_event
     budget_before = budget.snapshot() if budget else None
@@ -1318,4 +1376,5 @@ async def reconnoiter(
                      "phases": getattr(result, "phase_metrics", []),
                      "discovery_pages": discovery_evidence(
                          getattr(result, "discovery_session_id", sid).removesuffix("-discover"))},
+        discovery_checkpoint=getattr(result, "discovery_checkpoint", None),
     )

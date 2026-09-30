@@ -133,6 +133,79 @@ def _profile_text(html: str, selector: str, start_selector: str | None, url: str
     return " ".join(BeautifulSoup(scoped, "html.parser").get_text(" ", strip=True).split())
 
 
+PROFILE_CANDIDATE_LIMIT = 4
+
+# The live counterpart of profile_content.hidden_blockers for computed styles.
+_HIDDEN_PATHS = r"""args => {
+  const nodes=[...document.querySelectorAll(args.selector)];
+  if(nodes.length!==1) return [];
+  const root=nodes[0];
+  const shown=n=>{
+    if(!n.getClientRects().length) return false;
+    const s=getComputedStyle(n);
+    return !(n.hidden || n.getAttribute('aria-hidden')==='true' || s.display==='none' || s.visibility==='hidden'
+      || s.visibility==='collapse' || s.contentVisibility==='hidden' || Number(s.opacity)===0);
+  };
+  const media='img,picture,svg,canvas,iframe,object,embed,video,audio';
+  const label=n=>n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+[...n.classList].slice(0,2).map(c=>'.'+c).join('');
+  const where=n=>{const parts=[];for(let p=n;p&&p!==root&&parts.length<4;p=p.parentElement)parts.unshift(label(p));return parts.join(' > ');};
+  const out=[];
+  for(const n of root.querySelectorAll('*')){
+    if(n.matches('script,style,noscript,template') || out.some(item=>item.node.contains(n))) continue;
+    const text=(n.textContent||'').trim();
+    if(!(text || n.matches(media)) || shown(n)) continue;
+    if(!n.matches(media) && !n.querySelector(media) && text.length<=args.trivialChars
+       && !/[一-鿿@\d]/.test(text)) continue;
+    out.push({node:n, where:'descendant', path:where(n), text_chars:text.length,
+      media:n.querySelectorAll(media).length+(n.matches(media)?1:0)});
+    if(out.length>=3) break;
+  }
+  return out.map(({node, ...item})=>item);
+}"""
+
+
+async def profile_candidates(page: Any, selector: str | None = None, *, html: str | None = None,
+                             limit: int = PROFILE_CANDIDATE_LIMIT) -> list[dict]:
+    """Containers the scout may verify next, each already checked against the
+    same static scope rules the harvest applies. Paths and counts only."""
+    from server.profile_content import scope_profile_html
+    try:
+        probe = await page.evaluate("args => __facultyRecon.profileCandidates(args.selector, 10)",
+                                    {"selector": selector})
+    except Exception:
+        return []
+    if html is None:
+        html = await page.content()
+    passing, failing = [], []
+    for item in (probe or {}).get("items") or []:
+        # Every listed selector names the same content, so one static check covers them.
+        _, evidence, issue = scope_profile_html(html, item["selectors"][0], page.url)
+        item["static_check"] = "ok" if evidence else issue["status"]
+        (passing if evidence else failing).append(item)
+    return (passing + failing)[:limit]
+
+
+async def failure_details(page: Any, html: str, result: dict) -> dict:
+    """Why a proof failed, in paths and counts, so a scout need not probe for it."""
+    from server.profile_content import TRIVIAL_HIDDEN_CHARS, hidden_blockers
+    details = {}
+    selector = result.get("profile_content_selector")
+    if not selector:
+        return details
+    if result.get("reason") == "profile_content_selector_hidden":
+        blockers = hidden_blockers(html, selector, start_selector=result.get("profile_content_start_selector"))
+    elif result.get("reason") == "hidden_content":
+        try:
+            blockers = await page.evaluate(_HIDDEN_PATHS, {"selector": selector, "trivialChars": TRIVIAL_HIDDEN_CHARS})
+        except Exception:
+            blockers = []
+    else:
+        blockers = []
+    if blockers:
+        details["hidden_blockers"] = blockers
+    return details
+
+
 async def verify_profile_container(page: Any, selector: str, start_selector: str | None = None,
                                    *, local_capture: dict[str, str] | None = None) -> dict:
     """Return compact facts; an optional Python-only sink retains the bound HTML.

@@ -37,6 +37,7 @@ import contextlib
 import json
 import math
 import hashlib
+import os
 import sys
 import time
 import uuid
@@ -65,6 +66,8 @@ DEFAULT_MAX_TASK_SECONDS = 45 * 60
 # status instead of being cut off by the task deadline midway.
 DEFAULT_HARVEST_RESERVE_SECONDS = 600
 MIN_RECON_SECONDS = 180
+# Upper bound for the navigation census that cross-checks a finished harvest.
+CROSS_CHECK_SECONDS = 240
 IDLE_POLL_MIN_SECONDS = 0.2
 IDLE_POLL_MAX_SECONDS = 2.0
 DEFAULT_MAX_RECON_CALLS = 0
@@ -412,6 +415,7 @@ class AgentWorker:
         verified_branches = None
         resume_discovery = None
         previous_contract_failure = None
+        harvested_plan = None  # the plan whose capture produced the current report
         for attempt in range(self.max_recon_repairs + 1):
             attempt_dir = output_dir / f"attempt-{attempt + 1}"
             attempt_dir.mkdir(parents=True, exist_ok=True)
@@ -427,7 +431,10 @@ class AgentWorker:
                 break
             print(f"[worker]   侦察 {attempt + 1}… {task.url}", flush=True)
             try:
-                if attempt == 0 and recon is None:
+                provided = list(getattr(task, "roster_urls", None) or [])
+                if attempt == 0 and recon is None and not provided:
+                    # A cached plan was scoped by a site-wide discovery; a task
+                    # with supplied roster links is scoped by those links instead.
                     recon = await self._cached_recon(task, output_dir)
                 if recon is None:
                     kwargs = {"timeout_seconds": window,
@@ -437,6 +444,8 @@ class AgentWorker:
                         kwargs["verified_branches"] = verified_branches
                     if resume_discovery:
                         kwargs["resume_discovery"] = resume_discovery
+                    if provided:
+                        kwargs["provided_urls"] = provided
                     recon = await reconnoiter(task.school, task.college, task.url, **kwargs)
             except (ReconPlanError, PlanHygieneError) as exc:
                 # Rejected output may contain teacher data: never replay it or
@@ -475,12 +484,21 @@ class AgentWorker:
                                       usage_unknown=getattr(exc, "usage_unknown", True))
                 save_runtime({"unresolved": [{"status": status}]})
                 raise
+            if harvested_plan is not None and recon.plan == harvested_plan:
+                # Capture is deterministic for a plan: the same plan would
+                # reproduce the same structural report.
+                print("[worker]   补缺后计划与上轮相同，不再重复采集", flush=True)
+                attempts.append({**recon.summary(), "status": "repair_plan_unchanged"})
+                self._save_recon_audit(output_dir, attempts, "repair_plan_unchanged")
+                report["recon_attempts"] = attempts.copy()
+                break
             (attempt_dir / "plan.json").write_text(
                 json.dumps(recon.plan, ensure_ascii=False, indent=2), encoding="utf-8")
             attempts.append(recon.summary())
             self._save_recon_audit(output_dir, attempts, "recon_completed")
             self._save_active_plan(task, output_dir, recon, attempts)
             report = await capture(recon.plan, attempt_dir, 0)
+            harvested_plan = recon.plan
             local_attempts = []
             for retry in range(2):
                 issues = report.get("unresolved") or []
@@ -510,27 +528,108 @@ class AgentWorker:
             if report.get("delivery_ready") and not report.get("unresolved"):
                 from server.recon_plan_cache import ReconPlanCache
                 try:
-                    ReconPlanCache(self.output_dir / "plan-cache").put(
-                        recon.plan, task.url, recon.diagnostics.get("discovery_pages", []))
+                    if not getattr(task, "roster_urls", None):
+                        ReconPlanCache(self.output_dir / "plan-cache").put(
+                            recon.plan, task.url, recon.diagnostics.get("discovery_pages", []))
                 except (ValueError, OSError):
                     pass  # Unsupported interactions or missing evidence are researched again.
+                await self._attach_cross_check(task, recon.plan, report, deadline)
                 return report
             recovery = classify_issues(report.get("unresolved") or [])
             structural = recovery.structure
             if recovery.stop or not structural:
                 break  # Only a person (review page) or the content itself can settle these.
-            feedback = build_repair_feedback(recon.plan, {**report, "unresolved": structural})
+            feedback = build_repair_feedback(recon.plan, {**report, "unresolved": self._with_branch_urls(
+                structural, report.get("coverage_path"))})
             resume_discovery = None
             if not feedback["issues"]:
                 break
             if attempt < self.max_recon_repairs:
                 print(f"[worker]   审计未通过，返回浏览器补缺（{len(feedback['issues'])} 项）", flush=True)
                 verified_branches = await self._unaffected_branches(recon.plan, feedback, attempt_dir)
+                # Every issue names an accepted branch: the branch scouts repair
+                # it, and a new discovery could only keep the same entries.
+                if self._damaged_branches(recon.plan, feedback) is not None:
+                    resume_discovery = recon.discovery_checkpoint
+        if harvested_plan is not None:
+            await self._attach_cross_check(task, harvested_plan, report, deadline)
         save_runtime(report)
         audit = report.get("audit_path")
         if audit and Path(audit).is_file():
             Path(audit).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         return report
+
+    async def _census(self, entry_url: str, plan: dict, extra_urls: list[str] | None = None) -> dict:
+        from server.browser_context import new_browser_context
+        from server.headcount_check import census
+        async with self._playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                return await census(await new_browser_context(browser), entry_url, plan,
+                                    extra_urls=extra_urls or [])
+            finally:
+                with contextlib.suppress(Exception):
+                    await browser.close()
+
+    async def _attach_cross_check(self, task: Any, plan: dict, report: dict, deadline: float | None) -> None:
+        """Check a finished harvest against evidence the scout's plan did not choose.
+
+        Field checks trace every record back to its captured page. A navigation
+        census reads the site's own menu pages without the model; pager totals
+        and stated staff counts come from the pages themselves. Differences are
+        listed for a person and never change delivery.
+        """
+        if not report.get("coverage_path") or not Path(report["coverage_path"]).is_file():
+            return
+        from server.field_checks import check_records, page_text
+        from server.headcount_check import compare, pager_totals, stated_counts
+        coverage = json.loads(Path(report["coverage_path"]).read_text(encoding="utf-8"))
+        snapshots = {item["url"]: Path(item["path"]) for item in coverage.get("snapshots", [])
+                     if item.get("path") and Path(item["path"]).is_file()}
+        records = (json.loads(Path(report["records_path"]).read_text(encoding="utf-8"))
+                   if report.get("records_path") and Path(report["records_path"]).is_file() else [])
+        audit = report.get("audit_path")
+        saved = json.loads(Path(audit).read_text(encoding="utf-8")) if audit and Path(audit).is_file() else None
+        try:
+            image_owned = {(item.get("assigned_name"), item.get("profile_url"))
+                           for item in (saved or report).get("image_biography_evidence", [])}
+            texts = {url: page_text(path.read_text(encoding="utf-8")) for url, path in snapshots.items()}
+            report["field_check"] = check_records(
+                [row for row in records if (row.get("姓名"), row.get("主页")) not in image_owned]
+                + [{**row, "邮箱": ""} for row in records if (row.get("姓名"), row.get("主页")) in image_owned],
+                texts)
+        except Exception as exc:  # a check must never cost a delivery
+            report["field_check"] = {"status": "unavailable", "error_type": type(exc).__name__}
+        check = None
+        if os.environ.get("HARVEST_CROSS_CHECK", "1") != "0":
+            window = CROSS_CHECK_SECONDS if deadline is None else min(
+                CROSS_CHECK_SECONDS, deadline - time.monotonic() - 30)
+            try:
+                if window < 30:
+                    raise TimeoutError
+                roster_pages = [(page["url"], snapshots[page["url"]].read_text(encoding="utf-8"), page["branch_url"])
+                                for page in coverage.get("pages", []) if page.get("url") in snapshots]
+                found = await asyncio.wait_for(
+                    self._census(task.url, plan, list(getattr(task, "roster_urls", None) or [])), timeout=window)
+                pages_html = found.pop("html", {})
+                check = compare(found, [row.get("姓名", "") for row in records],
+                                pager=pager_totals(roster_pages, coverage.get("roster_observations", [])),
+                                stated=stated_counts(pages_html))
+                detail = Path(report["coverage_path"]).with_name("cross-check.json")
+                detail.write_text(json.dumps({**check, "census_pages": found.get("pages", [])},
+                                             ensure_ascii=False, indent=2), encoding="utf-8")
+                check["detail_path"] = str(detail)
+            except (asyncio.TimeoutError, TimeoutError):
+                check = {"status": "unavailable", "summary": "人数核对超时或剩余时间不足，未完成"}
+            except Exception as exc:
+                check = {"status": "unavailable", "summary": "人数核对未完成", "error_type": type(exc).__name__}
+            report["cross_check"] = check
+            print(f"[worker]   人数核对：{check['summary']}", flush=True)
+        if saved is not None:
+            saved["field_check"] = report["field_check"]
+            if check is not None:
+                saved["cross_check"] = check
+            Path(audit).write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @staticmethod
     def _record_usage_alert(task: Any, root: Path, alert: dict[str, Any]) -> None:
@@ -637,12 +736,32 @@ class AgentWorker:
                                         **{key: proof[key] for key in ("discovery_pages", "evidence_root", "browser_tool_calls")
                                            if key in proof}})
 
+    @staticmethod
+    def _with_branch_urls(issues: list[dict], coverage_path: str | None) -> list[dict]:
+        """A later roster page ('.../fjs/1.htm') names the branch it was captured for."""
+        try:
+            pages = json.loads(Path(coverage_path).read_text(encoding="utf-8")).get("pages", [])
+        except (TypeError, OSError, ValueError):
+            return issues
+        owner = {page.get("url"): page.get("branch_url") for page in pages if page.get("branch_url")}
+        return [{**item, "branch_url": owner[item["url"]]}
+                if not item.get("branch_url") and item.get("url") in owner else item for item in issues]
+
+    @staticmethod
+    def _damaged_branches(plan: dict, feedback: dict) -> set | None:
+        """Branch URLs the issues name, or None when any issue names no accepted branch."""
+        branches = {branch["url"] for branch in plan["branches"]}
+        damaged = {item.get("branch_url") or item.get("directory_url") or item.get("url")
+                   for item in feedback.get("issues", [])}
+        if not damaged or None in damaged or not damaged.issubset(branches):
+            return None
+        return damaged
+
     async def _unaffected_branches(self, plan: dict, feedback: dict, root: Path) -> dict | None:
         branches = {branch["url"]: branch for branch in plan["branches"]}
-        issues = feedback.get("issues", [])
-        # Unknown or profile-level failures cannot justify skipping a roster scout.
-        damaged = {item.get("branch_url") or item.get("directory_url") or item.get("url") for item in issues}
-        if not damaged or None in damaged or not damaged.issubset(branches):
+        # Unknown or unattributed profile failures cannot justify skipping a roster scout.
+        damaged = self._damaged_branches(plan, feedback)
+        if damaged is None:
             return None
         verified = {}
         for index, (url, branch) in enumerate(branches.items()):

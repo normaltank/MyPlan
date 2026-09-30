@@ -1,6 +1,6 @@
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
-> **最新交接：2026-09-30 18:48（UTC+8）**。用户要求因额度接近上限保存现场。当前主要任务是修稳既有采集内核，四类缺陷已局部修复，原始 6 个失败检查转绿；最终全量回归与服务切换尚未完成。**请先读 [本轮续接说明](docs/implementation/2026-09-30-extractor-core-handover.md)**，其中有代码、测试、剩余计划、两失败工单和备份边界。常驻进程仍为 12:30 启动的旧服务，不能把磁盘新修复说成已上线。前期运行改进见 [实施记录](docs/implementation/harvest-runtime-improvements.md)；本文历史数字不能代替当前 tasks.db 和版本 manifest。
+> **最新交接：2026-09-30 本地 Git 同步**。远端邮箱修复与侦察提速/师资链接输入已合并，邮箱冲突采用较新的联系字段正证据与歧义阻断规则；审核发现的三项人数/输入问题已修复。本机验证及合并取舍见 [同步审核](docs/audits/2026-09-30-git-sync-review.md)。同步开始时未发现项目 Web/worker 进程，本轮不启动服务；历史 PID 与测试数不代表当前状态。两失败工单的范围与恢复边界仍见 [内核续接说明](docs/implementation/2026-09-30-extractor-core-handover.md) 和 [邮箱补全报告](docs/implementation/2026-09-30-email-evidence-merge-report.md)。
 
 > 按日期追加的状态说明已移到 [CHANGELOG.md](CHANGELOG.md)（最新在前）。本文件描述系统本身；§九、§十中 2026-09-24 的“当前阻塞”等表述是当时的记录。
 

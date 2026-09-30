@@ -308,6 +308,29 @@ def observe_roster(
     }
 
 
+_CARD_NAME = re.compile(r"^[\u4e00-\u9fff]{2,10}(?:[·•][\u4e00-\u9fff]{1,10})*$")
+
+
+def unrecognized_card_names(observation: dict[str, Any], url: str,
+                            known: list[FacultyCandidate]) -> list[FacultyCandidate]:
+    """Unaccounted cards that hold one name-shaped text and link one personal page.
+
+    The card selector was verified, so the card is a roster entry; only the
+    reader did not recognise its text as a name. A person confirms it through the
+    same review as rare-surname names; nothing is admitted unreviewed.
+    """
+    names = {_compact(candidate.name) for candidate in known}
+    found = []
+    for card in observation.get("unaccounted_cards", []):
+        links = [link for link in dict.fromkeys(card.get("links") or []) if link != url]
+        name, title = FacultyDirectoryExtractor._clean_name(card.get("text", ""))
+        name = _compact(name)
+        if len(links) == 1 and _CARD_NAME.match(name) and name not in names:
+            found.append(FacultyCandidate(name=name, url=links[0], title=title, card_context=card["text"]))
+            names.add(name)
+    return found
+
+
 def _apply_name_decisions(
     roster_url: str,
     found: list[FacultyCandidate],
@@ -424,6 +447,10 @@ def reconcile_rosters(
                 # Kept out of the roster, and still reported: the page is not explained.
                 unresolved.append({"url": page.url, "status": "candidate_outside_cards",
                                    "count": len(outside) + len(outside_review)})
+            # A verified card the name reader cannot place (a transliterated
+            # foreign name, say) is a person to confirm, not a selector to redo.
+            review.extend(unrecognized_card_names(
+                observe_roster(page.html, page.url, selector, found + review), page.url, found + review))
         # Undecided names still account for their cards: the review item, not a
         # card-count mismatch, is what blocks delivery until a person decides.
         awaiting = _apply_name_decisions(page.url, found, review, name_decisions or {}, unresolved)
