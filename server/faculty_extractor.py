@@ -1247,14 +1247,14 @@ class FacultyHarvestPipeline:
 
         # Dual-Sheet Conservation Axiom:
         # Sheet 1 + Sheet 2 == Total Faculty, mutually exclusive by person identity, zero omissions, zero duplicates.
-        is_conserved = (
+        records_conserved = (
             len(candidates) > 0
-            and len(unresolved) == 0
             and (total_count == len(candidates))
             and not (cand_indices_1 & cand_indices_2)
             and len(overlap) == 0
             and not has_internal_dups
         )
+        is_conserved = records_conserved and len(unresolved) == 0
         delivery_ready = is_conserved and len(unresolved) == 0 and total_count > 0
 
         return {
@@ -1263,6 +1263,8 @@ class FacultyHarvestPipeline:
             "sheet2_no_email": sheet2_no_email,
             "unresolved": unresolved,
             "is_conserved": is_conserved,
+            # The sheets themselves balance; a caller may settle ``unresolved`` by evidence-bound review.
+            "records_conserved": records_conserved,
             "delivery_ready": delivery_ready,
         }
 

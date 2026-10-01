@@ -520,6 +520,11 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
         while True:
             if branch.get("empty_state_selector"):
                 await page.wait_for_load_state("networkidle", timeout=2000)
+            else:
+                # Scripts may insert the pager or cards after DOMContentLoaded;
+                # read the DOM only once it settles, as the resume path does.
+                with contextlib.suppress(Exception):
+                    await page.wait_for_load_state("networkidle", timeout=3000)
             html = await page.content()
             frontier = (page.url, _frontier_signature(html, branch))
             if frontier[1] is not None and frontier in seen_frontiers:
@@ -551,6 +556,12 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             next_selector = branch["next_selector"]
             next_control = page.locator(next_selector)
             count = await next_control.count()
+            if count == 0 and page_number == 1:
+                # Recon verified exactly one next control on the entry page; its
+                # absence here is unproven, not the end of the roster.
+                unresolved.append({"url": page.url, "page": page_number,
+                                   "status": "pagination_not_verified", "selector": next_selector})
+                break
             if count == 0:
                 evidence["end"] = "next_control_absent"
                 break
@@ -608,6 +619,9 @@ async def _discover_children(context: Any, branch: dict[str, Any]) -> tuple[str 
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         if response is not None and response.status >= 400:
             raise RuntimeError(f"HTTP {response.status}")
+        # Child links a script inserts after DOMContentLoaded must be counted.
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("networkidle", timeout=3000)
         html = await page.content()
         selected = BeautifulSoup(html, "html.parser").select(branch["child_link_selector"])
         if not selected:
@@ -661,7 +675,8 @@ async def _capture_sources_with_state(plan, browser_context, state):
             proof = bundle["meta"].get("evidence")
             terminals = ({"single_page_no_pagination_control_seen"} if branch.get("single_page")
                          else {"next_control_absent", "next_control_disabled"})
-            valid = (isinstance(refs, list) and 1 <= len(refs) <= branch.get("max_pages", 20)
+            valid = (isinstance(refs, list) and 1 <= len(refs)
+                     and (branch.get("max_pages") is None or len(refs) <= branch["max_pages"])
                      and isinstance(proof, dict) and proof.get("url") == branch["url"]
                      and isinstance(proof.get("end"), str)
                      and proof.get("end") in terminals
@@ -1150,6 +1165,13 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     unresolved.extend(await asyncio.to_thread(_enrich_extracted_records,
         pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
         verified_profile_urls=set(profile_scope_evidence)))
+    from server import html_email_review
+    unresolved, html_email_items, html_email_reviews = html_email_review.apply_decisions(
+        unresolved, pipeline_records, admitted, scoped_profile_html, out)
+    remaining = {id(item) for item in unresolved}
+    extraction_ready = bool(extraction["delivery_ready"] or (
+        html_email_reviews and extraction.get("records_conserved") and pipeline_records
+        and not any(id(item) in remaining for item in extraction["unresolved"])))
     finish_stage("deterministic_extraction")
     fields = ("序号", "姓名", "职称", "邮箱", "学校", "学院", "采集人", "采集日期", "简介", "主页")
     records = [{field: row.get(field, "") for field in fields} for row in pipeline_records]
@@ -1163,6 +1185,9 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     observations_path = out / f"{name}_identity_observations.json"
     observations_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     decision_path = out / identity_review.DECISIONS_FILE
+    if html_email_reviews:
+        # A reviewed e-mail may move a row between sheets; numbering follows the rows.
+        records = [{**row, "序号": index} for index, row in enumerate(records, 1)]
     records, identity_items, identity_reviews = identity_review.apply_decisions(records, source_hashes, decision_path)
     reviewed_pairs = identity_review.validated_pairs(records, identity_reviews, decision_path)
     from server.faculty_identity import identity_review_issues
@@ -1200,7 +1225,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     coverage["identity_reviews"] = identity_reviews
     coverage_path = out / f"{name}_coverage.json"
     coverage_path.write_text(json.dumps(coverage, ensure_ascii=False, indent=2), encoding="utf-8")
-    ready = bool(extraction["delivery_ready"] and not unresolved and coverage["complete"])
+    ready = bool(extraction_ready and not unresolved and coverage["complete"])
     records_path = out / f"{name}_records.json"
     records_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     excel_path = None
@@ -1232,6 +1257,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "identity_merges": identity_merges,
         "identity_review_items": identity_items, "identity_reviews": identity_reviews,
         "identity_review_path": str(decision_path), "identity_observations_path": str(observations_path),
+        "html_email_review_items": html_email_items, "html_email_reviews": html_email_reviews,
         "image_biography_evidence": media_audit["evidence"] + pdf_reading["evidence"],
         "segment_name_evidence": segment_naming["evidence"] + pdf_reading["name_evidence"],
         "pdf_roster_evidence": pdf_reading["evidence"],
