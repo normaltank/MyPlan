@@ -148,6 +148,18 @@ def _single_name(text: str) -> str | None:
     return _person_name(compact)
 
 
+def _chain_text(card) -> str:
+    """Card text for finding name chains: a table row's cells are separate clauses.
+
+    A rank cell beside a names cell ('正高级 | 崔海波、陈庆文') must not run into
+    the first name of the chain.
+    """
+    cells = card.find_all(["td", "th"], recursive=False) if card.name == "tr" else []
+    if len(cells) > 1:
+        return "\n".join(cell.get_text(" ", strip=True) for cell in cells)
+    return card.get_text(" ", strip=True)
+
+
 def is_name_list_page(html: str, card_selector: str) -> bool:
     """Cards are lists of people rather than one person each.
 
@@ -163,7 +175,7 @@ def is_name_list_page(html: str, card_selector: str) -> bool:
     list_cards = named_cards = 0
     for card in cards:
         text = card.get_text(" ", strip=True)
-        has_chain = bool(people_chains(text))
+        has_chain = bool(people_chains(_chain_text(card)))
         list_cards += has_chain
         if has_chain or _single_name(text) or any(
                 _person_name(token) for token in re.split(r"[\s　,，、;；:：()（）]+", text) if token):
@@ -193,7 +205,7 @@ def reconcile_name_list(html: str, url: str, card_selector: str) -> NameListResu
                                'matches': list(dict.fromkeys(address for conflict in conflicts
                                                            for address in conflict))})
         text = card.get_text(" ", strip=True)
-        runs = people_chains(text)
+        runs = people_chains(_chain_text(card))
         if runs:
             list_cards += 1
         else:
