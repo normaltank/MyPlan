@@ -1,6 +1,6 @@
-# AGENTS.md · 项目最高行动宪章
+# AGENTS.md · 智能体行动规范
 
-> **致所有智能体（主控与 Subagent）**：本文件为全局常驻强约束。历史交付总表与系统状态见 [`AGENT_HANDOVER.md`](AGENT_HANDOVER.md)。
+> **致所有智能体（主控与 Subagent）**：开始工作前必须完整阅读根目录 [CONSTITUTION.md](CONSTITUTION.md)，它是稳定原则的唯一权威文本。本文件保留具体作业规则，与宪法一致解释；历史交付总表与系统状态见 [`AGENT_HANDOVER.md`](AGENT_HANDOVER.md)。
 
 ---
 
@@ -42,7 +42,7 @@
 5. **服务器路径已落地：常驻队列消费者（轨 C）**：
    - **不要再用"IDE 无法被唤醒"来解释"前端提单没人接"**——该缺口只约束轨 A。服务器上由 `server/agent_worker.py` 常驻轮询 `tasks.db`，是**主动拉取**，不需要任何反向 Webhook。
    - 启动：`python -m server.agent_worker`（常驻）。`--once` **仅供排障**，用它跑生产会导致提单无人接单。
-   - 侦察段 `server/agent_recon.py` 是**模型与数据之间唯一的闸门**，产出物只允许含 URL 与 CSS 选择器；`check_plan_hygiene` 是红线 1 的可执行判据（CSS 选择器不可能含 CJK，故任何含 CJK 的非白名单字符串即为数据出境）。
+   - 侦察段 `server/agent_recon.py` 是**模型与数据之间唯一的闸门**，产出物只允许含目标标识、URL、CSS 选择器及 Schema 允许的结构控制值；`check_plan_hygiene` 是红线 1 的可执行判据。本项目契约禁止选择器含 CJK，含 CJK 的非白名单字符串会被拒绝；这是数据隔离限制，不是 CSS 语法本身的限制。
    - 服务器侦察按代码阶段执行：`server/recon_discovery.md` 发现名录入口，`server/recon_instructions.md` 在每分支独立短上下文中验证选择器与分页。精简真实浏览器工具限制阶段能力，URL、卡片命中和实际下一页均需本轮浏览器证据；有分页候选时不得直接声明单页。完整证据保留在本地，教师数据和简介不受侦察返回预算截断。
    - **角色边界**：服务器 worker 为每学院启动独立 Harness 侦察会话；该会话只核实官网结构并提交计划，确定性采集、审计与 Excel 同步由 worker 继续执行。IDE 路径的学院 Subagent 才负责完整的五步履约。不要要求服务器侦察会话重复执行采集与交付。
    - **服务器侦察契约**：`server/recon_instructions.md` 由代码直接读取并送入每轮侦察；`server/recon_runtime.cordis.yml` 关闭通用工程工具和主控文档自动注入，避免其他学校旧指令污染。结构审计失败后，worker 在同一租约内最多返回侦察补缺两轮，仍未通过则明确失败。

@@ -1,5 +1,9 @@
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
+> **2026-10-02 文档治理**：用户要求建立简洁的宪法文件。根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，新增 `CLAUDE.md` 作为读取入口，README 已链接。文档整理未改变运行代码或服务状态；本次文件尚未提交／推送 Git。
+
+> **最新交接：2026-10-02 侦察图片 OCR 入口修复，待重启 worker 生效**。`server/recon_browser_mcp.py` 新增按需 `browser_read_image`，复用现有原图读取与本地 OCR，侦察说明已同步；普通 DOM 不触发 OCR，模型计划及教师来源审计边界不变。淮阴师范学院马克思主义学院给定“系部设置”页实为 600×805 PNG，真实浏览器实测已读出 40 行，原件与完整结果在 `server/outputs/tasks/8ee2181b7a0741a1a2b45c7862ed2942/ocr-diagnosis/`。该图混合教研部负责人和办公人员，不能据此认定完整教师名录；原工单转入导师 PDF 后的来源范围门禁仍保留，未重排任何工单。相关回归 129 passed，最后补充的越界读取验证 2 passed，Ruff 与 diff 检查通过。重启前已确认队列空闲，但自动审批拒绝了 worker 停止/重启（仅返回 blocked by policy）；服务仍加载更新前的侦察说明，需通过“重启本地服务.bat”加载更新。
+
 > **最新交接：2026-10-01 底层调用链完善已保存，尚未重启服务**。详见[专项审查](docs/audits/2026-10-01-foundation-hardening.md)、[69 项脚本清单](docs/audits/2026-10-01-script-inventory.md)与[实施计划](docs/implementation/2026-10-01-foundation-hardening.md)。用户已批准“个人页明确职称字段 > 名录具体职称 > 简介职称”，现已实装；同时修复旧脚本入口、恢复缓存、邮箱冲突、收据范围与别名、Excel 完整性及大学计数。全量 967 passed、1 skipped 在最后候选邮箱证据修复之前执行，最新定向结果见专项审查；尚需最新全量和空闲时重启。用户将另选学院验收，不处理旧失败工单。
 
 > **上轮部署：2026-10-01 main 同步与本机服务**。内核修复见[续接验证报告](docs/audits/2026-09-30-core-chain-continuation.md)，部署与四字段输入见[部署记录](docs/audits/2026-10-01-local-deployment.md)。Windows 排除了 8000 所在端口段，本机通过 ignored 配置使用 `http://127.0.0.1:18000`；Web、常驻 worker 与手动同步共用此地址。运行服务仍加载上轮 `fe73ddd`，下面未部署状态均为历史记录。
