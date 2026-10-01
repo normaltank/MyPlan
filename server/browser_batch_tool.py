@@ -952,7 +952,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         pdf_reading = await read_pdf_rosters(
             roster_reconciliation.pdf_rosters, fetch_asset=fetch_pdf,
             evidence_dir=out / f"{_safe_name(plan['school'] + '_' + plan['college'])}_snapshots" / "pdf_rosters",
-            cache_dir=_ocr_cache_dir(out), review_decisions_path=out / "image_bio_reviews.json")
+            cache_dir=_ocr_cache_dir(out), review_decisions_path=out / "image_bio_reviews.json",
+            name_decisions_path=out / name_review.DECISIONS_FILE)
         unresolved.extend(pdf_reading["unresolved"])
         for record in pdf_reading["records"]:
             person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
