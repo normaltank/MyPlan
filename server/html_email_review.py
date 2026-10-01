@@ -75,15 +75,23 @@ def build_items(issues, records, candidates, page_html) -> list[dict]:
         return []
     url_counts = Counter(cand.url for cand in candidates)
     page_texts = {url: _page_text(html) for url, html in page_html.items() if html}
+    roster_names = {cand.name for cand in candidates if cand.name and len(cand.name) >= 2}
+
+    def names_others(text: str, name: str) -> bool:
+        compact = text.replace(" ", "")
+        return any(other != name and other not in name and other in compact for other in roster_names)
+
     holders: dict[str, set] = {}
     for cand in candidates:
         texts = [cand.card_context or ""]
-        if url_counts[cand.url] == 1:
-            texts.append(page_texts.get(cand.url, ""))
+        # A linked page is the teacher's own scope only when it is theirs alone:
+        # a group listing that names colleagues proves nothing about them.
+        page = page_texts.get(cand.url, "")
+        if url_counts[cand.url] == 1 and not names_others(page, cand.name):
+            texts.append(page)
         for text in texts:
             for address in find_emails(text):
                 holders.setdefault(address.lower(), set()).add((cand.name, cand.url))
-    roster_names = {cand.name for cand in candidates if cand.name and len(cand.name) >= 2}
     items = []
     for (name, url), owned_issues in grouped.items():
         record = next((row for row in records if row.get("姓名") == name and row.get("主页") == url), None)
@@ -103,8 +111,12 @@ def build_items(issues, records, candidates, page_html) -> list[dict]:
         for key in sorted(addresses):
             address = addresses[key]
             own = is_personal_email_for_scholar(address, name)
+            # As in the extractor, a colleague's spelling counts only for a colleague
+            # this teacher's own card or page actually names.
+            scope = ((cand.card_context or "") + " " + page_texts.get(url, "")).replace(" ", "")
             other = sorted(other_name for other_name in roster_names if other_name != name
-                           and other_name not in name and is_personal_email_for_scholar(address, other_name))
+                           and other_name not in name and other_name in scope
+                           and is_personal_email_for_scholar(address, other_name))
             reasons = []
             if key in shared:
                 reasons.append("shared_contact")

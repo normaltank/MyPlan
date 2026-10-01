@@ -303,3 +303,47 @@ def test_new_audit_with_unreviewable_conflict_cannot_be_released(tmp_path, monke
     _, task, _ = _web_fixture(tmp_path, monkeypatch, {"unresolved": [issue], "html_email_review_items": []})
     owner, headers = _client("alice", "alice password 12345")
     assert owner.post(f"/api/task/{task.task_id}/review/retry", headers=headers).status_code == 409
+
+
+# Shapes observed on live saved pages (2026-10-01 case library), names and addresses replaced.
+OWN = "https://maths.example.edu/p/zhangzhengming.htm"
+PEER = "https://maths.example.edu/p/zhanghuaming.htm"
+GROUP = "https://maths.example.edu/group/physics.htm"
+
+
+def test_own_labelled_address_spelling_an_unnamed_colleague_stays_selectable():
+    # The address happens to spell a colleague too, but the colleague appears
+    # nowhere in this teacher's card or page: spelling alone is not a hard gate.
+    candidates = [FacultyCandidate(name="张正明", url=OWN, card_context="张正明 副教授 zhmzhang@example.edu"),
+                  FacultyCandidate(name="张华明", url=PEER, card_context="张华明 教授")]
+    pages = {OWN: "<main><h1>张正明</h1><ul><li>电子邮箱： zhmzhang@example.edu</li></ul></main>",
+             PEER: "<main><h1>张华明</h1><p>从事几何研究。</p></main>"}
+    records = [{"姓名": c.name, "主页": c.url, "邮箱": ""} for c in candidates]
+    issue = {"姓名": "张正明", "主页": OWN, "status": "ambiguous_email_assignment", "matches": ["zhmzhang@example.edu"]}
+    [item] = html_email_review.build_items([issue], records, candidates, pages)
+    [option] = item["candidates"]
+    assert option["selectable"] is True and option["spells_others"] == []
+    assert "spells_other_teacher" not in option["reasons"] and item["none_allowed"] is False
+    # Named on the teacher's own page, the colleague's spelling still disqualifies the address.
+    pages[OWN] = pages[OWN].replace("</ul>", "</ul><p>合作者：张华明</p>")
+    [item] = html_email_review.build_items([issue], records, candidates, pages)
+    assert item["candidates"][0]["selectable"] is False and item["none_allowed"] is True
+
+
+def test_group_page_linked_as_one_profile_is_not_another_teachers_own_scope():
+    # One roster link points at a group listing that repeats every member's address.
+    candidates = [FacultyCandidate(name="周立新", url=OWN, card_context="周立新 教授 lxzhou@example.edu"),
+                  FacultyCandidate(name="杨成峰", url=GROUP, card_context="杨成峰 助理教授"),
+                  FacultyCandidate(name="许文海", url=PEER, card_context="许文海 讲师")]
+    pages = {OWN: "<main><h1>周立新</h1><p>lxzhou@example.edu</p></main>",
+             GROUP: ("<main><div>周立新 lxzhou@example.edu</div><div>杨成峰</div>"
+                     "<div>许文海 whxu@example.edu</div></main>"),
+             PEER: "<main><h1>许文海</h1></main>"}
+    records = [{"姓名": c.name, "主页": c.url, "邮箱": ""} for c in candidates]
+    issue = {"姓名": "周立新", "主页": OWN, "status": "ambiguous_email_assignment", "matches": ["lxzhou@example.edu"]}
+    [item] = html_email_review.build_items([issue], records, candidates, pages)
+    assert item["candidates"][0]["selectable"] is True, item["candidates"][0]["reasons"]
+    # A second real profile showing the address still marks it as someone else's.
+    pages[PEER] = "<main><h1>许文海</h1><p>lxzhou@example.edu</p></main>"
+    [item] = html_email_review.build_items([issue], records, candidates, pages)
+    assert "in_other_teacher_scope" in item["candidates"][0]["reasons"]
