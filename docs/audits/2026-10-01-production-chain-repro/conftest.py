@@ -1,8 +1,8 @@
 """Isolated settings for the 2026-10-01 production-chain audit repros.
 
-Synthetic pages only. Defect cases assert the expected behaviour and are marked
-xfail(strict=True); once a fix lands they XPASS and fail, which is the cue to drop
-the marker and move the case into tests/. L1 records a known limitation as is.
+Synthetic pages only. The A1, A2 and A4 repros were removed once their fixes
+(PR #10, PR #8) landed with regression tests in tests/. L1 records a known
+limitation as is.
 These files are not part of tests/ and are not collected by CI. Run explicitly:
     python -m pytest -q docs/audits/2026-10-01-production-chain-repro
 """

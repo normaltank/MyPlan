@@ -4,14 +4,14 @@
 - 性质：只读审查。未改生产代码、未操作生产任务库、未访问真实高校站点、未调用 DeepSeek 或其他付费侦察。
 - 验证环境：隔离 Python 3.11 虚拟环境，`requirements-dev.txt`；Playwright 1.47 + 本机 Chromium headless shell；临时 `HARVEST_TASK_DB` 与证据目录。页面全部为 `context.route` 返回的合成 HTML，人名为虚构。
 - 基线：在 `dbfdfb9` 上全量 `pytest` 979 通过、1 失败、3 跳过（失败见 T1，已由任务 A 的 `850d8c9` 修好，`a25084c` 上该文件全部通过）。
-- 复现脚本：[`2026-10-01-production-chain-repro/`](2026-10-01-production-chain-repro/)。A1、A2 的用例断言**预期行为**，并标 `xfail(strict=True)`；对照用例与 L1 按现状断言。当前结果为 4 通过、3 xfail。A4 已修复，复现已删除（见 A4 节）。修复落地后对应用例会 XPASS 并报错，届时去掉标记，把用例移入 `tests/`。运行：`python -m pytest -q -rxX docs/audits/2026-10-01-production-chain-repro`（不在 `testpaths` 内，CI 不收集，ruff 已排除 `docs/`）。
+- 复现脚本：[`2026-10-01-production-chain-repro/`](2026-10-01-production-chain-repro/)。A1、A2、A4 已分别由 PR #10、PR #8 修复，各自的回归测试已在 `tests/` 中，本目录对应复现随之删除，只保留 L1（已知限制，按现状断言）。运行：`python -m pytest -q docs/audits/2026-10-01-production-chain-repro`（不在 `testpaths` 内，CI 不收集，ruff 已排除 `docs/`）。
 
 ## 结论速览（按实际影响排序）
 
 | 编号 | 问题 | 类别 | 建议 |
 |---|---|---|---|
-| A2 | 加载后才渲染的分页按钮或导航子链接被当成“已到末页”，学院少人仍判完整并交付 | 已复现缺陷（合成页面） | **必须修** |
-| A1 | 未写 `max_pages` 的名录超过 20 页时，worker 检查点在第 21 页抛错，整学院以“访问失败”告终 | 已复现缺陷 | **必须修** |
+| A2 | 加载后才渲染的分页按钮或导航子链接被当成“已到末页”，学院少人仍判完整并交付 | 已复现缺陷，已由 PR #10 修复 | 修复后按疑点部分回查已交付学院 |
+| A1 | 未写 `max_pages` 的名录超过 20 页时，worker 检查点在第 21 页抛错，整学院以“访问失败”告终 | 已复现缺陷，已由 PR #10 修复 | 无需处理 |
 | A4 | 批量子任务的“表格”和单学院“下载学院中间成果”链接全部 404 | 已复现缺陷，已由 PR #8 修复 | 无需处理 |
 | T1 | `dbfdfb9` 上 `tests/test_empty_roster.py` 一项测试失败 | 已在 `main` 修复（`850d8c9`） | 无需处理 |
 | S1 | 采集完成后若回传 Web 失败（如 Web 重启），工单直接终态失败，只能重新提单 | 尚未证实的疑点 | 可以暂缓 |
@@ -31,7 +31,9 @@
 
 ## 已复现缺陷
 
-### A2 加载后渲染的分页或导航被判为完整（fail-open，静默少人）
+### A2 加载后渲染的分页或导航被判为完整（fail-open，静默少人；已由 PR #10 修复）
+
+PR #10（`ebd06fa`）按下文最小修复落地：读取页面和子链接前有界等待 `networkidle`，首页读不到已核实的下一页控件时记 `pagination_not_verified`。回归测试在 `tests/test_deferred_pagination_and_long_roster.py`。以下为修复前的记录。
 
 - **位置**：`server/browser_batch_tool.py:500`（`goto(..., wait_until="domcontentloaded")`）→ `:523` 立即 `page.content()` → `:551-556` 下一页控件计数为 0 即记 `next_control_absent` 并结束；`:521-522` 只有 `empty_state_selector` 分支才等 `networkidle`。导航同理：`:608-612` `_discover_children` 在 DOMContentLoaded 后立即读子链接。对照：断点续采路径 `:478-479` 已经等 `networkidle`，新采路径没有。
 - **为何被判完整**：`server/harvest_coverage.py:5,20-21` 把 `next_control_absent` 视为终止证明；导航分支只要求每个**已发现**子分支有终止证明，少发现的子链接不会出现在任何账上。
@@ -47,7 +49,9 @@
   导航分支没有侦察时的子链接数可对照，硬性保护需要新增计划字段（契约变化，本次不建议）；第 1 步已覆盖常见情况。
 - **为何测试没覆盖**：现有浏览器测试的分页与导航夹具全部是服务端直出 HTML，控件在 DOMContentLoaded 时已经存在。
 
-### A1 超过 20 页的名录在 worker 检查点下必然失败（fail-closed，错误归因）
+### A1 超过 20 页的名录在 worker 检查点下必然失败（fail-closed，错误归因；已由 PR #10 修复）
+
+PR #10 去掉了没有 `max_pages` 时的 20 页检查点上限，回归测试 `test_roster_longer_than_twenty_pages_completes_under_worker_checkpoint`。以下为修复前的记录。
 
 - **位置**：`server/harvest_state.py:121-122` `save_roster_progress` 要求 `0 <= sequence < branch.get("max_pages", 20)`，否则 `ValueError("invalid roster sequence")`；`:141` `load_roster_progress` 与 `browser_batch_tool.py:664` 完成分支校验也用同样的 `20` 上限。`browser_batch_tool.py:690-692` 每页回调检查点，异常被 `_capture_branch` 的 `:576` 捕获，变成 `:592` `browser_navigation_failed`。
 - **触发条件**：分页名录超过 20 页，且计划未写 `max_pages`。`server/recon_instructions.md:27,44` 明确要求侦察在总页数未核实时省略 `max_pages`，所以这是默认情况。不带 `state` 调用时无此上限（`tests/test_quantity_limits.py` 的 22 页夹具能采完），只有生产 worker 的带检查点路径受影响。
@@ -76,7 +80,7 @@ PR #8（`4dc1c13`）按下文第一种方案修复：`build_payload` 不再发�
 
 ## 尚未证实的疑点
 
-- **A2 在真实站点的发生率**：只用合成页面证明了机制。哪些已采学院是“分页条晚到”的站点，需要用已有的侦察证据（`nextCount` 观察）与采集审计（`directory_pages=1` 且 `next_control_absent`）对照筛查。本次不碰生产库，未做这项统计。建议修复 A2 后用这个条件回查近期已交付学院。
+- **A2 在真实站点的发生率**：只用合成页面证明了机制。哪些已采学院是“分页条晚到”的站点，需要用已有的侦察证据（`nextCount` 观察）与采集审计（`directory_pages=1` 且 `next_control_absent`）对照筛查。本次不碰生产库，未做这项统计。A2 已修复，建议用这个条件回查修复前已交付的学院，必要时重采。
 - **S1 回传失败即终态**：`server/agent_worker.py:811-823` 任何异常（含 Web 重启导致的 `ConnectError`）都调用 `_mark_failed`。worker 是独立进程（`--base-url`），`retry_failed_review_task`（`agent_queue.py:272`）只服务人工复核后的重试，所以普通失败只能重新提单，新 `task_id` 用不上 `_resume_plan` 的计划复用，可能多一次付费侦察。触发需要 Web 恰好在回传时不可用，概率低，**可以暂缓**；如果要修，最小做法是对连接类错误在租约有效期内重试回传。
 
 ## 已知功能限制（保持现状）
@@ -94,7 +98,7 @@ PR #8（`4dc1c13`）按下文第一种方案修复：`build_payload` 不再发�
 ## 与并行任务的重叠
 
 - **任务 A（多人 PDF 名录，已合并为 `a25084c`）**：同在 `server/browser_batch_tool.py`。任务 A 只改了 `run_plan` 中的整合部分，未动 A1、A2 涉及的 `_capture_branch`、`_discover_children` 和 `harvest_state` 检查点，修复不会与它冲突。`embedded_pdf_roster_requires_review` 与 PDF 分段问题归任务 A，本审查不重复报告。
-- **任务 B（HTML 邮箱歧义复核恢复）**：任务 B 会读写 `harvest_state.py` 和单工单恢复，A1 修改 `harvest_state.py` 的检查点上限时需要与其对齐。L1 的跨学院身份复核入口与任务 B 的复核、恢复模式相近，但不在任务 B 范围内。
+- **任务 B（HTML 邮箱歧义复核恢复，已合并为 `b782b4b`）**：任务 B 读写 `harvest_state.py` 和单工单恢复；PR #10 修改检查点上限时已在其合并后的 `main` 上通过。L1 的跨学院身份复核入口与任务 B 的复核、恢复模式相近，但不在任务 B 范围内。
 
 ## 已核对、未发现问题的部分
 
