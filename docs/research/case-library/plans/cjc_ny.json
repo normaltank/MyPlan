@@ -1,0 +1,20 @@
+{
+  "case_id": "cjc_ny",
+  "entry_url": "https://www.cjc.edu.cn/nyykz/szdw/jsdw.htm",
+  "captured_at": "2026-10-01T21:12:03Z",
+  "shape": "multi_table_article_profileless",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "昌吉学院",
+    "college": "能源与控制工程学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://www.cjc.edu.cn/nyykz/info/1031/1050.htm",
+        "single_page": true,
+        "card_selector": "div.v_news_content table > tbody > tr:not(:first-child)"
+      }
+    ]
+  }
+}

@@ -14,6 +14,7 @@
 
 - `pip install -r requirements-dev.txt` 若因 Debian 自带 PyYAML 失败，先 `pip install --ignore-installed PyYAML==6.0.3`。
 - 仓库锁定 `playwright==1.47.0`，需要 `chromium-1134`；容器只预装 1194。1194 的完整 Chrome 已移除旧 headless，可把 `/opt/pw-browsers/chromium-1134/chrome-linux/chrome` 指向 `chromium_headless_shell-1194` 的 `headless_shell`（同目录其余文件一并软链）。不要 `playwright install`。
+- 云端出口代理会重签 TLS：Chromium 报 `ERR_CERT_AUTHORITY_INVALID` 时，安装 `libnss3-tools` 后执行 `certutil -A -d sql:$HOME/.pki/nssdb -t "C,," -n ccr-agent-proxy -i /root/.ccr/agent-proxy-ca.crt`，不要关闭证书校验。
 - 基线：当前 main（`a25084c`）全量 `pytest` 992 passed、3 skipped。
 
 ## 现有能力盘点（依据代码与离线测试，非实网）

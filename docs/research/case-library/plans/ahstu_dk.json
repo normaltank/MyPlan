@@ -1,0 +1,20 @@
+{
+  "case_id": "ahstu_dk",
+  "entry_url": "https://www.ahstu.edu.cn/dky/szdw/jsml.htm",
+  "captured_at": "2026-10-01T20:18:02Z",
+  "shape": "mixed_role_table",
+  "support": "unsupported_scope",
+  "reusable": false,
+  "plan": {
+    "school": "安徽科技工程大学",
+    "college": "动物科学学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://www.ahstu.edu.cn/dky/szdw/jsml.htm",
+        "single_page": true,
+        "card_selector": "div.tableContainer > table > tbody > tr:not(.firstRow)"
+      }
+    ]
+  }
+}

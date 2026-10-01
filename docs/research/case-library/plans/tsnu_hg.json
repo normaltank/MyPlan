@@ -1,0 +1,43 @@
+{
+  "case_id": "tsnu_hg",
+  "entry_url": "https://hgxy.tsnu.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T20:50:58Z",
+  "shape": "photo_cards_by_rank_paginated",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "天水师范大学",
+    "college": "化学工程与技术学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://hgxy.tsnu.edu.cn/szdw/zgj.htm",
+        "next_selector": "div.pb_sys_common span.p_next > a",
+        "max_pages": 20,
+        "card_selector": "ul.imglist > li",
+        "profile_content_selector": "form div.v_news_content"
+      },
+      {
+        "url": "https://hgxy.tsnu.edu.cn/szdw/fgj.htm",
+        "next_selector": "div.pb_sys_common span.p_next > a",
+        "max_pages": 20,
+        "card_selector": "ul.imglist > li",
+        "profile_content_selector": "form div.v_news_content"
+      },
+      {
+        "url": "https://hgxy.tsnu.edu.cn/szdw/zj.htm",
+        "next_selector": "div.pb_sys_common span.p_next > a",
+        "max_pages": 20,
+        "card_selector": "ul.imglist > li",
+        "profile_content_selector": "form div.v_news_content"
+      },
+      {
+        "url": "https://hgxy.tsnu.edu.cn/szdw/cj.htm",
+        "next_selector": "div.pb_sys_common span.p_next > a",
+        "max_pages": 20,
+        "card_selector": "ul.imglist > li",
+        "profile_content_selector": "form div.v_news_content"
+      }
+    ]
+  }
+}
