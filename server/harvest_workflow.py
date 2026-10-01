@@ -66,6 +66,9 @@ class RosterReconciliation:
     segment_pending: list[Any] = field(default_factory=list)
     segment_shared_emails: dict[str, set[str]] = field(default_factory=dict)
     segmented_pages: dict[str, str] = field(default_factory=dict)
+    # 多人 PDF 名录: verified cards that hold only PDFs, read later in the
+    # browser session by server/pdf_roster.py.
+    pdf_rosters: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Page conditions that pass with time (flaky site, late requests, a settling
@@ -383,6 +386,7 @@ def reconcile_rosters(
     segment_pending: list[Any] = []
     segment_shared: dict[str, set[str]] = {}
     segmented_pages: dict[str, str] = {}
+    pdf_rosters: list[dict[str, Any]] = []
     captured_pages = list(captured)
     for page in captured_pages:
         if page.branch.get("kind") == "segmented":
@@ -429,13 +433,17 @@ def reconcile_rosters(
         if selector:
             found, outside = candidates_inside_cards(page.html, page.url, selector, found)
             review, outside_review = candidates_inside_cards(page.html, page.url, selector, review)
-            if not found and not review and not empty_declared:
+            if not found and not empty_declared:
                 from server.image_biography import media_references
                 cards_html = "".join(str(card) for card in
                                      BeautifulSoup(page.html, "html.parser").select(selector))
-                pdf_urls = list(dict.fromkeys(ref.url for ref in media_references(cards_html, page.url)
-                                             if ref.kind == "pdf" and not ref.linked))
-                if pdf_urls:
+                # No person in any card: an embedded viewer or a download link
+                # is the roster itself.  A download link's own label ('导师名单
+                # 下载') is not a name to review.
+                refs = media_references(cards_html, page.url)
+                pdf_urls = list(dict.fromkeys(ref.url for ref in refs if ref.kind == "pdf"))
+                linked_pdfs = {ref.url for ref in refs if ref.kind == "pdf" and ref.linked}
+                if pdf_urls and all(person.url in linked_pdfs for person in review):
                     # The viewer's enclosing DIV is not a teacher record.
                     # Another selector cannot explain people inside a PDF;
                     # retain this source and stop paid structural repair.
@@ -444,6 +452,8 @@ def reconcile_rosters(
                     observations.append(observation)
                     unresolved.append({"url": page.url, "status": "embedded_pdf_roster_requires_review",
                                        "selector": selector, "media_urls": pdf_urls})
+                    pdf_rosters.append({"url": page.url, "selector": selector, "media_urls": pdf_urls,
+                                        "source_kind": page.branch.get("source_kind") or default_source})
                     continue
             if outside or outside_review:
                 # Kept out of the roster, and still reported: the page is not explained.
@@ -547,6 +557,7 @@ def reconcile_rosters(
         segment_pending=segment_pending,
         segment_shared_emails=segment_shared,
         segmented_pages=segmented_pages,
+        pdf_rosters=pdf_rosters,
     )
 
 
