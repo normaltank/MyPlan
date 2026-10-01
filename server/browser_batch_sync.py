@@ -65,8 +65,11 @@ def build_payload(report_path: str | Path, worker_id: str, lease_token: str,
             stats[field] = report[field]
     if report.get("audit_path"):
         stats["audit_sha256"] = hashlib.sha256(Path(report_path).read_bytes()).hexdigest()
+    # The worker writes the college workbook under outputs/tasks/<task_id>/attempt-N/,
+    # which /download cannot serve to employees. College results reach people only
+    # through the versioned university delivery, so no college-level link is sent.
     return {"records": records, "stats": stats,
-            "download_url": f"/download/{excel.name}", "progress": 100,
+            "download_url": "", "progress": 100,
             "worker_id": worker_id, "lease_token": lease_token}
 
 
