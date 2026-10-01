@@ -3,7 +3,7 @@
 
 按顺序执行：
 1. 用 browser_navigate 打开本入口，直接复用返回的重复子树候选。
-2. 用 browser_verify 检查容器锚定的卡片选择器，通常命中数必须大于零且只匹配教师条目；只有结构不足时调用 browser_structure。完整 HTML、教师正文保留在本地。若官网有明确、真实可见的空名录提示，可按下面的严格空态流程验证；零卡片或完全空 DOM 本身不能证明名录为空。
+2. 用 browser_verify 检查容器锚定的卡片选择器，通常命中数必须大于零且只匹配教师条目；只有结构不足时调用 browser_structure。正文图片没有对应 DOM 文字时，可用 browser_read_image 对实际 img 原图做本地 OCR，按 nextOffset 查看相关范围；只用于形态和来源判断，不转写字段，也不替代卡片/分页证明。完整 HTML、教师正文保留在本地。若官网有明确、真实可见的空名录提示，可按下面的严格空态流程验证；零卡片或完全空 DOM 本身不能证明名录为空。
    browser_verify 的 linkedSamples 只是卡片上的链接样例，并不证明目标就是个人主页。若卡片实际只是通往另一张多人名录的入口，不要把它当教师卡片；改用下面的 navigation 分支，并在真实浏览器打开目标名录核实。
 3. 正常名录在实际 DOM 上验证带容器锚定的 card_selector 只命中教师条目且数量大于零；明确空态按下面的独立流程验证。next_selector 必须唯一，并实际进入下一页验证同构卡片。无分页证据才可使用 single_page。
    若本入口只是通往一张或多张同构多人名录的目录，输出 kind:"navigation"、child_link_selector 和 child_branch。先用 browser_verify 的 card_selector 参数验证 child_link_selector 只命中这些真实名录链接；再打开最多两个不同子名录，用 browser_verify 核实 child_branch 的 card_selector 与分页。子名录有真正的个人主页时仍须按第 4 步核实正文范围。child_branch 不含 url，只有实际验证过的 CSS 和分页字段。若链接指向个人主页，本入口仍是普通名录，不使用 navigation。

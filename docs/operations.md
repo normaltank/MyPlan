@@ -102,6 +102,8 @@ worker 常驻轮询 `server/tasks.db`；使用锁定依赖中的 Harness 可执�
 
 发现阶段的 `browser_navigate` 同时返回页面摘要，本会话已返回过的链接和重复的菜单、页脚文字不再重发；`browser_navigation` 可用 `query` 按关键词筛链接；`browser_survey` 一次查看最多 8 个候选页。个人页正文验证未通过时返回 `reason`（如 `hidden_content`、`network_not_idle`）和阻断请求的类型。
 
+正文图片缺少对应 DOM 文字时，侦察可按实际 img 选择器调用 `browser_read_image`：读取当前浏览器加载成功的原图，复用本地 OCR，保存原件及完整文字，按 `nextOffset` 返回文字行和置信度。其结果只作为页面内容观察，不证明教师来源合格，也不替代选择器、分页或交付审计；模型计划仍只包含结构字段。普通 DOM 文字不触发 OCR。
+
 ## 8. 固定运行环境
 
 常驻进程使用固定环境，不能从会随启动器退出而清理的临时环境启动后台子进程。本机已使用 `.runtime/worker-venv`，依赖来自 `requirements.lock`：

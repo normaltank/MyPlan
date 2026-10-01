@@ -80,6 +80,10 @@ TOOLS = [
          {"function": STRING}, ("function",)),
     tool("browser_screenshot", "View the current viewport, or one element via selector, as a compressed image when roster "
          "shape cannot be judged from DOM. Images are costly; prefer structure/verify.", {"selector": STRING}),
+    tool("browser_read_image", "Read a unique visible img in the current real browser with local OCR, using its "
+         "loaded original resource. Returns observed text lines and confidence for source/shape judgment only; "
+         "never transcribe them into a plan or treat OCR as roster approval. Follow nextOffset for remaining lines.",
+         RANGE, ("selector",)),
 ]
 
 
@@ -93,10 +97,11 @@ def phase_tools(phase: str) -> list[dict]:
     if definitions:
         submit["inputSchema"]["$defs"] = definitions
     if phase == "discovery":
-        allowed = {"browser_navigate", "browser_navigation", "browser_survey", "browser_evaluate", "browser_screenshot"}
+        allowed = {"browser_navigate", "browser_navigation", "browser_survey", "browser_evaluate", "browser_screenshot",
+                   "browser_read_image"}
     elif phase == "branch":
         allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
-                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot"}
+                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot", "browser_read_image"}
     else:
         return [*TOOLS, submit]
     return [*[entry for entry in TOOLS if entry["name"] in allowed], submit]
@@ -115,6 +120,7 @@ class BrowserScout:
         self._seen_links: set[str] = set()
         self._seen_lines: set[str] = set()
         self._dom_modified = False
+        self._image_reads: dict[str, dict] = {}
         from server.empty_roster import install_empty_roster_tracking
         install_empty_roster_tracking(page)
 
@@ -295,7 +301,7 @@ class BrowserScout:
 
     async def _browser_call(self, name: str, arguments: dict) -> dict:
         if self._dom_modified and name in {
-            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click"
+            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_read_image"
         }:
             return {**self.text_result({"status": "browser_dom_modified",
                                        "retry": "Reload the official URL before collecting new verification evidence."}),
@@ -383,6 +389,38 @@ class BrowserScout:
             await self.snapshot()
         elif name == "browser_verify_profile":
             value = await self._verify_profiles(arguments)
+        elif name == "browser_read_image":
+            from server.image_biography import fetch_browser_asset, scan_media
+            target = self.page.locator(arguments["selector"])
+            if await target.count() != 1 or not await target.is_visible():
+                raise ValueError("image selector must match exactly one visible img")
+            if await target.evaluate("node => node.tagName") != "IMG":
+                raise ValueError("image selector must match an img")
+            await target.scroll_into_view_if_needed(timeout=10000)
+            await self.page.wait_for_function("selector => {const img=document.querySelector(selector); "
+                "return img && img.complete && img.naturalWidth > 0;}",
+                arg=arguments["selector"], timeout=10000)
+            image = await target.evaluate("img => ({url: img.currentSrc || img.src, "
+                                          "width: img.naturalWidth, height: img.naturalHeight})")
+            if not image["url"].startswith(("http://", "https://")):
+                raise ValueError("image original requires a browser-observed http(s) resource")
+            await self.snapshot()
+            data = await fetch_browser_asset(self.page.context, image["url"])
+            digest = hashlib.sha256(data).hexdigest()
+            if digest not in self._image_reads:
+                original = self.save("image", data)
+                scan = await asyncio.to_thread(scan_media, data, "image")
+                evidence = self.save("ocr.json", json.dumps(scan, ensure_ascii=False))
+                self._image_reads[digest] = {"scan": scan, "original_path": str(original), "ocr_path": str(evidence)}
+            saved = self._image_reads[digest]
+            lines = saved["scan"]["pages"][0]["lines"]
+            offset = min(len(lines), max(0, int(arguments.get("offset", 0))))
+            limit = min(24, max(1, int(arguments.get("limit", 24))))
+            end = min(len(lines), offset + limit)
+            value = {"url": self.page.url, "image": image, "source": "local_ocr", "sha256": digest,
+                     "original_path": saved["original_path"], "ocr_path": saved["ocr_path"],
+                     "total": len(lines), "offset": offset, "end": end,
+                     "nextOffset": end if end < len(lines) else None, "items": lines[offset:end]}
         elif name == "browser_click":
             target = self.page.locator(arguments["selector"])
             if await target.count() != 1:
