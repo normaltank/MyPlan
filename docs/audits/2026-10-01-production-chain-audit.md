@@ -4,7 +4,7 @@
 - 性质：只读审查。未改生产代码、未操作生产任务库、未访问真实高校站点、未调用 DeepSeek 或其他付费侦察。
 - 验证环境：隔离 Python 3.11 虚拟环境，`requirements-dev.txt`；Playwright 1.47 + 本机 Chromium headless shell；临时 `HARVEST_TASK_DB` 与证据目录。页面全部为 `context.route` 返回的合成 HTML，人名为虚构。
 - 基线：在 `dbfdfb9` 上全量 `pytest` 979 通过、1 失败、3 跳过（失败见 T1，已由任务 A 的 `850d8c9` 修好，`a25084c` 上该文件全部通过）。
-- 复现脚本：[`2026-10-01-production-chain-repro/`](2026-10-01-production-chain-repro/)。A1、A2、A4 的用例断言**预期行为**，并标 `xfail(strict=True)`；对照用例与 L1 按现状断言。当前结果为 4 通过、4 xfail。修复落地后对应用例会 XPASS 并报错，届时去掉标记，把用例移入 `tests/`。运行：`python -m pytest -q -rxX docs/audits/2026-10-01-production-chain-repro`（不在 `testpaths` 内，CI 不收集，ruff 已排除 `docs/`）。
+- 复现脚本：[`2026-10-01-production-chain-repro/`](2026-10-01-production-chain-repro/)。A1、A2 的用例断言**预期行为**，并标 `xfail(strict=True)`；对照用例与 L1 按现状断言。当前结果为 4 通过、3 xfail。A4 已修复，复现已删除（见 A4 节）。修复落地后对应用例会 XPASS 并报错，届时去掉标记，把用例移入 `tests/`。运行：`python -m pytest -q -rxX docs/audits/2026-10-01-production-chain-repro`（不在 `testpaths` 内，CI 不收集，ruff 已排除 `docs/`）。
 
 ## 结论速览（按实际影响排序）
 
@@ -12,7 +12,7 @@
 |---|---|---|---|
 | A2 | 加载后才渲染的分页按钮或导航子链接被当成“已到末页”，学院少人仍判完整并交付 | 已复现缺陷（合成页面） | **必须修** |
 | A1 | 未写 `max_pages` 的名录超过 20 页时，worker 检查点在第 21 页抛错，整学院以“访问失败”告终 | 已复现缺陷 | **必须修** |
-| A4 | 批量子任务的“表格”和单学院“下载学院中间成果”链接全部 404 | 已复现缺陷 | **必须修**（改一行） |
+| A4 | 批量子任务的“表格”和单学院“下载学院中间成果”链接全部 404 | 已复现缺陷，已由 PR #8 修复 | 无需处理 |
 | T1 | `dbfdfb9` 上 `tests/test_empty_roster.py` 一项测试失败 | 已在 `main` 修复（`850d8c9`） | 无需处理 |
 | S1 | 采集完成后若回传 Web 失败（如 Web 重启），工单直接终态失败，只能重新提单 | 尚未证实的疑点 | 可以暂缓 |
 | C1 | IDE 海报流程的 `verified_candidates` 由 Subagent 录入姓名、职称，与宪法“数据由确定性代码提取”不一致 | 宪法一致性（非生产 worker 路径） | 可以暂缓（需负责人决策） |
@@ -57,10 +57,12 @@
 - **最小修复**：检查点上限与采集上限保持一致。没有 `max_pages` 时不设检查点页数上限（或使用与 `_capture_branch` 一致的显式安全上限），三处 `branch.get("max_pages", 20)` 一起改。
 - **为何测试没覆盖**：`tests/test_quantity_limits.py` 的 22 页用例不带 `state`；`tests/test_pagination_resume.py` 带 `state` 但只有几页。
 
-### A4 学院级下载链接全部 404
+### A4 学院级下载链接全部 404（已由 PR #8 修复）
+
+PR #8（`4dc1c13`）按下文第一种方案修复：`build_payload` 不再发送学院级 `download_url`，前端不显示该链接，学院结果只经版本化大学交付。回归测试为 `tests/test_browser_batch_sync.py::test_worker_layout_sends_no_unservable_college_link`，本审查的 A4 复现因此删除。以下为修复前的记录。
 
 - **位置**：`server/browser_batch_sync.py:69` `"download_url": f"/download/{excel.name}"`，只取文件名；worker 实际把学院表写在 `outputs/tasks/<task_id>/attempt-N/<学校>_<学院>.xlsx`（`agent_worker.py:429`、`browser_batch_tool.py:1208`）。`server/app.py:744-749` `download_file` 按 `OUTPUT_DIR / filename` 查找，找不到即 404；`:754-755` 非管理员本来也只能下载 `versions/` 下的文件。前端 `server/templates/index.html:880`（批量子任务“表格”）与 `:829`（单学院“下载学院中间成果”）直接渲染该链接。生产队列库有 `college`、`batch_id` 列，`sync_report` 走 `:90-110` 分支，不会改写这个 URL（`:137` 的改写只在旧库分支）。
-- **复现**（`test_a4_college_download_link.py`）：`build_payload` 给出 `/download/样本大学_样本学院.xlsx`，以内部管理员身份调用 `download_file` 得到 404，文件实际存在于 `tasks/abc123/attempt-1/`。
+- **复现**（原 `test_a4_college_download_link.py`，修复后已删除）：`build_payload` 给出 `/download/样本大学_样本学院.xlsx`，以内部管理员身份调用 `download_file` 得到 404，文件实际存在于 `tasks/abc123/attempt-1/`。
 - **预期**：链接能下载，或者不显示。**实际**：所有用户点击都 404。
 - **影响**：大学级下载不受影响（`publish_delivery` 生成 `versions/` 链接）。但大学版本未 ready 时（例如 L1 阻断、批次未齐），员工唯一可见的学院级入口是坏链接。
 - **最小修复**：二选一，建议前者，保持简单：
@@ -79,7 +81,7 @@
 
 ## 已知功能限制（保持现状）
 
-- **L1 跨学院同名阻断大学版本**（`test_l1_cross_college_homonym.py`）：`server/university_delivery.py:42-65` 的 `approved_pairs` 只来自各工单自己的身份复核，同一批次化学学院与物理学院各有一位“王伟”（主页不同）时，冲突 `homonym_or_distinct_profile` 无法被任何现有复核放行，`publish_delivery` 返回 `blocked`，两学院都已 completed。这是宪法“同名不同人不得合并”的保守实现，方向正确；缺的是大学级复核入口。是否加、放在哪里，属于业务决策，不建议本轮顺手改。另外 `app.py:405-410` 在身份待复核时会清空下载链接，再叠加 A4，员工此时看不到任何下载入口。
+- **L1 跨学院同名阻断大学版本**（`test_l1_cross_college_homonym.py`）：`server/university_delivery.py:42-65` 的 `approved_pairs` 只来自各工单自己的身份复核，同一批次化学学院与物理学院各有一位“王伟”（主页不同）时，冲突 `homonym_or_distinct_profile` 无法被任何现有复核放行，`publish_delivery` 返回 `blocked`，两学院都已 completed。这是宪法“同名不同人不得合并”的保守实现，方向正确；缺的是大学级复核入口。是否加、放在哪里，属于业务决策，不建议本轮顺手改。另外 `app.py:405-410` 在身份待复核时会清空下载链接，而 A4 修复后不再提供学院级链接，员工此时看不到任何下载入口。
 - **L2 末页“下一页”仍可点击**：最后一页的下一页链接仍可用、点击后内容不变，会记为 `pagination_unchanged`（structure），触发付费修复。属于 fail-closed，不丢人，保持。
 - **L3 短彩色图片按照片跳过**：没有姓名的短彩色图片不做 OCR，是文档记录的取舍。
 - **L4 `split_glued_numeric` 为空操作**：死代码，不影响结果。按“不因代码风格提改造”的要求，不处理。
