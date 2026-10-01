@@ -1,6 +1,8 @@
 # AGENTS.md · 项目最高行动宪章
 
-> **致所有智能体（主控与 Subagent）**：本文件为全局常驻强约束。历史交付总表与系统状态见 [`AGENT_HANDOVER.md`](AGENT_HANDOVER.md)。
+> **先读 [`docs/PROJECT.md`](docs/PROJECT.md)**：项目目标、技术路线、当前阶段、已定决策与文档地图。
+>
+> **致所有智能体（主控与 Subagent）**：本文件为全局常驻强约束。[`AGENT_HANDOVER.md`](AGENT_HANDOVER.md) 是历史交付总表与早期状态记录，当前状态以 `docs/PROJECT.md` 为准。
 
 ---
 

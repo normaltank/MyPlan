@@ -96,6 +96,7 @@ uv run --no-project --with-requirements requirements-dev.lock --python 3.12 ruff
 
 ## 文档导航
 
+- [项目说明](docs/PROJECT.md)：目标、技术路线、当前阶段与已定决策（先读）
 - [运维手册](docs/operations.md)：启动与重启、员工账号、复核、worker 参数、资源与用量保护、测试记录、手工采集
 - [AGENTS.md](AGENTS.md)：红线与智能体派发规则
 - [AGENT_HANDOVER.md](AGENT_HANDOVER.md)：交接文档、业务规则与系统状态
