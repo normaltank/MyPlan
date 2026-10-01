@@ -56,6 +56,8 @@ _SPLIT = re.compile(r"[\s\u3000,，、;；:：|/()（）\[\]【】<>《》\"'“
 _LABELS = {"姓名", "教师", "老师", "导师", "简介", "个人简介", "个人简历", "简历",
            "导师简介", "教师简介"}
 _NAME_LABEL = re.compile(r"姓\s*名\s*[:：]?\s*([\u4e00-\u9fff·•]{2,8})")
+# '职务：学院党委书记' names a post; the record's title is on the line after it.
+_POST_LINE = re.compile(r"^\s*职\s*务\s*[:：]")
 _BARE_NAME_LABEL = re.compile(r"^\s*姓\s*名\s*[:：]?\s*$")
 _HAN_NAME = re.compile(r"^[\u4e00-\u9fff]{2,4}$")
 _MINORITY_NAME = re.compile(r"^[\u4e00-\u9fff]{1,6}[·•][\u4e00-\u9fff]{1,8}$")
@@ -254,7 +256,8 @@ def text_name(segment: Segment) -> tuple[str | None, str, int]:
         shape = heading_shape(line)
         if shape:
             name = shape[0]
-            title = (_title_in(line) or next((found for found in map(_title_in, lines[:2]) if found), None)
+            heading = [text for text in lines if not _POST_LINE.match(text)][:2]
+            title = (_title_in(line) or next((found for found in map(_title_in, heading) if found), None)
                      or "教师")
             rest = lines[index + 1:]
             # '陈厚、尤再进、董平……' is a list of people, not one record's heading.
