@@ -80,7 +80,7 @@ async def test_sync_partial_does_not_publish_complete_batch(tmp_path):
             output_root=root, db_path=queue.db_path, client=client)
     assert result["university_excel"] is None
     assert result["delivery_scope"]["state"] == "collecting"
-    assert queue.get_task(task.task_id).download_url == "/download/college.xlsx"
+    assert not queue.get_task(task.task_id).download_url
     assert not (root / "University.xlsx").exists()
 
 

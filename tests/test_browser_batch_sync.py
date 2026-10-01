@@ -34,7 +34,7 @@ def test_sync_payload_uses_local_records_without_agent_copying_biographies(tmp_p
     report_path, output_root = _report(tmp_path)
     payload = build_payload(report_path, "worker-1", "lease-1", output_root)
 
-    assert payload["download_url"] == "/download/样本大学_样本学院.xlsx"
+    assert payload["download_url"] == ""
     assert payload["stats"] == {"total": 1, "with_email": 1, "no_email": 0,
                                 "unresolved": 0, "directory_pages": 1, "candidate_count": 1}
     assert payload["records"][0]["简介"] == "完整履历"
@@ -145,3 +145,27 @@ async def test_university_export_reloads_completed_tasks_after_sync(tmp_path):
 
     workbook = openpyxl.load_workbook(output_root / "样本大学.xlsx", read_only=True)
     assert workbook["教师列表"].max_row == 4
+
+
+def test_worker_layout_sends_no_unservable_college_link(tmp_path):
+    # agent_worker writes the college workbook under tasks/<task_id>/attempt-N/;
+    # a /download/<file name> link there 404s, so none is sent.
+    outputs = tmp_path / "outputs"
+    attempt = outputs / "tasks" / "abc123" / "attempt-1"
+    attempt.mkdir(parents=True)
+    excel = attempt / "样本大学_样本学院.xlsx"
+    excel.write_bytes(b"workbook placeholder")
+    records = [{"序号": 1, "姓名": "张富有", "职称": "教授", "邮箱": "", "学校": "样本大学",
+                "学院": "样本学院", "采集人": "w", "采集日期": "2026-10-01", "简介": "",
+                "主页": "https://example.edu/p/1"}]
+    (attempt / "records.json").write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+    report = {"school": "样本大学", "college": "样本学院", "delivery_ready": True, "unresolved": [],
+              "total": 1, "with_email": 0, "no_email": 1, "records_path": str(attempt / "records.json"),
+              "excel_path": str(excel), "directory_pages": 1, "candidate_count": 1}
+    audit = attempt / "audit.json"
+    audit.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+    payload = build_payload(audit, "w", "lease", outputs)
+
+    assert payload["download_url"] == ""
+    assert len(payload["records"]) == 1
