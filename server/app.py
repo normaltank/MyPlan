@@ -30,7 +30,7 @@ if __package__:
     from .task_image_review import (task_review_audit, has_image_review, review_items,
                                     review_complete, prepare_review_resume,
                                     legacy_review_audits, name_items)
-    from . import name_review, identity_review
+    from . import html_email_review, name_review, identity_review
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
@@ -39,6 +39,7 @@ else:
     from task_image_review import (task_review_audit, has_image_review, review_items,
                                    review_complete, prepare_review_resume,
                                    legacy_review_audits, name_items)
+    import html_email_review
     import name_review
     import identity_review
     from image_bio_review import (render_review_page, save_review_decision,
@@ -229,6 +230,12 @@ class OcrReviewRequest(BaseModel):
 class EmailReviewRequest(BaseModel):
     id: str
     selected_email: str
+
+
+class HtmlEmailReviewRequest(BaseModel):
+    id: str
+    verdict: str
+    selected_email: str = ''
 
 
 class NameReviewRequest(BaseModel):
@@ -462,6 +469,7 @@ async def task_image_review_page(task_id: str, request: Request):
         for item in identities:
             decision = saved.get(item['id'], {})
             item['saved_verdict'] = decision.get('verdict', '')
+        html_emails = _html_email_items(audit, task_id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据不完整，请管理员检查审计文件') from exc
     return render_review_page(ocr_items, email_items,
@@ -471,7 +479,18 @@ async def task_image_review_page(task_id: str, request: Request):
         csrf_token=request.cookies.get(CSRF_COOKIE, ''), return_url='/',
         name_items=names, name_decision_url=f'/api/task/{task_id}/review/name',
         identity_items=identities, identity_decision_url=f'/api/task/{task_id}/review/identity',
-        can_review_identity=_user(request).role == 'admin')
+        can_review_identity=_user(request).role == 'admin',
+        html_email_items=html_emails, html_email_decision_url=f'/api/task/{task_id}/review/html-email')
+
+
+def _html_email_items(audit: Path, task_id: str) -> list[dict]:
+    items = html_email_review.collect_items(audit)
+    saved = html_email_review.load_decisions(audit.parent / html_email_review.DECISIONS_FILE)
+    for item in items:
+        decision = saved.get(item['id'], {})
+        if html_email_review.valid_decision(item, decision, task_id) is not None:
+            item['saved_verdict'], item['saved_email'] = decision['verdict'], decision['email']
+    return items
 
 
 @app.post('/api/task/{task_id}/review/ocr', status_code=204)
@@ -498,6 +517,21 @@ async def save_task_email_review(task_id: str, payload: EmailReviewRequest, requ
                             payload.selected_email)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='邮箱选择无效') from exc
+    return Response(status_code=204)
+
+
+@app.post('/api/task/{task_id}/review/html-email', status_code=204)
+async def save_task_html_email_review(task_id: str, payload: HtmlEmailReviewRequest, request: Request):
+    _, audit = _review_task(task_id, request)
+    try:
+        item = next((item for item in html_email_review.collect_items(audit) if item['id'] == payload.id), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail='邮箱复核证据不存在或已变化')
+        html_email_review.save_decision(audit.parent / html_email_review.DECISIONS_FILE, item,
+            payload.verdict, payload.selected_email, task_id=task_id, reviewed_by=_user(request).id)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409,
+            detail='只能选择页面上出现且无他人归属证据的地址；无个人邮箱须有全部地址属于他人的证据') from exc
     return Response(status_code=204)
 
 
@@ -537,7 +571,8 @@ async def retry_task_after_image_review(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
         ocr_items, email_items = review_items(audit)
-        if not review_complete(audit, ocr_items, email_items, name_items(audit), identity_review.collect_items(audit)):
+        if not review_complete(audit, ocr_items, email_items, name_items(audit), identity_review.collect_items(audit),
+                               html_email_review.collect_items(audit)):
             raise HTTPException(status_code=409, detail='请先完成全部图片文字、邮箱、姓名和身份复核；证据不足的身份不能放行')
         prepare_review_resume(audit, task_id)
     except (OSError, ValueError, KeyError, TypeError) as exc:

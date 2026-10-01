@@ -7,13 +7,14 @@ from pathlib import Path
 import shutil
 import time
 
-from . import name_review, identity_review
+from . import html_email_review, name_review, identity_review
 from .image_bio_review import (collect_email_conflict_items, collect_review_items,
                                resolve_email_conflict)
 
 
 IMAGE_REVIEW_STATUSES = {'image_bio_low_confidence', 'image_bio_email_conflict',
-                         'segment_name_needs_review', name_review.STATUS, identity_review.STATUS}
+                         'segment_name_needs_review', name_review.STATUS, identity_review.STATUS,
+                         *html_email_review.STATUSES}
 
 
 def task_review_audit(output_dir: str | Path, task) -> Path | None:
@@ -55,12 +56,19 @@ def name_items(audit_path: Path) -> list[dict]:
 
 
 def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[dict],
-                    names: list[dict] | None = None, identities: list[dict] | None = None) -> bool:
+                    names: list[dict] | None = None, identities: list[dict] | None = None,
+                    html_emails: list[dict] | None = None) -> bool:
     names = names or []
     identities = identities or []
-    if not ocr_items and not email_items and not names and not identities:
+    html_emails = html_emails or []
+    audit = json.loads(audit_path.read_text(encoding='utf-8'))
+    # An old audit has the HTML e-mail block but not its evidence; only a rerun can produce it.
+    regenerate = html_email_review.evidence_missing(audit)
+    if not ocr_items and not email_items and not names and not identities and not html_emails and not regenerate:
         return False
-    issues = {item.get('status') for item in json.loads(audit_path.read_text(encoding='utf-8')).get('unresolved', [])}
+    issues = {item.get('status') for item in audit.get('unresolved', [])}
+    if not regenerate and not html_email_review.review_complete(audit_path, audit, html_emails):
+        return False
     if ((issues & {'image_bio_low_confidence', 'segment_name_needs_review'} and not ocr_items)
             or ('image_bio_email_conflict' in issues and not email_items)
             or (name_review.STATUS in issues and not names)
@@ -116,7 +124,7 @@ def carry_review_decisions(task_root: str | Path, target_attempt: str | Path) ->
     source = source_audit.parent
     target.mkdir(parents=True, exist_ok=True)
     for filename in ('image_bio_reviews.json', 'image_bio_email_reviews.json', name_review.DECISIONS_FILE,
-                     identity_review.DECISIONS_FILE):
+                     identity_review.DECISIONS_FILE, html_email_review.DECISIONS_FILE):
         path = source / filename
         if path.is_file() and path.resolve().is_relative_to(root) and path.resolve() != (target / filename).resolve():
             shutil.copyfile(path, target / filename)
