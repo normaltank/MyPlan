@@ -154,7 +154,7 @@ def _segment_name_items(audit: dict, root: Path, listed: set) -> list[dict]:
             "media_url": key[0], "source_sha256": digest, "page": key[1], "line_index": key[2],
             "ocr_text": line["text"], "ocr_text_sha256": _text_digest(line["text"]),
             "confidence": line["confidence"], "purpose": "segment_name",
-            "crop_bytes": _crop_original(original, "image", key[1], line["box"]),
+            "crop_bytes": _crop_original(original, evidence.get("kind", "image"), key[1], line["box"]),
         })
     return items
 

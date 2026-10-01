@@ -333,9 +333,17 @@ class AgentWorker:
 
         if not ready or report.get("unresolved"):
             unresolved = report.get("unresolved") or []
+            pdf_media = {item.get("media_url") for item in report.get("pdf_roster_evidence") or []}
+            pdf_issues =[item for item in unresolved if str(item.get("status", "")).startswith("pdf_roster_")
+                          or (item.get("media_url") in pdf_media and item.get("status") in {
+                              "image_bio_low_confidence", "segment_name_needs_review",
+                              "segment_email_ambiguous", "segment_duplicate_name"})]
             reason = ("审计未通过交付门禁：嵌入 PDF 名录尚未核验；需核对 PDF 人员与主名录的差额、"
                       "姓名冲突及采集范围。已保留本地证据，未导出。"
                       if any(item.get("status") == "embedded_pdf_roster_requires_review" for item in unresolved)
+                      else f"审计未通过交付门禁：多人 PDF 名录已按页读取，仍有 {len(pdf_issues)} 项分段、"
+                           "姓名或邮箱归属待复核；已保留原件、页码与行证据，未导出。"
+                      if pdf_issues
                       else f"审计未通过交付门禁：unresolved={len(unresolved)} "
                            f"{[u.get('status') for u in unresolved[:3]]}")
             await self._mark_failed(
@@ -594,6 +602,10 @@ class AgentWorker:
         try:
             image_owned = {(item.get("assigned_name"), item.get("profile_url"))
                            for item in (saved or report).get("image_biography_evidence", [])}
+            # A PDF roster record's fields come from the PDF, not the page text.
+            image_owned |= {(record.get("name"), item.get("profile_url"))
+                            for item in (saved or report).get("pdf_roster_evidence", [])
+                            for record in item.get("records", [])}
             texts = {url: page_text(path.read_text(encoding="utf-8")) for url, path in snapshots.items()}
             report["field_check"] = check_records(
                 [row for row in records if (row.get("姓名"), row.get("主页")) not in image_owned]
