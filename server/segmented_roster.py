@@ -381,12 +381,22 @@ class SegmentedReconciliation:
     shared_emails: set[str]
 
 
+def _blank(segment: Segment) -> bool:
+    """An empty spacer between records (a '<tr><td>&nbsp;</td></tr>' row) holds no person."""
+    return not (re.sub(r"\s", "", segment.text) or segment.images or segment.start_image
+                or segment.links or segment.emails)
+
+
 def reconcile_page(html: str, url: str, branch: dict) -> SegmentedReconciliation:
     page = split_segments(html, url, branch["container_selector"], branch["record_start_selector"])
     unresolved = list(page.issues)
     records, pending = [], []
     shared = page.shared_emails
+    blank = 0
     for segment in page.segments:
+        if _blank(segment):
+            blank += 1
+            continue
         name, title, extra = text_name(segment)
         if extra:
             unresolved.append({"url": url, "status": "segment_multiple_names",
@@ -409,7 +419,8 @@ def reconcile_page(html: str, url: str, branch: dict) -> SegmentedReconciliation
         unresolved.append({"url": url, "status": "segment_duplicate_name", "occurrences": names.count(duplicate)})
     observation = {"url": url, "kind": KIND, "container_selector": branch["container_selector"],
                    "record_start_selector": branch["record_start_selector"],
-                   "visible_segments": len(page.segments), "text_named": len(records),
+                   "visible_segments": len(page.segments) - blank, "blank_segments": blank,
+                   "text_named": len(records),
                    "image_named_pending": len(pending), "preamble_emails": len(page.preamble_emails),
                    "unaccounted_segments": [item["segment"] for item in unresolved if "segment" in item]}
     return SegmentedReconciliation(records, pending, observation, unresolved, shared)
@@ -421,8 +432,11 @@ def verification_summary(html: str, url: str, container_selector: str,
     page = split_segments(html, url, container_selector, record_start_selector)
     items = []
     counts = {"text_named": 0, "image_only": 0, "unnamed_without_image": 0,
-              "multiple_name_lines": 0, "multiple_emails": 0, "with_links": 0}
+              "multiple_name_lines": 0, "multiple_emails": 0, "with_links": 0, "blank": 0}
     for segment in page.segments:
+        if _blank(segment):
+            counts["blank"] += 1
+            continue
         name, _title, extra = text_name(segment)
         counts["text_named"] += bool(name)
         counts["image_only"] += (not name) and bool(segment.images)
