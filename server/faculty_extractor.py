@@ -392,6 +392,11 @@ class FacultyDirectoryExtractor:
                     labels.append((raw, href))
                     labels.extend((token, href) for token in primary_tokens([anchor]))
             labels.extend((token, None) for token in primary_tokens([card]))
+            # One table cell may split a name across inline runs ('<span>杨</span>
+            # <span>曼</span>'); its leaf strings alone expose only the surname.
+            labels.extend((cell.get_text(' ', strip=True), None)
+                          for cell in card.find_all(['td', 'th'])
+                          if len(list(cell.stripped_strings)) > 1)
             linked_slots = {}
             for raw, href in labels:
                 name, title = cls._clean_name(raw)
