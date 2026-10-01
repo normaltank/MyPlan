@@ -136,3 +136,21 @@ async def test_profile_transient_retry_is_bounded_and_failures_remain_unresolved
     assert len(context.visits) == 3 and context.closed == 3
     assert pages["https://example.edu/p1"] is None
     assert [item["status"] for item in unresolved] == ["profile_navigation_failed"]
+
+
+def test_roster_checkpoint_follows_capture_page_limit(tmp_path):
+    """Without max_pages the capture has no page cap; the checkpoint must not add one."""
+    State = state_type()
+    unbounded = {"url": "https://example.edu/list/1", "card_selector": "main li", "next_selector": ".next"}
+    state = State(tmp_path / "task", {**PLAN, "branches": [unbounded]})
+    for sequence in range(25):
+        state.save_roster_progress(unbounded, f"https://example.edu/list/{sequence + 1}",
+                                   f"<main><li>{sequence}</li></main>", sequence)
+    assert len(state.load_roster_progress(unbounded)) == 25
+
+    bounded = {**unbounded, "max_pages": 2}
+    state = State(tmp_path / "bounded", {**PLAN, "branches": [bounded]})
+    state.save_roster_progress(bounded, "https://example.edu/list/1", "<main><li>1</li></main>", 0)
+    state.save_roster_progress(bounded, "https://example.edu/list/2", "<main><li>2</li></main>", 1)
+    with pytest.raises(ValueError, match="invalid roster sequence"):
+        state.save_roster_progress(bounded, "https://example.edu/list/3", "<main><li>3</li></main>", 2)

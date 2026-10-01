@@ -520,6 +520,11 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
         while True:
             if branch.get("empty_state_selector"):
                 await page.wait_for_load_state("networkidle", timeout=2000)
+            else:
+                # Scripts may insert the pager or cards after DOMContentLoaded;
+                # read the DOM only once it settles, as the resume path does.
+                with contextlib.suppress(Exception):
+                    await page.wait_for_load_state("networkidle", timeout=3000)
             html = await page.content()
             frontier = (page.url, _frontier_signature(html, branch))
             if frontier[1] is not None and frontier in seen_frontiers:
@@ -551,6 +556,12 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             next_selector = branch["next_selector"]
             next_control = page.locator(next_selector)
             count = await next_control.count()
+            if count == 0 and page_number == 1:
+                # Recon verified exactly one next control on the entry page; its
+                # absence here is unproven, not the end of the roster.
+                unresolved.append({"url": page.url, "page": page_number,
+                                   "status": "pagination_not_verified", "selector": next_selector})
+                break
             if count == 0:
                 evidence["end"] = "next_control_absent"
                 break
@@ -608,6 +619,9 @@ async def _discover_children(context: Any, branch: dict[str, Any]) -> tuple[str 
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         if response is not None and response.status >= 400:
             raise RuntimeError(f"HTTP {response.status}")
+        # Child links a script inserts after DOMContentLoaded must be counted.
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("networkidle", timeout=3000)
         html = await page.content()
         selected = BeautifulSoup(html, "html.parser").select(branch["child_link_selector"])
         if not selected:
@@ -661,7 +675,8 @@ async def _capture_sources_with_state(plan, browser_context, state):
             proof = bundle["meta"].get("evidence")
             terminals = ({"single_page_no_pagination_control_seen"} if branch.get("single_page")
                          else {"next_control_absent", "next_control_disabled"})
-            valid = (isinstance(refs, list) and 1 <= len(refs) <= branch.get("max_pages", 20)
+            valid = (isinstance(refs, list) and 1 <= len(refs)
+                     and (branch.get("max_pages") is None or len(refs) <= branch["max_pages"])
                      and isinstance(proof, dict) and proof.get("url") == branch["url"]
                      and isinstance(proof.get("end"), str)
                      and proof.get("end") in terminals
