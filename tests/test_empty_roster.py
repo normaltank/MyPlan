@@ -8,6 +8,7 @@ import pytest
 from playwright.async_api import async_playwright
 
 from server import agent_recon
+from server.faculty_extractor import FacultyCandidate
 from server.harvest_coverage import build_coverage_ledger
 from server.harvest_workflow import CapturedRosterPage, capture_sources, reconcile_rosters
 
@@ -67,7 +68,7 @@ def test_proof_binding_and_reconciliation_only_exempt_verified_empty_page(monkey
     # A verified card selector is now the extraction boundary, so the extractor
     # stands in at extract_with_review; the empty proof must still not win.
     monkeypatch.setattr("server.harvest_workflow.FacultyDirectoryExtractor.extract_with_review",
-                        lambda *_, **__: ([SimpleNamespace(name="真实教师", url="https://example.edu/person")], []))
+                        lambda *_, **__: ([FacultyCandidate(name="真实教师", url="https://example.edu/person")], []))
     conflicting = reconcile_rosters([page], {})
     assert len(conflicting.candidates) == 1
     assert any(item["status"] == "empty_roster_conflict" for item in conflicting.unresolved)
