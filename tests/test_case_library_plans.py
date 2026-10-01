@@ -13,7 +13,7 @@ from server.browser_batch_tool import _validate_plan
 
 PLANS = sorted((Path(__file__).resolve().parents[1] / "docs/research/case-library/plans").glob("*.json"))
 SUPPORT = {"supported", "supported_after_fix", "partially_supported", "unsupported_scope",
-           "unsupported_handed_over", "defect_repro_only"}
+           "unsupported_handed_over", "unsupported_mechanism", "defect_repro_only"}
 
 
 def test_library_is_not_empty():

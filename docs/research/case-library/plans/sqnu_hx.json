@@ -1,0 +1,22 @@
+{
+  "case_id": "sqnu_hx",
+  "entry_url": "https://hxhgxy.sqnu.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T22:20:21Z",
+  "shape": "linked_name_grid_staff_category_pages",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "商丘师范学院",
+    "college": "化学化工学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://hxhgxy.sqnu.edu.cn/szdw/jxkyry.htm",
+        "single_page": true,
+        "card_selector": "div.dpzw table td:has(a)",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

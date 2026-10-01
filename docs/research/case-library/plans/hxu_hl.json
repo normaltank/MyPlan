@@ -1,0 +1,23 @@
+{
+  "case_id": "hxu_hl",
+  "entry_url": "https://hlxy.hxu.edu.cn/jyjx/szdw.htm",
+  "captured_at": "2026-10-01T22:14:52Z",
+  "shape": "truncated_captions_section_prefixed_photo_cards",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "河西学院",
+    "college": "护理学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 2,
+    "branches": [
+      {
+        "url": "https://hlxy.hxu.edu.cn/jyjx/szdw.htm",
+        "next_selector": "#I_right a.Next:first-of-type",
+        "max_pages": 20,
+        "card_selector": "#u_u6_imgcontent td[width='25%']",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

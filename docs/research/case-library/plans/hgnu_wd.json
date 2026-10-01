@@ -1,0 +1,37 @@
+{
+  "case_id": "hgnu_wd",
+  "entry_url": "https://wudian.hgnu.edu.cn/1820/list.htm",
+  "captured_at": "2026-10-01T22:38:44Z",
+  "shape": "department_article_lists_image_bios",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "黄冈师范学院",
+    "college": "物理与电信学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://wudian.hgnu.edu.cn/wlx/list.htm",
+        "next_selector": "ul.wp_paging a.next:not([href^='javascript'])",
+        "max_pages": 20,
+        "card_selector": "ul.wp_article_list > li",
+        "profile_content_selector": "div.content_text > div.wp_articlecontent"
+      },
+      {
+        "url": "https://wudian.hgnu.edu.cn/dzxxgcx/list.htm",
+        "next_selector": "ul.wp_paging a.next:not([href^='javascript'])",
+        "max_pages": 20,
+        "card_selector": "ul.wp_article_list > li",
+        "profile_content_selector": "div.content_text > div.wp_articlecontent"
+      },
+      {
+        "url": "https://wudian.hgnu.edu.cn/gdxxkxygcx/list.htm",
+        "next_selector": "ul.wp_paging a.next:not([href^='javascript'])",
+        "max_pages": 20,
+        "card_selector": "ul.wp_article_list > li",
+        "profile_content_selector": "div.content_text > div.wp_articlecontent"
+      }
+    ]
+  }
+}

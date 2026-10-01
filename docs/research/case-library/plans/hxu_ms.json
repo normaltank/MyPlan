@@ -1,0 +1,21 @@
+{
+  "case_id": "hxu_ms",
+  "entry_url": "https://msx.hxu.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T22:04:22Z",
+  "shape": "js_alpha_index_photo_cards",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "河西学院",
+    "college": "艺术学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://msx.hxu.edu.cn/szdw.htm",
+        "single_page": true,
+        "card_selector": "#container div.name-item",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}
