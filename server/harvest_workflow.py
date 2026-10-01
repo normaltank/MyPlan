@@ -280,6 +280,9 @@ def candidates_inside_cards(
     return inside, outside
 
 
+_MEDIA_TAGS = ["img", "picture", "svg", "object", "embed", "iframe", "video", "canvas"]
+
+
 def observe_roster(
     html: str,
     url: str,
@@ -291,10 +294,17 @@ def observe_roster(
     cards = BeautifulSoup(html, "html.parser").select(selector)
     candidate_urls = {item.url for item in candidates if item.url != url}
     unaccounted = []
+    blank = 0
     for index, card in enumerate(cards, 1):
         anchors = ([card] if card.name == "a" and card.has_attr("href") else []) + card.select("a[href]")
         links = [urljoin(url, a["href"]) for a in anchors]
         card_text = card.get_text(" ", strip=True)
+        # A grid's filler cell ('<td>&nbsp;</td>') carries no text, link or media,
+        # so it cannot hold a person; count it apart instead of as a missed one.
+        if not _compact(card_text) and not links and not (
+                card.name in _MEDIA_TAGS or card.find(_MEDIA_TAGS)):
+            blank += 1
+            continue
         # A two-character name padded to three ('王 奔') is extracted as '王奔'.
         compact = _compact(card_text)
         if not any(link in candidate_urls for link in links) and not any(
@@ -307,7 +317,8 @@ def observe_roster(
     return {
         "url": url,
         "card_selector": selector,
-        "visible_cards": len(cards),
+        "visible_cards": len(cards) - blank,
+        "blank_cards": blank,
         "extracted_candidates": len(candidates),
         "unaccounted_cards": unaccounted,
     }
