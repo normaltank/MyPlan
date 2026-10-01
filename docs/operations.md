@@ -2,7 +2,7 @@
 
 README 只保留项目简介和快速开始；本文件收录部署、参数、排障与历史验收记录。内容自 2026-09-29 起从 README 原样迁入，未改动含义。
 
-> 本地同步状态（2026-09-30）：两个远端分支已合入本机工作区，验证结果和取舍见 [同步审核](audits/2026-09-30-git-sync-review.md)。本次检查未发现项目 Web/worker 进程，代码同步尚未启动服务。不要直接执行 `.runtime/restart_after_roster_fix.ps1` 旧草稿或盲目重新入队失败工单。
+> 本机部署状态（2026-10-01）：内核修复已合入 main 并同步 GitHub，Web 与 worker 已启动；本机地址为 `http://127.0.0.1:18000`，原因和验证见[部署记录](audits/2026-10-01-local-deployment.md)。用户将另选学院测试，旧失败工单不恢复。不要直接执行 `.runtime/restart_after_roster_fix.ps1` 旧草稿或盲目重新入队失败工单。
 
 ## 1. 启动与重启（Windows 本机）
 
@@ -10,6 +10,10 @@ README 只保留项目简介和快速开始；本文件收录部署、参数、�
 .runtime/worker-venv/Scripts/python.exe -m server.start_server
 ```
 Windows 本机也可双击 `双击启动局域网服务.bat`。它会检查后台接单心跳，缺少在线消费者时启动常驻 `server.agent_worker`，然后启动网页；已在线的消费者或已监听的网页不会重复启动。两者都已在运行时，窗口会打开网页并提示后等待回车，不会一闪而过。worker 启动自检未通过时，网页顶部会显示"后台接单离线 · 启动自检未通过"和第一条原因。**更新代码后请双击 `重启本地服务.bat`**：它只结束本项目虚拟环境里的接单进程与网页进程（含子进程），再按同样流程重新启动；旧的网页窗口会显示已退出，直接关闭即可。每次启动的过程记录在 `.runtime/launcher.log`。首次启动接单服务时，窗口会要求输入 DeepSeek API Key（输入不回显），并用当前 Windows 账号加密保存在本机 `.runtime/deepseek-api-key.dpapi`；此文件不能复制到其他账号或服务器当作凭据。当前账号后续双击无需重输。worker 日志在 `.runtime/local-worker.out.log` 和 `.runtime/local-worker.err.log`。网页默认监听 `http://127.0.0.1:8000`。
+
+### 本机端口覆盖
+
+Windows 若将默认 8000 列入 TCP 排除范围，可在 `.runtime/local-services.json` 中设置可用端口，例如 `{"port":18000}`，然后使用正式启动／重启 BAT。该文件不进入 Git，项目默认端口仍取自 `server/config.json`。Web、worker 默认回传地址、手动同步 CLI 和启动脚本共同读取此配置；显式 `--base-url` 优先于默认地址。端口必须是 1 至 65535 的整数，错误配置会在重启停止旧服务之前拒绝执行。已有 HTTPS 反向代理需相应更新上游端口。
 
 ## 2. 员工账号与访问
 

@@ -144,6 +144,7 @@ def test_batch_api_asks_before_queueing_suspicious_rows(tmp_path, monkeypatch):
     client = TestClient(web.app)
     client.post("/api/auth/login", json={"username": "alice", "password": "alice password 12345"})
     headers = {"X-CSRF-Token": client.get("/api/auth/me").json()["csrf_token"]}
+    assert "第四列师资链接可选" in client.get("/").text
     response = client.post("/api/collect_batch", json={"items_text": ROWS}, headers=headers)
     assert response.status_code == 409 and len(response.json()["warnings"]) == 1
     assert queue.get_pending_tasks() == []

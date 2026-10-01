@@ -1,6 +1,6 @@
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
-> **最新交接：2026-10-01 采集内核续接修复，未部署**。接手本轮内核工作时先读[续接验证报告](docs/audits/2026-09-30-core-chain-continuation.md)及[原续接计划](docs/implementation/2026-09-30-core-chain-handover.md)。本机审查分支已修字段提取阻塞、页面结构重复构建、邮箱 DOM 边界、翻页中间态及医院资格遗漏；职称规则等待用户选择，合并/推送/重启/正式工单恢复仍待逐步确认。下面 2026-09-30 的同步状态为历史记录。
+> **最新交接：2026-10-01 已合入 main、同步 GitHub 并启动本机服务**。内核修复见[续接验证报告](docs/audits/2026-09-30-core-chain-continuation.md)，部署与四字段输入见[部署记录](docs/audits/2026-10-01-local-deployment.md)。Windows 排除了 8000 所在端口段，本机通过 ignored 配置使用 `http://127.0.0.1:18000`；Web、常驻 worker 与手动同步共用此地址。用户明确不处理旧失败学院，将另选学院测试；不要自行恢复旧工单。职称规则仍待选择，下面未部署状态均为历史记录。
 
 > **最新交接：2026-09-30 本地 Git 同步**。远端邮箱修复与侦察提速/师资链接输入已合并，邮箱冲突采用较新的联系字段正证据与歧义阻断规则；审核发现的三项人数/输入问题已修复。本机验证及合并取舍见 [同步审核](docs/audits/2026-09-30-git-sync-review.md)。同步开始时未发现项目 Web/worker 进程，本轮不启动服务；历史 PID 与测试数不代表当前状态。两失败工单的范围与恢复边界仍见 [内核续接说明](docs/implementation/2026-09-30-extractor-core-handover.md) 和 [邮箱补全报告](docs/implementation/2026-09-30-email-evidence-merge-report.md)。
 

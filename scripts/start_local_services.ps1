@@ -44,11 +44,11 @@ function Stop-ProjectServices {
         # /T also ends the interpreter child that a venv python.exe launcher starts.
         & taskkill.exe /PID $process.ProcessId /T /F | Out-Null
     }
-    for ($attempt = 0; $attempt -lt 20 -and (Test-LocalPort 8000); $attempt++) {
+    for ($attempt = 0; $attempt -lt 20 -and (Test-LocalPort $webPort); $attempt++) {
         Start-Sleep -Milliseconds 500
     }
-    if (Test-LocalPort 8000) {
-        throw '8000 端口仍被占用，可能是其他程序或旧窗口启动的网页服务。请关闭它后再双击重启。'
+    if (Test-LocalPort $webPort) {
+        throw "$webPort 端口仍被占用，可能是其他程序或旧窗口启动的网页服务。请关闭它后再双击重启。"
     }
 }
 
@@ -79,6 +79,10 @@ Push-Location $projectRoot
 $transcript = Join-Path $runtimeDir 'launcher.log'
 try { Start-Transcript -LiteralPath $transcript -Force | Out-Null } catch { $transcript = $null }
 try {
+    $configuredPort = & $python -c "from server.local_service_config import load_web_config; print(load_web_config()['port'])"
+    if ($LASTEXITCODE -ne 0) { throw '无法读取网页端口配置；服务未启动。' }
+    $webPort = [int]$configuredPort
+    $webAddress = "http://127.0.0.1:$webPort"
     if ($Restart) { Stop-ProjectServices }
     $workerOnline = (& $python -c "from server.agent_queue import agent_queue; print('1' if agent_queue.get_worker_status()['online'] else '0')") -eq '1'
     $workerProcesses = @(Get-CimInstance Win32_Process | Where-Object {
@@ -95,7 +99,7 @@ try {
     } else {
         Set-WorkerKey -CredentialPath $keyFile
         try {
-            $workerArgs = @('-m', 'server.agent_worker')
+            $workerArgs = @('-m', 'server.agent_worker', '--base-url', $webAddress)
             if (-not [string]::IsNullOrWhiteSpace($env:HARVEST_TASK_DB)) {
                 $workerArgs += @('--db', ('"' + $env:HARVEST_TASK_DB + '"'))
             }
@@ -130,13 +134,13 @@ try {
         }
     }
 
-    if (Test-LocalPort 8000) {
-        Write-Host '网页服务已在 http://127.0.0.1:8000 运行，不重复启动；已为你打开网页。'
+    if (Test-LocalPort $webPort) {
+        Write-Host "网页服务已在 $webAddress 运行，不重复启动；已为你打开网页。"
         Write-Host '更新代码后需要重启才会生效：请双击「重启本地服务.bat」。'
-        Start-Process 'http://127.0.0.1:8000'
+        Start-Process $webAddress
         Read-Host '按回车键关闭此窗口' | Out-Null
     } else {
-        Write-Host '正在启动网页服务：http://127.0.0.1:8000'
+        Write-Host "正在启动网页服务：$webAddress"
         & $python -m server.start_server
         if ($LASTEXITCODE -ne 0) { throw "网页服务退出，代码 $LASTEXITCODE" }
     }

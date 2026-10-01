@@ -47,6 +47,7 @@ from typing import Any
 import httpx
 
 from server.agent_queue import AgentTaskQueue
+from server.local_service_config import local_web_url
 from server.recovery_policy import NON_STRUCTURAL, classify_issues
 from server.agent_recon import (PlanHygieneError, ReconBudget, ReconBudgetExceeded,
                                ReconError, ReconPhaseLimitExceeded, ReconPlanError, ReconResult,
@@ -57,7 +58,7 @@ __all__ = ["AgentWorker", "main"]
 _HERE = Path(__file__).resolve().parent
 REPO_ROOT = _HERE.parent
 DEFAULT_OUTPUT_DIR = _HERE / "outputs"
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BASE_URL = local_web_url()
 
 # 审计建议值：超过此时长即判定卡死（见 audits C3）
 DEFAULT_MAX_TASK_SECONDS = 45 * 60

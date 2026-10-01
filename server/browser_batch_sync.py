@@ -169,13 +169,14 @@ async def _run_cli(args: argparse.Namespace) -> dict:
 
 def main() -> None:
     import sys
+    from server.local_service_config import local_web_url
     if sys.stdout and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Sync a verified browser batch to the local task queue")
     parser.add_argument("--audit", required=True)
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--worker-id", required=True)
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--base-url", default=local_web_url())
     args = parser.parse_args()
     result = asyncio.run(_run_cli(args))
     print(json.dumps({"status": result.get("status"), "task_id": args.task_id,
