@@ -64,8 +64,9 @@ async def test_control_server_rendered_children(tmp_path):
     assert report['branches'][0]['discovered_children'] == 3 and report['total'] == 3
 
 
+@pytest.mark.xfail(strict=True, reason="A2: child links rendered after DOMContentLoaded are not discovered")
 @pytest.mark.asyncio
-async def test_late_child_is_silently_missing(tmp_path):
+async def test_late_child_is_discovered(tmp_path):
     report = await harvest(tmp_path, 300)
-    assert report['branches'][0]['discovered_children'] == 2
-    assert report['delivery_ready'] is True and report['total'] == 2 and not report['unresolved']
+    # Observed on main: discovered_children 2, total 2, delivery_ready True, no unresolved item.
+    assert report['branches'][0]['discovered_children'] == 3 and report['total'] == 3

@@ -1,5 +1,6 @@
 """A4: the per-college download link points at the outputs root, but the worker writes
-the college workbook under outputs/tasks/<task_id>/attempt-N/. The link 404s."""
+the college workbook under outputs/tasks/<task_id>/attempt-N/. The link 404s.
+Expected after the fix: the link downloads, or no college link is offered."""
 import asyncio
 import json
 
@@ -9,7 +10,8 @@ from fastapi import HTTPException
 from server.browser_batch_sync import build_payload
 
 
-def test_worker_layout_college_link_is_not_downloadable(tmp_path, monkeypatch):
+@pytest.mark.xfail(strict=True, reason="A4: college download_url drops the tasks/<id>/attempt-N/ path")
+def test_worker_layout_college_link_is_downloadable_or_absent(tmp_path, monkeypatch):
     outputs = tmp_path / "outputs"
     attempt = outputs / "tasks" / "abc123" / "attempt-1"      # agent_worker._harvest_with_repair layout
     attempt.mkdir(parents=True)
@@ -26,12 +28,14 @@ def test_worker_layout_college_link_is_not_downloadable(tmp_path, monkeypatch):
 
     payload = build_payload(audit, "w", "lease", outputs)
     print("download_url =", payload["download_url"])
-    assert payload["download_url"] == "/download/样本大学_样本学院.xlsx"
-
+    # Observed on main: "/download/样本大学_样本学院.xlsx", which download_file answers with 404
+    # although the workbook exists under tasks/abc123/attempt-1/.
+    assert excel.is_file()
+    if not payload["download_url"]:
+        return                                            # no link shown: acceptable fix
     from server import app as web
     monkeypatch.setattr(web, "OUTPUT_DIR", str(outputs))
-    with pytest.raises(HTTPException) as caught:          # request=None is the internal admin caller
+    try:                                                  # request=None is the internal admin caller
         asyncio.run(web.download_file(payload["download_url"].removeprefix("/download/")))
-    assert caught.value.status_code == 404
-    # The file the link was meant to serve does exist:
-    assert excel.is_file()
+    except HTTPException as exc:
+        pytest.fail(f"college link {payload['download_url']} returned {exc.status_code}")

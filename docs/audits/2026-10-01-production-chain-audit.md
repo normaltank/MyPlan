@@ -4,7 +4,7 @@
 - 性质：只读审查。未改生产代码、未操作生产任务库、未访问真实高校站点、未调用 DeepSeek 或其他付费侦察。
 - 验证环境：隔离 Python 3.11 虚拟环境，`requirements-dev.txt`；Playwright 1.47 + 本机 Chromium headless shell；临时 `HARVEST_TASK_DB` 与证据目录。页面全部为 `context.route` 返回的合成 HTML，人名为虚构。
 - 基线：在 `dbfdfb9` 上全量 `pytest` 979 通过、1 失败、3 跳过（失败见 T1，已由任务 A 的 `850d8c9` 修好，`a25084c` 上该文件全部通过）。
-- 复现脚本：[`2026-10-01-production-chain-repro/`](2026-10-01-production-chain-repro/)，8 项全部通过。断言记录的是**当前缺陷行为**；修复后应把断言翻转为预期行为再移入 `tests/`。运行：`python -m pytest -q docs/audits/2026-10-01-production-chain-repro`（不在 `testpaths` 内，CI 不收集，ruff 已排除 `docs/`）。
+- 复现脚本：[`2026-10-01-production-chain-repro/`](2026-10-01-production-chain-repro/)。A1、A2、A4 的用例断言**预期行为**，并标 `xfail(strict=True)`；对照用例与 L1 按现状断言。当前结果为 4 通过、4 xfail。修复落地后对应用例会 XPASS 并报错，届时去掉标记，把用例移入 `tests/`。运行：`python -m pytest -q -rxX docs/audits/2026-10-01-production-chain-repro`（不在 `testpaths` 内，CI 不收集，ruff 已排除 `docs/`）。
 
 ## 结论速览（按实际影响排序）
 

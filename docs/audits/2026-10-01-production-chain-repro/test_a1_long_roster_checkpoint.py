@@ -53,8 +53,9 @@ async def test_without_state_all_22_pages_are_captured(tmp_path):
     assert len(pages) == 22 and not errors and evidence['end'] == 'next_control_absent'
 
 
+@pytest.mark.xfail(strict=True, reason="A1: checkpoint caps unbounded rosters at 20 pages")
 @pytest.mark.asyncio
-async def test_worker_style_run_plan_with_state_blocks_at_page_21(tmp_path):
+async def test_worker_style_run_plan_with_state_captures_all_22_pages(tmp_path):
     state = HarvestState(tmp_path / 'task', PLAN)
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -65,8 +66,7 @@ async def test_worker_style_run_plan_with_state_blocks_at_page_21(tmp_path):
     statuses = [item.get('status') for item in report['unresolved']]
     print('directory_pages', report['directory_pages'], 'statuses', statuses)
     print([item.get('error') for item in report['unresolved'] if item.get('status') == 'browser_navigation_failed'])
-    # Expected (production contract): 22 pages, delivery_ready.
-    # Actual: page 21 checkpoint raises inside on_page -> browser_navigation_failed.
-    assert report['directory_pages'] == 21  # page 21 appended before the checkpoint raised; page 22 never visited
-    assert 'browser_navigation_failed' in statuses
-    assert report['delivery_ready'] is False
+    # Observed on main: directory_pages == 21, browser_navigation_failed
+    # (ValueError: invalid roster sequence), delivery_ready False.
+    assert report['directory_pages'] == 22 and not statuses
+    assert report['delivery_ready'] is True

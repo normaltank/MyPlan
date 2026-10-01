@@ -25,7 +25,7 @@ def roster(number, delay_ms):
                   "d.textContent='下一页';document.querySelector('.pager').appendChild(d);")
         pager = (f"<div class='pager'></div><script>document.addEventListener('DOMContentLoaded',"
                  f"function(){{setTimeout(function(){{{insert}}},{delay_ms});}});</script>"
-                 if delay_ms is not None else f"<div class='pager'><a class='next' href='/list/2'>下一页</a></div>")
+                 if delay_ms is not None else "<div class='pager'><a class='next' href='/list/2'>下一页</a></div>")
     else:
         pager = "<div class='pager'></div>"
     return f'<html><body><main><ul class="t">{cards}</ul>{pager}</main></body></html>'
@@ -72,12 +72,12 @@ async def test_control_server_rendered_pager_collects_both_pages(tmp_path):
     assert report['directory_pages'] == 2 and report['total'] == 4
 
 
+@pytest.mark.xfail(strict=True, reason="A2: pager rendered after DOMContentLoaded is read as next_control_absent")
 @pytest.mark.asyncio
-async def test_deferred_pager_is_delivered_as_complete_with_page_two_missing(tmp_path):
+async def test_deferred_pager_collects_both_pages(tmp_path):
     report = await harvest(tmp_path, 400)
     print('deferred', report['directory_pages'], report['total'], report['delivery_ready'],
           report['branches'][0].get('end'), [i.get('status') for i in report['unresolved']])
-    assert report['directory_pages'] == 1
-    assert report['branches'][0]['end'] == 'next_control_absent'
-    assert report['coverage']['complete'] is True
-    assert report['delivery_ready'] is True and report['total'] == 2  # 张伟东、刘海涛 silently missing
+    # Observed on main: directory_pages 1, end next_control_absent, coverage complete,
+    # delivery_ready True, total 2 (张伟东、刘海涛 silently missing).
+    assert report['directory_pages'] == 2 and report['total'] == 4
