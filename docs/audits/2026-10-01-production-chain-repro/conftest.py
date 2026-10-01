@@ -1,0 +1,21 @@
+"""Isolated settings for the 2026-10-01 production-chain audit repros.
+
+These files record behaviour observed on main dbfdfb9 with synthetic pages only.
+They are not part of tests/ and are not collected by CI. Run explicitly:
+    python -m pytest -q docs/audits/2026-10-01-production-chain-repro
+"""
+import atexit
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO))
+os.environ.setdefault("HARVEST_DISABLE_NATIVE_CHROME_FALLBACK", "1")
+os.environ.setdefault("HARVEST_CROSS_CHECK", "0")
+_ISOLATED = Path(tempfile.mkdtemp(prefix="myplan-audit-"))
+atexit.register(shutil.rmtree, _ISOLATED, ignore_errors=True)
+os.environ["HARVEST_TASK_DB"] = str(_ISOLATED / "queue" / "tasks.db")
+os.environ["FACULTY_RECON_EVIDENCE_ROOT"] = str(_ISOLATED / "recon-evidence")
