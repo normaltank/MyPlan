@@ -779,7 +779,7 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
             continue
         # The record's own article text, verbatim; an image-named record keeps
         # document order, so its resume text is placed before the text below it.
-        record["简介"] = segment.segment.text if segment.name_source == "text" else ""
+        record["简介"] = segment.segment.text if segment.name_source != "ocr" else ""
         title_choice = select_title(explicit=explicit_title_candidates(segment.segment.text),
                                     card_title=record['职称'], body_title=segment.title)
         record['职称'] = title_choice.title
@@ -925,20 +925,56 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
             candidates.append(person)
             candidate_sources.setdefault((person.name, person.url), set()).add(record.source_kind)
+    pdf_reading = {"records": [], "unresolved": [], "evidence": [], "name_evidence": [],
+                   "observations": {}, "read_pages": set()}
+    if roster_reconciliation.pdf_rosters:
+        from server.image_biography import fetch_browser_asset
+        from server.pdf_roster import read_pdf_rosters
+
+        async def fetch_pdf(media_url: str) -> bytes:
+            return await fetch_browser_asset(browser_context, media_url)
+
+        pdf_reading = await read_pdf_rosters(
+            roster_reconciliation.pdf_rosters, fetch_asset=fetch_pdf,
+            evidence_dir=out / f"{_safe_name(plan['school'] + '_' + plan['college'])}_snapshots" / "pdf_rosters",
+            cache_dir=_ocr_cache_dir(out), review_decisions_path=out / "image_bio_reviews.json")
+        unresolved.extend(pdf_reading["unresolved"])
+        for record in pdf_reading["records"]:
+            person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
+            candidates.append(person)
+            candidate_sources.setdefault((person.name, person.url), set()).add(record.source_kind)
+        for observation in roster_reconciliation.observations:
+            pdf_observations = pdf_reading["observations"].get(observation["url"])
+            if observation.get("status") != "embedded_pdf_roster_requires_review" or not pdf_observations:
+                continue
+            issues = any(item.get("url") == observation["url"] for item in pdf_reading["unresolved"])
+            observation.update(
+                status=("pdf_roster_reconciled" if observation["url"] in pdf_reading["read_pages"] and not issues
+                        else "pdf_roster_unresolved"),
+                pdf_rosters=pdf_observations,
+                extracted_candidates=sum(item.get("records_admitted", 0) for item in pdf_observations))
     segment_records = {(record.page_url, record.name): record for record in
-                       roster_reconciliation.segment_records + segment_naming["admitted"]}
+                       roster_reconciliation.segment_records + segment_naming["admitted"]
+                       + pdf_reading["records"]}
     # Text duplicates are reported by the reconciler; a name read by OCR that
     # repeats another record of the same article must not collapse two people.
+    # Two PDFs on one page with one name are two observations of that name.
     named = Counter((record.page_url, record.name) for record in
-                    roster_reconciliation.segment_records + segment_naming["admitted"])
-    ocr_named = {(record.page_url, record.name) for record in segment_naming["admitted"]}
+                    roster_reconciliation.segment_records + segment_naming["admitted"]
+                    + pdf_reading["records"])
+    ocr_named = {(record.page_url, record.name) for record in
+                 segment_naming["admitted"] + pdf_reading["records"]}
     unresolved.extend({"url": url, "status": "segment_duplicate_name", "occurrences": count}
                       for (url, name), count in named.items() if count > 1 and (url, name) in ocr_named)
     roster_observations = roster_reconciliation.observations
     unresolved.extend(
         item for item in roster_reconciliation.unresolved
-        if item.get("status") not in {"no_candidates_on_roster_page", "card_selector_missing"}
-        or item.get("url") not in manually_covered_urls
+        if (item.get("status") not in {"no_candidates_on_roster_page", "card_selector_missing"}
+            or item.get("url") not in manually_covered_urls)
+        # Every PDF on the page was read: its records and their own issues
+        # now account for the roster instead of the page-level stop.
+        and not (item.get("status") == "embedded_pdf_roster_requires_review"
+                 and item.get("url") in pdf_reading["read_pages"])
     )
     if (not candidates and roster_observations and not unresolved
             and all(item.get("status") == "confirmed_empty" for item in roster_observations)):
@@ -1027,8 +1063,9 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         return await fetch_browser_asset(browser_context, url)
 
     pdf_roster_urls = set()
+    roster_pdf_pages = {item["url"] for item in roster_reconciliation.pdf_rosters}
     for url, html in all_pages:
-        if not any(candidate.url == url for candidate in admitted):
+        if url in roster_pdf_pages or not any(candidate.url == url for candidate in admitted):
             continue
         soup = BeautifulSoup(html, "html.parser")
         content = soup.select_one("article") or soup.select_one("main") or soup.body or soup
@@ -1149,14 +1186,18 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     coverage["issues"] = list(unresolved)
     coverage["complete"] = coverage["complete"] and not unresolved
     coverage["unresolved_count"] = len(unresolved)
+    pdf_record_keys = {(record.page_url, record.name) for record in pdf_reading["records"]}
     coverage["field_sources"] = [{"record_index": index, "profile_url": row["主页"],
         "profile_snapshot": next((snap["path"] for snap in snapshots
                                   if snap["kind"] == "profile" and snap["url"] == row["主页"]), None),
         "roster_snapshot_urls": sorted(roster_urls),
         "extraction": ("deterministic_dom_and_local_ocr"
                        if (row["主页"], row["姓名"]) in media_audit["assigned_biographies"]
+                       else "deterministic_pdf_text_layer_and_local_ocr"
+                       if (row["主页"], row["姓名"]) in pdf_record_keys
                        else "deterministic_dom"),
-        "attribution_scope": ("segmented_article_record"
+        "attribution_scope": ("pdf_roster_record" if (row["主页"], row["姓名"]) in pdf_record_keys
+                              else "segmented_article_record"
                               if (row["主页"], row["姓名"]) in segment_records else "candidate_and_profile"),
         **({"segment_record": segment_records[(row["主页"], row["姓名"])].provenance()}
            if (row["主页"], row["姓名"]) in segment_records else {}),
@@ -1202,8 +1243,9 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "identity_review_items": identity_items, "identity_reviews": identity_reviews,
         "identity_review_path": str(decision_path), "identity_observations_path": str(observations_path),
         "html_email_review_items": html_email_items, "html_email_reviews": html_email_reviews,
-        "image_biography_evidence": media_audit["evidence"],
-        "segment_name_evidence": segment_naming["evidence"],
+        "image_biography_evidence": media_audit["evidence"] + pdf_reading["evidence"],
+        "segment_name_evidence": segment_naming["evidence"] + pdf_reading["name_evidence"],
+        "pdf_roster_evidence": pdf_reading["evidence"],
         "unresolved": unresolved, "snapshots": snapshots,
         "records_path": str(records_path), "excel_path": excel_path,
         "coverage_scope": "supplied_roster_branches_only",

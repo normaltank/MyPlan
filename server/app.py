@@ -421,12 +421,13 @@ def present_task(data, scope):
         if audit is not None:
             saved = json.loads(audit.read_text(encoding='utf-8'))
             source_issues = [item for item in saved.get('unresolved', [])
-                             if item.get('status') == 'embedded_pdf_roster_requires_review']
+                             if item.get('status') == 'embedded_pdf_roster_requires_review'
+                             or str(item.get('status', '')).startswith('pdf_roster_')]
             if source_issues:
                 data['source_review_required'] = True
                 links = []
                 for item in source_issues:
-                    for url in [item.get('url'), *item.get('media_urls', [])]:
+                    for url in [item.get('url'), *item.get('media_urls', []), item.get('media_url')]:
                         if isinstance(url, str) and url.startswith(('https://', 'http://')) and url not in links:
                             links.append(url)
                 data['source_review_urls'] = links

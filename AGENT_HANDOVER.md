@@ -1,6 +1,6 @@
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
-> **2026-10-02 文档治理**：用户要求建立简洁的宪法文件。根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，新增 `CLAUDE.md` 作为读取入口，README 已链接。文档整理未改变运行代码或服务状态；本次文件尚未提交／推送 Git。
+> **2026-10-02 文档治理与 Claude 派工**：根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，`CLAUDE.md` 为读取入口。OCR 修复及宪法已提交并同步 main（`4fe72c2`、`10370eb`）；服务是否加载仍按下方部署记录判断。用户指定在 [Claude Projects → MyPlan 主对话](https://claude.ai/code/project/chan_012KwoNrMicyn2LoBSKGmCan) 派工，现有两个项目内实现线程：多人 PDF 名录采集、HTML 邮箱歧义复核恢复；具体范围见 [任务规格](docs/implementation/2026-10-02-claude-assignment.md)，要求独立 PR，不自动合并／部署。此前误开的两个独立 Code 会话已显示 Idle，不再继续。PR #4 仅改项目说明，实际与 main 的 AGENTS.md 存在合并冲突，且有过期状态和额外确认要求；本轮只审阅，未修改或合并该 PR。
 
 > **最新交接：2026-10-02 侦察图片 OCR 入口修复，待重启 worker 生效**。`server/recon_browser_mcp.py` 新增按需 `browser_read_image`，复用现有原图读取与本地 OCR，侦察说明已同步；普通 DOM 不触发 OCR，模型计划及教师来源审计边界不变。淮阴师范学院马克思主义学院给定“系部设置”页实为 600×805 PNG，真实浏览器实测已读出 40 行，原件与完整结果在 `server/outputs/tasks/8ee2181b7a0741a1a2b45c7862ed2942/ocr-diagnosis/`。该图混合教研部负责人和办公人员，不能据此认定完整教师名录；原工单转入导师 PDF 后的来源范围门禁仍保留，未重排任何工单。相关回归 129 passed，最后补充的越界读取验证 2 passed，Ruff 与 diff 检查通过。重启前已确认队列空闲，但自动审批拒绝了 worker 停止/重启（仅返回 blocked by policy）；服务仍加载更新前的侦察说明，需通过“重启本地服务.bat”加载更新。
 

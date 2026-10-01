@@ -9,7 +9,7 @@ Action = Literal["access", "structure", "review", "stop"]
 # These are internal machine codes, not content keywords or extraction filters.
 _GROUPS = {
     "access": """profile_navigation_failed browser_navigation_failed image_bio_asset_failed
-        segment_name_asset_failed""",
+        segment_name_asset_failed pdf_roster_asset_failed""",
     "review": """rare_surname_needs_review segment_name_needs_review distinct_profile_identity_unverified
         zero_person_delivery_requires_review image_bio_email_conflict image_bio_low_confidence
         image_bio_ocr_incomplete image_bio_owner_unresolved image_bio_unreadable_profile
@@ -17,7 +17,10 @@ _GROUPS = {
         ambiguous_email_assignment ambiguous_shared_email ambiguous_surname_email conflicting_card_email
         appointment_evidence_unverified possible_unreviewed_appointment source_qualification_missing profile_unavailable
         profile_identity_not_found poster_full_image_review_missing embedded_pdf_roster_requires_review
-        title_field_conflict excel_cell_too_long excel_invalid_xml_character mailto_address_conflict""",
+        title_field_conflict excel_cell_too_long excel_invalid_xml_character mailto_address_conflict
+        pdf_roster_not_pdf pdf_roster_unreadable pdf_roster_page_unreadable pdf_roster_raster_unread
+        pdf_roster_records_not_found pdf_roster_heading_unrecognized pdf_roster_multiple_names
+        pdf_roster_shared_email""",
     "structure": """card_selector_empty card_selector_missing roster_selector_empty candidate_outside_cards child_limit_reached
         child_link_missing_href child_outside_verified_host child_roster_not_verified child_selector_empty
         empty_roster_conflict empty_roster_not_verified initial_control_not_unique initial_control_unchanged
