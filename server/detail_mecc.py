@@ -19,9 +19,9 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from server.dom_regions import is_noise_element
 
 try:
-    from server.titles import resolve_title
+    from server.titles import resolve_title, select_title, title_mentions
 except ImportError:
-    from titles import resolve_title
+    from titles import resolve_title, select_title, title_mentions
 
 _OPUS = str(Path(__file__).resolve().parent.parent / "Opus")
 if _OPUS not in sys.path:
@@ -239,6 +239,17 @@ def _mailto_address(node: Tag) -> List[str]:
     return find_emails(unquote(target[len('mailto:'):].split('?', 1)[0])) if target.lower().startswith('mailto:') else []
 
 
+def mailto_address_conflicts(root: Tag) -> Tuple[Tuple[str, ...], ...]:
+    """A link's visible address and destination disagree independently of ownership."""
+    conflicts = []
+    for node in ([root] if root.name == 'a' else []) + root.find_all('a'):
+        targets = _mailto_address(node)
+        visible = find_emails(LayoutAwareTokenizer.get_clean_text(node, preserve_content=True))
+        if targets and visible and {item.lower() for item in targets} != {item.lower() for item in visible}:
+            conflicts.append(tuple(dict.fromkeys([*visible, *targets])))
+    return tuple(conflicts)
+
+
 def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
     """Read positive contact-field evidence, without guessing from the local part."""
     addresses = []
@@ -255,13 +266,42 @@ def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
         mailto = _mailto_address(node) if node.name == 'a' else []
         if labeled or mailto:
             # A mailto link whose visible text is a word ('写信') still names its address.
-            addresses.extend(find_emails(text) or mailto)
+            addresses.extend(find_emails(text))
+            # The destination is evidence too. Conflicting visible/target
+            # addresses must remain multiple candidates for the review gate.
+            addresses.extend(mailto)
         else:
             # A field inside a line that starts with another one ('电话：… 邮箱：…').
             addresses.extend(labeled_text_emails(text))
     seen = set()
     return tuple(address for address in addresses
                  if not (address.lower() in seen or seen.add(address.lower())))
+
+
+_TITLE_FIELD_LINE = re.compile(r'^(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?:\s*[:：]\s*(.*)|\s*)$')
+
+
+def explicit_title_candidates(full_bio: str) -> Tuple[str, ...]:
+    """Read complete labelled fields in the parser's physical text stream.
+
+    Block boundaries also preserve a table's separate label/value cells as
+    consecutive lines. Prose mentioning a title label mid-sentence is not a
+    labelled field. The stream must already be scoped to this person's body.
+    """
+    lines = [line.strip() for line in full_bio.splitlines() if line.strip()]
+    titles = []
+    for index, line in enumerate(lines):
+        match = _TITLE_FIELD_LINE.fullmatch(line)
+        if not match:
+            continue
+        value = match.group(1)
+        if not value and index + 1 < len(lines):
+            value = lines[index + 1]
+            # A following labelled field is not this field's value.
+            if re.match(r'^[^:：]+[:：]', value):
+                continue
+        titles.extend(title_mentions(value or ''))
+    return tuple(dict.fromkeys(titles))
 
 
 def _find_lca(nodes: List[Tag]) -> Optional[Tag]:
@@ -395,7 +435,9 @@ class DetailMECCExtractor:
             if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
         ]
 
-        title = resolve_title(full_bio[:500])
+        title_choice = select_title(explicit=explicit_title_candidates(full_bio),
+                                    body_title=resolve_title(full_bio))
+        title = title_choice.title
 
         name = fallback_name
         if not name:
@@ -420,7 +462,8 @@ class DetailMECCExtractor:
             full_bio=full_bio,
             emails=tuple(emails),
             contact_emails=contact_emails,
-            status="ok"
+            status=("mailto_address_conflict" if mailto_address_conflicts(mecc) else
+                    "title_field_conflict" if title_choice.conflicts else "ok")
         )
 
     @classmethod
@@ -467,7 +510,9 @@ class DetailMECCExtractor:
                 if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
             ]
 
-            title = resolve_title(full_bio[:500])
+            title_choice = select_title(explicit=explicit_title_candidates(full_bio),
+                                        body_title=resolve_title(full_bio))
+            title = title_choice.title
 
             details.append(ProfileDetail(
                 name=fb_name,
@@ -476,18 +521,19 @@ class DetailMECCExtractor:
                 full_bio=full_bio,
                 emails=tuple(raw_emails),
                 contact_emails=contact_email_candidates(mecc),
-                status="ok"
+                status=("mailto_address_conflict" if mailto_address_conflicts(mecc) else
+                        "title_field_conflict" if title_choice.conflicts else "ok")
             ))
 
         # Cluster-level detail-df filter
         owners: Dict[str, Set[str]] = {}
         for d in details:
-            if d.status == "ok":
+            if d.status in {"ok", "title_field_conflict", "mailto_address_conflict"}:
                 for em in d.emails:
                     owners.setdefault(em.lower(), set()).add(d.url)
 
         for d in details:
-            if d.status == "ok":
+            if d.status in {"ok", "title_field_conflict", "mailto_address_conflict"}:
                 # 1. Filter out cross-page duplicate emails (detail-df)
                 valid = [em for em in d.emails if len(owners.get(em.lower(), set())) < 2]
                 # 2. Check scholar personal affinity

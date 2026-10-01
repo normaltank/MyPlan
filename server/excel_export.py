@@ -5,10 +5,42 @@ longer imports the old script harvester (and PyMuPDF / Playwright with it).
 """
 from __future__ import annotations
 
+import os
+import re
+import tempfile
+from pathlib import Path
+
 import pandas as pd
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from server.delivery_fields import FIELD_ALIASES, STANDARD_FIELDS
+
+
+EXCEL_COLUMNS = STANDARD_FIELDS
+EXCEL_CELL_LIMIT = 32767
+_INVALID_XML_TEXT = re.compile('[\ud800-\udfff\ufffe\uffff]')
+
+
+def excel_cell_issues(records: list) -> list[dict]:
+    """Detect cells Excel cannot represent without truncation; never edit records."""
+    issues = []
+    for index, record in enumerate(records):
+        for column in EXCEL_COLUMNS:
+            for key in (column, *FIELD_ALIASES.get(column, ())):
+                value = record.get(key)
+                if value is None:
+                    continue
+                text = _excel_safe_text(str(value))
+                if len(text) > EXCEL_CELL_LIMIT:
+                    issues.append({'status': 'excel_cell_too_long', 'record_index': index,
+                                   'field': column, 'length': len(text), 'limit': EXCEL_CELL_LIMIT})
+                    break
+                if _INVALID_XML_TEXT.search(text):
+                    issues.append({'status': 'excel_invalid_xml_character', 'record_index': index,
+                                   'field': column})
+                    break
+    return issues
 
 
 def _excel_safe_text(value):
@@ -36,15 +68,35 @@ def export_dual_sheet_excel(records: list, output_filepath: str) -> dict:
     characters (which openpyxl cannot store) are removed instead of failing
     the whole university workbook.
     """
+    issues = excel_cell_issues(records)
+    if issues:
+        issue = issues[0]
+        raise ValueError(f"{issue['status']}: record {issue['record_index']}, field {issue['field']}")
+    from server.delivery_fields import normalize_export_records
+    records = normalize_export_records(records)
+    destination = Path(output_filepath)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=f'.{destination.stem}.',
+                                     suffix='.xlsx', delete=False) as temporary:
+        pending = Path(temporary.name)
+    try:
+        counts = _write_workbook(records, str(pending))
+        os.replace(pending, destination)
+        return counts
+    finally:
+        pending.unlink(missing_ok=True)
+
+
+def _write_workbook(records: list, output_filepath: str) -> dict:
+    """Serialize completely before the public export replaces its destination."""
     df = pd.DataFrame(records).map(_excel_safe_text) if records else pd.DataFrame(records)
-    columns = ['序号', '姓名', '职称', '邮箱', '学校', '学院', '采集人', '采集日期', '简介', '主页']
+    columns = list(EXCEL_COLUMNS)
     if df.empty:
         empty_df = pd.DataFrame(columns=columns)
         with pd.ExcelWriter(output_filepath, engine='openpyxl') as writer:
             empty_df.to_excel(writer, sheet_name='教师列表', index=False)
             empty_df.to_excel(writer, sheet_name='无邮箱教师列表', index=False)
+        wb = openpyxl.load_workbook(output_filepath)
         try:
-            wb = openpyxl.load_workbook(output_filepath)
             header_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
             header_font = Font(name="Microsoft YaHei", size=11, bold=True, color="1E293B")
             for ws in wb.worksheets:
@@ -56,9 +108,9 @@ def export_dual_sheet_excel(records: list, output_filepath: str) -> dict:
                 for col in ws.columns:
                     col_letter = get_column_letter(col[0].column)
                     ws.column_dimensions[col_letter].width = 16
-            wb.save(output_filepath)
         except Exception:
             pass
+        wb.save(output_filepath)
         return {"total": 0, "with_email": 0, "no_email": 0}
 
     # Sort consistently without collapsing homonyms

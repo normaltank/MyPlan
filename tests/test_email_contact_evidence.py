@@ -51,6 +51,28 @@ def test_profile_multi_address_contact_field_stays_a_review_item():
         "", [("张三", "ambiguous_email_assignment")])
 
 
+def test_mailto_target_conflicting_with_visible_address_requires_review():
+    assert single("<p>邮箱：<a href='mailto:actual@example.edu'>visible@example.edu</a></p>") == (
+        "", [("张三", "mailto_address_conflict")])
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_mailto_conflict_survives_shared_footer_address_filter(monkeypatch, fallback):
+    from server import faculty_extractor
+    if fallback:
+        monkeypatch.setattr(faculty_extractor, 'DETAIL_MECC_AVAILABLE', False)
+    pages = {f'https://example.edu/p/{index}':
+             f'<article><h1>{name}</h1><p>教授，完整履历。</p><p>邮箱：'
+             f'<a href="mailto:office@example.edu">{index}2345@example.edu</a></p></article>'
+             for index, name in enumerate(['王芳', '李华'], 1)}
+    result = FacultyHarvestPipeline.harvest_candidates(
+        [FacultyCandidate(name, url) for name, url in zip(['王芳', '李华'], pages)], pages.get,
+        base_url='https://example.edu/roster')
+    assert not result['delivery_ready']
+    assert set(_rows(result).values()) == {''}
+    assert sum(item['status'] == 'mailto_address_conflict' for item in result['unresolved']) == 2
+
+
 def test_profile_table_cell_is_a_label_only_when_it_is_only_a_label():
     email, statuses = single("<table><tr><td>发表论文请联系邮件组</td><td>bluebird@163.com</td></tr></table>")
     assert email == "" and statuses == [("张三", "ambiguous_email_assignment")]

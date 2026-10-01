@@ -7,7 +7,7 @@ Zero keyword blacklists. Based on:
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Dict, Optional, Set, Tuple, Any
 from collections import Counter
 from urllib.parse import urljoin, urlparse
@@ -64,9 +64,9 @@ except ImportError:
         L1_AVAILABLE = False
 
 try:
-    from server.titles import TITLE_KEYWORDS, resolve_title
+    from server.titles import TITLE_KEYWORDS, resolve_title, select_title
 except ImportError:
-    from titles import TITLE_KEYWORDS, resolve_title
+    from titles import TITLE_KEYWORDS, resolve_title, select_title
 
 TEMPLATE_NAME_PRIOR = 0.7
 _NAME_SHAPED = re.compile(r"[\u4e00-\u9fff]{2,4}|[\u4e00-\u9fff]{1,8}(?:[·•][\u4e00-\u9fff]{1,8}){1,3}")
@@ -78,12 +78,14 @@ _INTRODUCED_NAME = re.compile(
 
 try:
     from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
-                                    contact_email_candidates, labeled_text_emails)
+                                    contact_email_candidates, labeled_text_emails, explicit_title_candidates,
+                                    mailto_address_conflicts)
     DETAIL_MECC_AVAILABLE = True
 except ImportError:
     try:
         from detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
-                                 contact_email_candidates, labeled_text_emails)
+                                 contact_email_candidates, labeled_text_emails, explicit_title_candidates,
+                                 mailto_address_conflicts)
         DETAIL_MECC_AVAILABLE = True
     except ImportError as _ex:
         log.warning("Detail MECC extractor unavailable: %s", _ex)
@@ -91,6 +93,12 @@ except ImportError:
 
         def labeled_text_emails(text):  # no evidence reader: nothing is labelled
             return []
+
+        def explicit_title_candidates(text):
+            return ()
+
+        def mailto_address_conflicts(root):
+            return ()
         DETAIL_MECC_AVAILABLE = False
 
 _DEFAULT_L1_EXECUTOR = None
@@ -146,6 +154,7 @@ class FacultyCandidate:
     title: str = "教师"
     card_context: str = ""
     name_review_reason: str = ""
+    mailto_conflicts: Tuple[Tuple[str, ...], ...] = ()
 
 @dataclass(frozen=True)
 class FacultyProfile:
@@ -155,6 +164,7 @@ class FacultyProfile:
     full_bio: str
     emails: tuple = ()          # every address inside the content container, in order
     contact_emails: tuple = ()
+    status: str = 'ok'
 
 class FacultyDirectoryExtractor:
     """
@@ -191,10 +201,7 @@ class FacultyDirectoryExtractor:
         paren_match = re.search(r'[（\(]([^）\)]+)[）\)]', raw)
         if paren_match:
             paren_content = paren_match.group(1).strip()
-            for kw in TITLE_KEYWORDS:
-                if kw in paren_content:
-                    title_found = kw
-                    break
+            title_found = resolve_title(paren_content)
             raw = re.sub(r'[（\(][^）\)]+[）\)]', '', raw).strip()
 
         # Strip bracket prefixes like [校示范课教师], 【教授】
@@ -206,10 +213,9 @@ class FacultyDirectoryExtractor:
             potential_title, potential_name = sep_match[0].strip(), sep_match[-1].strip()
             if 2 <= len(potential_name) <= 6 and all('\u4e00' <= ch <= '\u9fff' for ch in potential_name):
                 raw = potential_name
-                for kw in TITLE_KEYWORDS:
-                    if kw in potential_title:
-                        title_found = kw
-                        break
+                prefix_title = resolve_title(potential_title)
+                if prefix_title != '教师':
+                    title_found = prefix_title
 
         if all('\u4e00' <= ch <= '\u9fff' or ch.isspace() for ch in raw):
             name = re.sub(r'\s+', '', raw)
@@ -333,7 +339,7 @@ class FacultyDirectoryExtractor:
                         and name_prob(raw) < TEMPLATE_NAME_PRIOR):
                     raw = next((token for token in primary_tokens(r, k=16)
                                 if shared[token] == 1 and _NAME_SHAPED.fullmatch(token)), "")
-                card = " ".join(n.get_text(separator=' ', strip=True) for n in r)
+                card = "\n".join(LayoutAwareTokenizer.get_clean_text(n, preserve_content=True) for n in r)
                 href = first_href(r, base_url)
                 section = ""
             name, title = cls._clean_name(raw)
@@ -342,15 +348,20 @@ class FacultyDirectoryExtractor:
             # The title vocabulary only identifies a title standing in the name slot.
             if needs_review and (name in TITLE_KEYWORDS or not rare_surname_name(name)):
                 continue
-            if title == "教师":
-                ctx = f"{section} {card}"
-                title = next((kw for kw in TITLE_KEYWORDS if kw in ctx), "教师")
+            title = select_title(explicit=explicit_title_candidates(card), card_title=title,
+                                 body_title=resolve_title(card)).title
+            if title == '教师' and not explicit_title_candidates(card):
+                title = resolve_title(section)
             url = href or base_url
             node_key = href if href else id(head)
             if (name, node_key) in seen:
                 continue
             seen.add((name, node_key))
-            candidate = FacultyCandidate(name=name, url=url, title=title, card_context=card)
+            contact_conflicts = tuple(dict.fromkeys(
+                conflict for node in r if isinstance(node, Tag)
+                for conflict in mailto_address_conflicts(node)))
+            candidate = FacultyCandidate(name=name, url=url, title=title, card_context=card,
+                                         mailto_conflicts=contact_conflicts)
             (review if needs_review else out).append(candidate)
         return out
 
@@ -398,13 +409,14 @@ class FacultyDirectoryExtractor:
                     slot = (name, title, labels[0][1])
             if slot is None:
                 continue
-            context = card.get_text(' ', strip=True)
+            context = LayoutAwareTokenizer.get_clean_text(card, preserve_content=True)
             for name, title, href in (list(linked_slots.values()) if len(linked_slots) > 1 else [slot]):
                 href = href or first_href([card], base_url)
-                if title == '教师':
-                    title = resolve_title(context)
+                title = select_title(explicit=explicit_title_candidates(context), card_title=title,
+                                     body_title=resolve_title(context)).title
                 reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'
-                slots.append((FacultyCandidate(name, href or base_url, title, context, reason), name_prob(name)))
+                slots.append((FacultyCandidate(name, href or base_url, title, context, reason,
+                                                mailto_address_conflicts(card)), name_prob(name)))
         trusted = sum(prob >= 0.5 for _, prob in slots)
         linked = sum(person.url != base_url for person, _ in slots)
         found, review = [], []
@@ -585,24 +597,28 @@ class FacultyDirectoryExtractor:
                 url = item['url']
                 name = item['name']
 
-                card_text = item['card'].get_text(separator=' ', strip=True) if item['card'] else ""
+                card_text = (LayoutAwareTokenizer.get_clean_text(item['card'], preserve_content=True)
+                             if item['card'] else "")
                 parent_block = item['card'].find_parent(class_=re.compile(r'block|section|group|list', re.I)) or item['card']
                 block_title_el = parent_block.find(class_=re.compile(r'title|heading|caption', re.I)) if parent_block else None
                 block_title = block_title_el.get_text(strip=True) if block_title_el else ""
-                context_text = f"{block_title} {card_text}"
-                matched_title = next((t for t in TITLE_KEYWORDS if t in context_text), "教师")
+                context_text = card_text
+                matched_title = select_title(explicit=explicit_title_candidates(card_text),
+                                             body_title=resolve_title(card_text)).title
+                if matched_title == '教师' and not explicit_title_candidates(card_text):
+                    matched_title = resolve_title(block_title)
+                contact_conflicts = mailto_address_conflicts(item['card']) if item['card'] is not None else ()
 
                 if url in seen_urls:
-                    if matched_title != "教师":
-                        for idx_c, existing_c in enumerate(candidates):
-                            if existing_c.url == url and existing_c.title == "教师":
-                                candidates[idx_c] = FacultyCandidate(
-                                    name=existing_c.name,
-                                    url=existing_c.url,
-                                    title=matched_title,
-                                    card_context=context_text
-                                )
-                                break
+                    for idx_c, existing_c in enumerate(candidates):
+                        if existing_c.url == url:
+                            upgrade = existing_c.title == '教师' and matched_title != '教师'
+                            candidates[idx_c] = replace(
+                                existing_c, title=matched_title if upgrade else existing_c.title,
+                                card_context=context_text if upgrade else existing_c.card_context,
+                                mailto_conflicts=tuple(dict.fromkeys(
+                                    (*existing_c.mailto_conflicts, *contact_conflicts))))
+                            break
                     continue
 
                 seen_urls.add(url)
@@ -611,7 +627,8 @@ class FacultyDirectoryExtractor:
                     name=name,
                     url=url,
                     title=matched_title,
-                    card_context=card_text
+                    card_context=card_text,
+                    mailto_conflicts=contact_conflicts,
                 ))
 
         return candidates
@@ -659,6 +676,7 @@ class FacultyProfileExtractor:
                     full_bio=detail.full_bio,
                     emails=detail.emails,
                     contact_emails=detail.contact_emails,
+                    status=detail.status,
                 )
             except Exception as ex:
                 log.warning("DetailMECCExtractor.extract_single failed: %s; falling back", ex)
@@ -712,8 +730,8 @@ class FacultyProfileExtractor:
             if h1:
                 name = re.sub(r'\s+', '', h1.get_text(strip=True))
 
-        # Title resolution: earliest non-overlapping keyword in header/bio
-        title = resolve_title(full_bio[:400])
+        title = select_title(explicit=explicit_title_candidates(full_bio),
+                             body_title=resolve_title(full_bio)).title
 
         return FacultyProfile(
             name=name,
@@ -722,6 +740,7 @@ class FacultyProfileExtractor:
             full_bio=full_bio,
             emails=tuple(emails),
             contact_emails=contacts,
+            status='mailto_address_conflict' if mailto_address_conflicts(mecc) else 'ok',
         )
 
 
@@ -826,13 +845,22 @@ class FacultyHarvestPipeline:
             card_text = card_texts[id(cand)]
             card_emails = card_addresses[id(cand)]
 
-            matched_title = cand.title
-            if card_text:
-                matched_title = next((t for t in TITLE_KEYWORDS if t in card_text), cand.title)
+            title_choice = select_title(explicit=(explicit_title_candidates(card_text)
+                                                  or explicit_title_candidates(cand.card_context)),
+                                        card_title=cand.title, body_title=resolve_title(card_text))
+            matched_title = title_choice.title
+            if title_choice.conflicts:
+                unresolved.append({'姓名': cand.name, '主页': page_url,
+                                   'status': 'title_field_conflict', 'matches': list(title_choice.conflicts)})
 
             def flag(status: str, **detail):
                 flagged.add(id(cand))
                 unresolved.append({"姓名": cand.name, "主页": page_url, "status": status, **detail})
+
+            contact_conflicts = mailto_address_conflicts(cand_cards[id(cand)]) if cand_cards[id(cand)] is not None else ()
+            if contact_conflicts:
+                flag('mailto_address_conflict', matches=list(dict.fromkeys(
+                    email for conflict in contact_conflicts for email in conflict)))
 
             # Ownership evidence inside this teacher's exclusive card: a contact
             # field (label, label cell, mailto) first, else the spelling of the
@@ -879,7 +907,7 @@ class FacultyHarvestPipeline:
                 flag("ambiguous_email_assignment", matches=unowned)
 
             results[id(cand)] = {
-                "email": email,
+                "email": '' if contact_conflicts else email,
                 "title": matched_title,
                 "bio": card_text
             }
@@ -933,13 +961,17 @@ class FacultyHarvestPipeline:
         # For candidates with personal profile URLs, collapse identical URLs for the same scholar.
         # For profile-less candidates (url == base_url or empty), preserve distinct faculty members (homonyms).
         unique_candidates = []
-        seen_cand_urls = set()
+        seen_cand_urls = {}
         for cand in candidates:
             if cand.url and cand.url != base_url and cand.url not in ('', '/'):
                 cand_id = ('url', cand.name, cand.url)
                 if cand_id in seen_cand_urls:
+                    index = seen_cand_urls[cand_id]
+                    prior = unique_candidates[index]
+                    unique_candidates[index] = replace(prior, mailto_conflicts=tuple(dict.fromkeys(
+                        (*prior.mailto_conflicts, *cand.mailto_conflicts))))
                     continue
-                seen_cand_urls.add(cand_id)
+                seen_cand_urls[cand_id] = len(unique_candidates)
             unique_candidates.append(cand)
         candidates = unique_candidates
 
@@ -1021,6 +1053,11 @@ class FacultyHarvestPipeline:
         dcm = DomainConventionModel() if DomainConventionModel is not None else None
 
         sheet1_with_email, sheet2_no_email, unresolved = [], [], []
+        for cand in candidates:
+            if cand.mailto_conflicts:
+                unresolved.append({'姓名': cand.name, '主页': cand.url,
+                                   'status': 'mailto_address_conflict', 'matches': list(dict.fromkeys(
+                                       email for conflict in cand.mailto_conflicts for email in conflict))})
         cand_indices_1, cand_indices_2 = set(), set()
 
         # Pre-process shared detail pages
@@ -1075,6 +1112,10 @@ class FacultyHarvestPipeline:
                 prof = None
                 if status == "ok" and html:
                     prof = details_by_url.get(cand.url) or single_profiles.get(cand.url)
+                contact_conflict = prof is not None and getattr(prof, 'status', '') == 'mailto_address_conflict'
+                if contact_conflict:
+                    unresolved.append({'姓名': cand.name, '主页': cand.url,
+                                       'status': 'mailto_address_conflict', 'matches': list(prof.contact_emails)})
 
                 # 1. Candidate's own card container (MECC from directory listing):
                 #    a labelled contact field first, else the spelling of the name.
@@ -1113,7 +1154,7 @@ class FacultyHarvestPipeline:
                                and name in (prof.full_bio or "")] if prof else [])
 
                 def usable(em: str) -> bool:
-                    return usable_on_profile(em, cand) and not (
+                    return not contact_conflict and usable_on_profile(em, cand) and not (
                         colleagues and not is_personal_email_for_scholar(em, cand.name)
                         and any(is_personal_email_for_scholar(em, name) for name in colleagues))
 
@@ -1155,9 +1196,22 @@ class FacultyHarvestPipeline:
                     except Exception:
                         pass
 
-                title = prof.title if prof and prof.title != "教师" else cand.title
+                if contact_conflict and email:
+                    assigned_emails.discard(email.lower())
+                    email = ''
                 bio = prof.full_bio if prof else ""
+                title_choice = select_title(explicit=(explicit_title_candidates(bio)
+                                                      or explicit_title_candidates(cand.card_context)),
+                                            card_title=cand.title, body_title=prof.title if prof else '教师')
+                title = title_choice.title
+                if title_choice.conflicts:
+                    unresolved.append({'姓名': cand.name, '主页': cand.url,
+                                       'status': 'title_field_conflict', 'matches': list(title_choice.conflicts)})
 
+            if cand.mailto_conflicts:
+                if email:
+                    assigned_emails.discard(email.lower())
+                email = ''
             record = {
                 "序号": 0, "姓名": cand.name, "职称": title, "邮箱": email,
                 "学校": school, "学院": college, "采集人": agent_name, "采集日期": date_str,

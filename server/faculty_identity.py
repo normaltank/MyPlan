@@ -1,5 +1,6 @@
 """Keep observations distinct until source evidence resolves profile aliases."""
 from collections import defaultdict
+from dataclasses import replace
 import hashlib
 import re
 from urllib.parse import urlsplit
@@ -110,6 +111,7 @@ def merge_same_name_observations(candidates, candidate_sources, list_urls):
     for candidate in candidates:
         by_name[candidate.name].append(candidate)
     dropped = set()
+    merged_conflicts = {}
     merges = []
     sources = {key: set(value) for key, value in candidate_sources.items()}
     for name, group in by_name.items():
@@ -129,7 +131,10 @@ def merge_same_name_observations(candidates, candidate_sources, list_urls):
             dropped.add((candidate.name, candidate.url))
             sources.setdefault((name, kept_url), set()).update(
                 sources.pop((candidate.name, candidate.url), set()))
+        merged_conflicts[(name, kept_url)] = tuple(dict.fromkeys(
+            conflict for candidate in group for conflict in candidate.mailto_conflicts))
         merges.append({"name": name, "kept_url": kept_url, "merged_list_urls": sorted({c.url for c in merged}),
                        "rule": rule})
-    kept = [c for c in candidates if (c.name, c.url) not in dropped]
+    kept = [replace(c, mailto_conflicts=merged_conflicts.get((c.name, c.url), c.mailto_conflicts))
+            for c in candidates if (c.name, c.url) not in dropped]
     return kept, sources, merges

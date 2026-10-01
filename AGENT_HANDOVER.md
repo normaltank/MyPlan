@@ -1,6 +1,8 @@
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
-> **最新交接：2026-10-01 已合入 main、同步 GitHub 并启动本机服务**。内核修复见[续接验证报告](docs/audits/2026-09-30-core-chain-continuation.md)，部署与四字段输入见[部署记录](docs/audits/2026-10-01-local-deployment.md)。Windows 排除了 8000 所在端口段，本机通过 ignored 配置使用 `http://127.0.0.1:18000`；Web、常驻 worker 与手动同步共用此地址。用户明确不处理旧失败学院，将另选学院测试；不要自行恢复旧工单。职称规则仍待选择，下面未部署状态均为历史记录。
+> **最新交接：2026-10-01 底层调用链完善已保存，尚未重启服务**。详见[专项审查](docs/audits/2026-10-01-foundation-hardening.md)、[69 项脚本清单](docs/audits/2026-10-01-script-inventory.md)与[实施计划](docs/implementation/2026-10-01-foundation-hardening.md)。用户已批准“个人页明确职称字段 > 名录具体职称 > 简介职称”，现已实装；同时修复旧脚本入口、恢复缓存、邮箱冲突、收据范围与别名、Excel 完整性及大学计数。全量 967 passed、1 skipped 在最后候选邮箱证据修复之前执行，最新定向结果见专项审查；尚需最新全量和空闲时重启。用户将另选学院验收，不处理旧失败工单。
+
+> **上轮部署：2026-10-01 main 同步与本机服务**。内核修复见[续接验证报告](docs/audits/2026-09-30-core-chain-continuation.md)，部署与四字段输入见[部署记录](docs/audits/2026-10-01-local-deployment.md)。Windows 排除了 8000 所在端口段，本机通过 ignored 配置使用 `http://127.0.0.1:18000`；Web、常驻 worker 与手动同步共用此地址。运行服务仍加载上轮 `fe73ddd`，下面未部署状态均为历史记录。
 
 > **最新交接：2026-09-30 本地 Git 同步**。远端邮箱修复与侦察提速/师资链接输入已合并，邮箱冲突采用较新的联系字段正证据与歧义阻断规则；审核发现的三项人数/输入问题已修复。本机验证及合并取舍见 [同步审核](docs/audits/2026-09-30-git-sync-review.md)。同步开始时未发现项目 Web/worker 进程，本轮不启动服务；历史 PID 与测试数不代表当前状态。两失败工单的范围与恢复边界仍见 [内核续接说明](docs/implementation/2026-09-30-extractor-core-handover.md) 和 [邮箱补全报告](docs/implementation/2026-09-30-email-evidence-merge-report.md)。
 
@@ -136,14 +138,14 @@
 
 2. **核心代码库定位**：
    - 工单只读巡检器：[`server/auto_dispatcher.py`](server/auto_dispatcher.py)（启动脚本：`启动自动巡检接单.bat`）；不会认领工单
-   - 旧脚本调度器：[`server/ide_dispatch_runner.py`](server/ide_dispatch_runner.py)；采集入口已阻断，不用于当前工单履约
+   - 常驻服务器消费者：[`server/agent_worker.py`](server/agent_worker.py)；旧 `ide_dispatch_runner` 已移除
    - 工单队列管理：[`server/agent_queue.py`](server/agent_queue.py)
    - 核心 CS 提取引擎：[`server/faculty_extractor.py`](server/faculty_extractor.py)
    - Subagent 按需浏览器批量工具：[`server/browser_batch_tool.py`](server/browser_batch_tool.py)
    - 图片截图与本地 OCR：[`server/browser_poster_tool.py`](server/browser_poster_tool.py)
    - 本地工单同步：[`server/browser_batch_sync.py`](server/browser_batch_sync.py)
-   - 历史 HTTP 批量提取器（不用于工单履约）：[`.agents/skills/faculty-browser-harvest/scripts/batch_browser_extractor.py`](.agents/skills/faculty-browser-harvest/scripts/batch_browser_extractor.py)
-   - 浏览器智能体基座：[`server/autonomous_agent.py`](server/autonomous_agent.py)
+   - 历史 HTTP 提取／DOM helper／导出模板均已退役，旧脚本 import／CLI 拒绝执行；离线渲染 HTML 解析统一走 `faculty_extractor`
+   - 浏览器侦察运行时：[`server/agent_recon.py`](server/agent_recon.py)；旧 `autonomous_agent` 已移除
    - 交付产物输出目录：[`server/outputs/`](server/outputs/)
 
 ---

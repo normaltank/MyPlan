@@ -16,7 +16,8 @@ _GROUPS = {
         segment_image_bio_unassigned segment_name_unreadable segment_duplicate_name segment_email_ambiguous
         ambiguous_email_assignment ambiguous_shared_email ambiguous_surname_email conflicting_card_email
         appointment_evidence_unverified possible_unreviewed_appointment source_qualification_missing profile_unavailable
-        profile_identity_not_found poster_full_image_review_missing embedded_pdf_roster_requires_review""",
+        profile_identity_not_found poster_full_image_review_missing embedded_pdf_roster_requires_review
+        title_field_conflict excel_cell_too_long excel_invalid_xml_character mailto_address_conflict""",
     "structure": """card_selector_empty card_selector_missing roster_selector_empty candidate_outside_cards child_limit_reached
         child_link_missing_href child_outside_verified_host child_roster_not_verified child_selector_empty
         empty_roster_conflict empty_roster_not_verified initial_control_not_unique initial_control_unchanged

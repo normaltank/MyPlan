@@ -26,6 +26,7 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 from server.faculty_extractor import FacultyCandidate, FacultyDirectoryExtractor
+from server.detail_mecc import mailto_address_conflicts
 from server.titles import TITLE_KEYWORDS
 
 from iso_mining import first_href, name_prob, rare_surname_name  # noqa: E402  (Opus on sys.path)
@@ -186,6 +187,11 @@ def reconcile_name_list(html: str, url: str, card_selector: str) -> NameListResu
     unresolved: list[dict[str, Any]] = []
     list_cards = single_cards = 0
     for index, card in enumerate(cards, 1):
+        conflicts = mailto_address_conflicts(card)
+        if conflicts:
+            unresolved.append({'url': url, 'status': 'mailto_address_conflict', 'card': index,
+                               'matches': list(dict.fromkeys(address for conflict in conflicts
+                                                           for address in conflict))})
         text = card.get_text(" ", strip=True)
         runs = people_chains(text)
         if runs:

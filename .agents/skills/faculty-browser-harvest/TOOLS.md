@@ -116,4 +116,4 @@ python -m server.browser_batch_sync --audit <audit.json> --task-id <task_id> --w
 Remove-Item Env:HARVEST_LEASE_TOKEN
 ```
 
-脚本仅接受本地 `127.0.0.1:8000` 后台，校验文件位于 `server/outputs`、十列字段与人数守恒，以及提供的覆盖账本无未解决项。同步后检查 `delivery_scope.state`：只有本批目标学院全部完成且审计通过，才返回大学版本的 `university_download_url` 与 `university_excel`。`collecting` / `blocked` 时仅学院中间成果已同步。大学版本保存在 `server/outputs/versions/`，当前最近完成学院汇总另存为 `<大学名称>.xlsx`；前台本批下载指向版本文件。旧租约被拒绝，原大学表保留。运行与恢复的具体边界见 [可验证运行流程](../../../docs/architecture/verifiable-harvest-runtime.md)。旧 HTTP 工单脚本继续停用。
+脚本仅接受本机 HTTP 后台，默认地址与 worker、Web 启动器共同读取端口配置（仓库默认 8000，可由忽略文件 `.runtime/local-services.json` 覆盖）；显式 `--base-url` 也必须使用本机地址。校验文件位于 `server/outputs`、十列字段与人数守恒，以及提供的覆盖账本无未解决项。同步后检查 `delivery_scope.state`：只有本批目标学院全部完成且审计通过，才返回大学版本的 `university_download_url` 与 `university_excel`。`collecting` / `blocked` 时仅学院中间成果已同步。大学版本保存在 `server/outputs/versions/`，当前最近完成学院汇总另存为 `<大学名称>.xlsx`；前台本批下载指向版本文件。旧租约被拒绝，原大学表保留。运行与恢复的具体边界见 [可验证运行流程](../../../docs/architecture/verifiable-harvest-runtime.md)。旧 HTTP 工单脚本的导入和命令行入口均已阻断，不能作为备用路径。

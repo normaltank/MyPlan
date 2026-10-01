@@ -36,6 +36,8 @@ def check_records(records: list[dict[str, Any]], pages: dict[str, str]) -> dict[
         email = (row.get("邮箱") or "").strip()
         text = pages.get(url)
         found = []
+        if text is None:
+            found.append("source_page_unavailable")
         if text is not None and name and name not in text:
             found.append("name_not_on_source_page")
         if email and text is not None and email.lower() not in text.lower():

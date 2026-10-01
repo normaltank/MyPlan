@@ -140,7 +140,7 @@ uv run --no-project --with-requirements requirements-dev.lock --python 3.12 pyth
 
 ## 11. 手工/排障：学院工单采集
 
-> 常规履约走上面的常驻 worker。手工路径用于排障，或由 IDE 主控按 [`faculty-browser-harvest/SKILL.md`](../.agents/skills/faculty-browser-harvest/SKILL.md) 派发一学院一 Subagent。旧 `auto_dispatcher.py` 现仅巡检，不会认领或采集；旧 HTTP 批量脚本不用于工单履约。
+> 常规履约走上面的常驻 worker。手工路径用于排障，或由 IDE 主控按 [`faculty-browser-harvest/SKILL.md`](../.agents/skills/faculty-browser-harvest/SKILL.md) 派发一学院一 Subagent。`auto_dispatcher.py` 仅以 SQLite 只读连接统计本机待认领学院数，不访问认证 HTTP 接口、不读取教师记录、不初始化或迁移数据库；默认库为 `HARVEST_TASK_DB` 或 `server/tasks.db`，可用 `--db-path` 指定。前台地址读取本机端口配置。旧 HTTP 批量采集、旧交付模板和 DOM helper 的导入/命令行入口均已阻断，历史实现保留在 Git。
 ```powershell
 python -m server.browser_batch_tool --plan <已核实计划.json> --output-dir server/outputs --task-id <task_id> --worker-id <worker_id>
 ```

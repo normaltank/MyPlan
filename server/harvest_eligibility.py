@@ -9,6 +9,7 @@ browser traversal.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -58,12 +59,7 @@ def classify_candidates(
                     compact_quote = re.sub(r"\s+", "", appointment["quote"])
                     if compact_quote in compact_text:
                         admitted.append(
-                            FacultyCandidate(
-                                name=candidate.name,
-                                url=candidate.url,
-                                title=appointment["academic_title"],
-                                card_context=candidate.card_context,
-                            )
+                            replace(candidate, title=appointment["academic_title"])
                         )
                         decision.update(
                             status="eligible",

@@ -38,6 +38,7 @@ def delivery_scope(con, batch_id, school):
 def _assemble(con, rows):
     records, identities, by_key, by_name, conflicts = [], [], {}, {}, []
     from server.identity_review import audit_pairs, observation_key
+    from server.delivery_fields import export_field_value, normalize_export_records
     approved_pairs, task_records = set(), {}
     for task in rows:
         saved = [(seq, json.loads(payload)) for seq, payload in con.execute(
@@ -79,13 +80,20 @@ def _assemble(con, rows):
                     identity["colleges"] = sorted(set(identity["colleges"] + [task["college"]]))
                     for field in ("邮箱", "职称", "简介"):
                         if not field_value(existing, field) and field_value(record, field):
-                            existing[field] = field_value(record, field)
+                            existing[field] = export_field_value(record, field)
                     continue
             by_key[key] = len(records)
             records.append(record)
             identities.append({"identity_key": hashlib.sha256(repr(key).encode()).hexdigest(),
                                "colleges": [task["college"]], "sources": [source]})
-    return {"records": records, "identities": identities, "identity_conflicts": conflicts,
+    # Identity decisions above bind the original receipt fields, including any
+    # missing scope. Normalize only the final export copies after those checks.
+    tasks_by_id = {task['task_id']: task for task in rows}
+    export_records = []
+    for record, identity in zip(records, identities):
+        task = tasks_by_id[identity['sources'][0]['task_id']]
+        export_records.extend(normalize_export_records([record], school=task['school'], college=task['college']))
+    return {"records": export_records, "identities": identities, "identity_conflicts": conflicts,
             "task_ids": [r["task_id"] for r in rows],
             "college_snapshots": [{"college": r["college"], "task_id": r["task_id"],
                 "finished_at": r["finished_at"], "audit": json.loads(r["stats_json"])} for r in rows]}
@@ -219,7 +227,7 @@ def publish_delivery(queue, batch_id, school, output_root):
         if not excel.exists() or not manifest_path.exists():
             staging = directory / f".{uuid.uuid4().hex}.xlsx"
             try:
-                exporter.export_dual_sheet_excel(snapshot["records"], str(staging))
+                counts = exporter.export_dual_sheet_excel(snapshot["records"], str(staging))
                 staging.replace(excel)
             finally:
                 staging.unlink(missing_ok=True)
@@ -227,9 +235,7 @@ def publish_delivery(queue, batch_id, school, output_root):
                 "created_at": time.time(), "identities": snapshot["identities"],
                 "identity_conflicts": snapshot["identity_conflicts"],
                 "college_snapshots": snapshot["college_snapshots"],
-                "total": len(snapshot["records"]),
-                "with_email": sum(bool(str(r.get("邮箱", r.get("email", ""))).strip()) for r in snapshot["records"])}
-            manifest["no_email"] = manifest["total"] - manifest["with_email"]
+                **counts}
             temp_manifest = directory / f".{uuid.uuid4().hex}.json"
             temp_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
             temp_manifest.replace(manifest_path)

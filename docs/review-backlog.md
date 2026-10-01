@@ -4,6 +4,13 @@
 
 **最新优先级（2026-09-30 本地同步）**：两个远端分支及本地修复已合并，验证与取舍见 [同步审核](audits/2026-09-30-git-sync-review.md)。代码同步不表示服务部署或真实工单交付。
 
+**2026-10-01 追加**：内核续接及本机部署已完成；用户不处理原失败学院，将另选学院测试。本轮进一步完善职称、Excel 无损门禁、收据范围与别名、完整分支恢复及旧脚本执行门禁，见[底层专项审查](audits/2026-10-01-foundation-hardening.md)。下面两失败工单恢复的条目保留为历史能力边界，不是当前执行任务。
+
+- [x] 职称优先级按用户选择统一，明确字段冲突进入复核，简介原文保留。
+- [x] Excel 超长及不可表示字段阻断，导出失败保留旧文件；收据范围、别名与实际分表计数一致。
+- [x] 历史技能 HTTP／黑名单／截断／按姓名去重脚本已移除旧实现，明确拒绝执行；当前巡检器只读本机总数。
+- [x] 损坏完整分支 checkpoint metadata 回落浏览器，健康缓存保持原捕获时间。
+
 - [x] 四类内核缺陷局部修复：卡片范围、正文删段、明确邮箱静默丢弃、未知姓名错送结构补缺；原始 6 个失败检查转绿。
 - [x] 两项 Chromium 整流程回归转正式测试，新增正文完整保留、共享页邮箱归属及歧义阻断回归；合并后 Windows 全量 801 passed、1 skipped。
 - [ ] 保存页面/有限实网复测与两真实工单恢复；不把本机合成页回归当官网完整验收。
@@ -25,7 +32,7 @@
 - [x] **P2-16 测试与工具链**：启动真实 Chromium 的 66 项测试标记为 `browser`；现有测试都不访问实网（在访问不到高校官网的云端环境中全量通过），所以不设实网标记。接入 ruff（只查会出错的问题）与 GitHub Actions CI（ruff、单元、浏览器三个任务）；运行与开发依赖拆成 `requirements.txt` / `requirements-dev.txt`，两个 lock 都改为 `--universal`，版本号未变。
 - [ ] **Playwright 升级（待决定）**：当前锁定 1.47.0。1.56.0 下全量测试通过（只有一条断言写死了旧版报错原文，已改为两版通用）；最新 1.63.0 的浏览器在云端下载不到，未验证。升级后本机 worker 环境须重新运行 `python -m playwright install chromium`，否则启动自检不通过。
 - [ ] **P2-12 包结构**：`pyproject.toml` 已建（目前只有 pytest/ruff 配置），补包元数据，去掉 5 处 `sys.path` 拼接与 `app.py` 的双套 import，`Opus/` 改为正式模块名。
-- [ ] **其他**：`.agents/skills` 与 `.claude/skills` 中 38 个重复技能只保留一份——两份逐字相同，正是 `skills-lock.json` 里的 38 个 mattpocock/skills 技能，由技能安装工具分别写给 Antigravity/Codex 与 Claude Code；直接删一份会让其中一个工具看不到技能，需先定方案（例如两份都不入库、按 lock 文件安装）。`.agents/skills/faculty-browser-harvest/scripts/dom_dehydrator.py` 仍有一份旧职称表和审计点名的邮箱黑名单，无生产引用，可删。AGENT_HANDOVER 继续瘦身，只描述当前系统。
+- [ ] **其他**：`.agents/skills` 与 `.claude/skills` 中 38 个重复技能只保留一份——两份逐字相同，正是 `skills-lock.json` 里的 38 个 mattpocock/skills 技能，由技能安装工具分别写给 Antigravity/Codex 与 Claude Code；直接删一份会让其中一个工具看不到技能，需先定方案（例如两份都不入库、按 lock 文件安装）。旧 `dom_dehydrator` 的职称表、黑名单及截断实现已于 2026-10-01 移除，文件只保留明确退役报错。AGENT_HANDOVER 继续瘦身，只描述当前系统。
 
 
 2026-09-30 追加已完成：学院内同名多主页的管理员身份复核、统一失败动作表、名录分支并行与保守模板复用、按实际分项用量计价的运行报告。实网基线及性能验证边界见 [实施记录](implementation/harvest-runtime-improvements.md)。跨学院新增身份歧义仍阻断，后续可增加大学版本来源复核入口。Playwright 升级与包结构继续放最后，本轮版本不变。

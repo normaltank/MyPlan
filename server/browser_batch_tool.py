@@ -654,11 +654,37 @@ async def _capture_sources_with_state(plan, browser_context, state):
         key = json.dumps(branch, sort_keys=True, separators=(",", ":"))
         bundle = state.load_page_record("branch", branch["url"], key=key) if state and not branch.get("empty_state_selector") else None
         if bundle:
-            refs = bundle["meta"].get("pages", [])
-            saved = [state.load_page_record("roster", ref["url"], key=ref["key"]) for ref in refs]
-            if refs and all(saved):
+            # A valid HTML digest alone cannot establish a completed branch.
+            # Treat incomplete/corrupt cursor metadata as a cache miss; errors
+            # from the new browser capture below must still propagate normally.
+            refs = bundle["meta"].get("pages")
+            proof = bundle["meta"].get("evidence")
+            terminals = ({"single_page_no_pagination_control_seen"} if branch.get("single_page")
+                         else {"next_control_absent", "next_control_disabled"})
+            valid = (isinstance(refs, list) and 1 <= len(refs) <= branch.get("max_pages", 20)
+                     and isinstance(proof, dict) and proof.get("url") == branch["url"]
+                     and isinstance(proof.get("end"), str)
+                     and proof.get("end") in terminals
+                     and type(proof.get("visited_pages")) is int and proof["visited_pages"] == len(refs)
+                     and (not branch.get("single_page") or len(refs) == 1))
+            saved = []
+            if valid:
+                for index, ref in enumerate(refs):
+                    if (not isinstance(ref, dict) or set(ref) != {"url", "key"}
+                            or not isinstance(ref["url"], str) or not ref["url"]
+                            or ref["key"] != key + f"|{index}"):
+                        valid = False
+                        break
+                    record = state.load_page_record("roster", ref["url"], key=ref["key"])
+                    if (record is None or record["meta"].get("branch_url") != branch["url"]
+                            or type(record["meta"].get("sequence")) is not int
+                            or record["meta"]["sequence"] != index):
+                        valid = False
+                        break
+                    saved.append(record)
+            if valid and bundle["sha256"] == saved[0]["sha256"]:
                 restored_branches += 1
-                evidence = {**bundle["meta"]["evidence"], "restored": True,
+                evidence = {**proof, "restored": True,
                             "captured_at": bundle["captured_at"]}
                 return [(row["url"], row["html"]) for row in saved], [], evidence
         def checkpoint(url, html, sequence):
@@ -744,6 +770,8 @@ def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_eviden
 
 def _enrich_extracted_records(pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
                               verified_profile_urls=()):
+    from server.detail_mecc import explicit_title_candidates
+    from server.titles import select_title
     unresolved = []
     for record in pipeline_records:
         segment = segment_records.get((record["主页"], record["姓名"]))
@@ -752,8 +780,12 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
         # The record's own article text, verbatim; an image-named record keeps
         # document order, so its resume text is placed before the text below it.
         record["简介"] = segment.segment.text if segment.name_source == "text" else ""
-        if record["职称"] == "教师" and segment.title != "教师":
-            record["职称"] = segment.title
+        title_choice = select_title(explicit=explicit_title_candidates(segment.segment.text),
+                                    card_title=record['职称'], body_title=segment.title)
+        record['职称'] = title_choice.title
+        if title_choice.conflicts:
+            unresolved.append({'url': record['主页'], 'name': record['姓名'],
+                               'status': 'title_field_conflict', 'matches': list(title_choice.conflicts)})
         if segment.email and not record["邮箱"]:
             record["邮箱"] = segment.email
     for record in pipeline_records:
@@ -764,8 +796,16 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
             parsed_image = FacultyProfileExtractor.extract(
                 "<article>" + "".join(f"<p>{escape(line)}</p>" for line in image_bio.splitlines())
                 + "</article>", record["主页"], fallback_name=record["姓名"])
-            if record["职称"] == "教师" and parsed_image.title != "教师":
-                record["职称"] = parsed_image.title
+            title_body = record['简介']
+            segment = segment_records.get((record['主页'], record['姓名']))
+            if segment is not None and segment.name_source == 'ocr' and segment.segment.text:
+                title_body += '\n\n' + segment.segment.text
+            title_choice = select_title(explicit=explicit_title_candidates(title_body),
+                                        card_title=record['职称'], body_title=parsed_image.title)
+            record['职称'] = title_choice.title
+            if title_choice.conflicts:
+                unresolved.append({'url': record['主页'], 'name': record['姓名'],
+                                   'status': 'title_field_conflict', 'matches': list(title_choice.conflicts)})
             personal_emails = list(dict.fromkeys(
                 email for email in find_emails(image_bio)
                 if is_personal_email_for_scholar(email, record["姓名"])))
@@ -1090,6 +1130,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     reviewed_pairs = identity_review.validated_pairs(records, identity_reviews, decision_path)
     from server.faculty_identity import identity_review_issues
     unresolved.extend(identity_review_issues(records, reviewed_pairs))
+    from server.excel_export import excel_cell_issues
+    unresolved.extend(excel_cell_issues(records))
     from server.harvest_coverage import build_coverage_ledger
     coverage = build_coverage_ledger(plan, source_capture, roster_observations, candidates,
                                      profile_html, eligibility, snapshots)

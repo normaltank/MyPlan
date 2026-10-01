@@ -205,7 +205,10 @@ async def test_run_plan_scopes_all_field_extraction_and_preserves_raw_snapshot(t
     report, records = await _run_browser_plan(tmp_path)
     assert report['delivery_ready'] and len(records) == 1
     row = records[0]
-    assert row['职称'] == '副教授' and row['邮箱'] == 'zhang@example.edu'
+    # The scoped body has an unlabelled historical title; the concrete roster
+    # title now takes priority under the user's 2026-10-01 rule.
+    assert row['职称'] == '教授' and row['邮箱'] == 'zhang@example.edu'
+    assert '副教授' in row['简介']
     assert '完整学习经历与工作经历' in row['简介'] and '科研成果与论文完整末段' in row['简介']
     assert '模板' not in row['简介']
     source = report['coverage']['field_sources'][0]

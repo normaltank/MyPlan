@@ -7,7 +7,7 @@
 > Under the current active workflow:
 > 1. Harvesting is conducted per college by dedicated browser Subagents where the host provides that capability.
 > 2. Subagents first verify official roster pages with the host's browser, then may invoke an approved Playwright browser batch tool for bounded repetitive browsing. A separate HTTP-only crawler cannot take over website harvesting.
-> 3. Batch extraction scripts (`batch_browser_extractor.py`) are relegated to offline debugging and unit-test aids, and are NOT part of the compliant agent execution path.
+> 3. As of 2026-10-01, the legacy batch extractor, harvest template and DOM dehydrator are fail-closed import/CLI entry points. Historical implementations remain in Git; offline rendered-HTML tests use `server.faculty_extractor` instead.
 > 4. Fixed throughput and token claims (e.g. "<5s", "90%", "0 token promises") from this historical exploration are not active operational guarantees or decision drivers.
 
 ---

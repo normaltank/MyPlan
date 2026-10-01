@@ -36,6 +36,10 @@ def build_payload(report_path: str | Path, worker_id: str, lease_token: str,
     records = json.loads(Path(report["records_path"]).read_text(encoding="utf-8"))
     if not isinstance(records, list) or any(not isinstance(row, dict) or set(row) != FIELDS for row in records):
         raise ValueError("records must contain exactly the standard ten columns")
+    from server.excel_export import excel_cell_issues
+    cells = excel_cell_issues(records)
+    if cells:
+        raise ValueError(f"delivery field validation failed: {cells}")
     school = str(report.get("school", "")).strip()
     college = str(report.get("college", "")).strip()
     if not school or not college or any(
@@ -43,7 +47,7 @@ def build_payload(report_path: str | Path, worker_id: str, lease_token: str,
         for row in records
     ):
         raise ValueError("record school or college differs from the audit")
-    with_email = sum(bool(str(row["邮箱"]).strip()) for row in records)
+    with_email = sum(row["邮箱"] is not None and bool(str(row["邮箱"]).strip()) for row in records)
     if (len(records) != report["total"] or with_email != report["with_email"]
             or len(records) - with_email != report["no_email"]):
         raise ValueError("audit counts do not match saved records")

@@ -1,85 +1,74 @@
+"""Optional read-only local queue counter; harvesting belongs to agent_worker."""
+from __future__ import annotations
+
+import argparse
+import asyncio
+from contextlib import closing
+from datetime import datetime
 import os
+from pathlib import Path
+import sqlite3
 import sys
 import time
-import asyncio
-import argparse
-from datetime import datetime
-import httpx
 
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from server.local_service_config import local_web_url  # noqa: E402 - direct-file CLI supports any working directory
 
-_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
-_ROOT_DIR = os.path.dirname(_SERVER_DIR)
-for p in (_SERVER_DIR, _ROOT_DIR):
-    if p not in sys.path:
-        sys.path.insert(0, p)
 
-BASE_API = "http://127.0.0.1:8000"
+def pending_college_count(db_path: str | Path | None = None) -> int | None:
+    """Count queued college work, never create/migrate a DB or read teacher rows."""
+    # Importing agent_queue would initialize its global queue, which can write.
+    # Follow its default path convention without importing that mutable module.
+    path = Path(db_path or os.environ.get("HARVEST_TASK_DB") or _ROOT / "server/tasks.db").resolve()
+    if not path.is_file():
+        return None
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)) as connection:
+        return connection.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status='queued' AND task_type='harvest'"
+        ).fetchone()[0]
 
-async def run_auto_dispatcher(interval: int = 5, once: bool = False, base_url: str = BASE_API):
-    """Monitor pending work without launching the retired script-only harvester."""
-    print("=" * 65)
-    print("🤖 【高校师资工单巡检器】启动；学院工单由 IDE Subagent 认领")
-    print(f"📡 监听目标: {base_url}/api/queue/pending")
-    print(f"⏱️ 巡检周期: 每 {interval} 秒")
-    print(f"模式: {'单次检查 (--once)' if once else '常驻守护轮询 (Daemon)'}")
-    print("=" * 65 + "\n")
 
-    last_idle_log = 0.0
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        while True:
-            now_ts = time.time()
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+async def run_auto_dispatcher(interval: int = 5, once: bool = False, base_url: str | None = None,
+                              *, db_path: str | Path | None = None) -> None:
+    """Display aggregate queue counts; neither HTTP access nor dispatch occurs."""
+    if interval < 1:
+        raise ValueError("monitor interval must be positive")
+    address = base_url or local_web_url()
+    print("高校师资工单只读巡检器：本机 SQLite 总数，不读取教师记录。")
+    print(f"前台地址: {address}；采集由常驻 python -m server.agent_worker 执行。")
+    last_log = None
+    while True:
+        now = time.monotonic()
+        if last_log is None or now - last_log >= 20:
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
-                # 1. Probe pending queue
-                r = await client.get(f"{base_url}/api/queue/pending")
-                if r.status_code == 200:
-                    data = r.json()
-                    count = data.get("count", 0)
+                count = await asyncio.to_thread(pending_college_count, db_path)
+                message = "本机任务库尚未创建，等待正式服务启动。" if count is None else f"{count} 个学院工单待认领。"
+            except sqlite3.Error as exc:
+                message = f"本机任务库暂不可读（{type(exc).__name__}），未修改任务。"
+            print(f"[{stamp}] {message}", flush=True)
+            last_log = now
+        if once:
+            return
+        await asyncio.sleep(interval)
 
-                    if count > 0:
-                        if now_ts - last_idle_log >= 20.0:
-                            print(f"[{now_str}] 🔔 {count} 个学院工单待 IDE Subagent 认领；巡检器不会运行旧脚本采集。")
-                            last_idle_log = now_ts
-                    else:
-                        # Log heartbeat once every 20 seconds when idle
-                        if now_ts - last_idle_log >= 20.0:
-                            print(f"[{now_str}] 💤 工单池无待处理任务 (0 queued)，智能体待命中... (周期: {interval}s)")
-                            last_idle_log = now_ts
-                else:
-                    print(f"[{now_str}] ⚠️ 后台服务返回状态异常: HTTP {r.status_code}")
 
-            except httpx.ConnectError:
-                if now_ts - last_idle_log >= 20.0:
-                    print(f"[{now_str}] ⏳ 本地后台服务 ({base_url}) 未就绪或正在重启，等待连接...")
-                    last_idle_log = now_ts
-            except Exception as e:
-                print(f"[{now_str}] ❌ 巡检过程出现异常: {e}")
-
-            if once:
-                print(f"[{now_str}] 🏁 单次巡检任务结束。")
-                break
-
-            await asyncio.sleep(interval)
-
-def main():
-    parser = argparse.ArgumentParser(description="高校师资后台自动巡检与接单执行器")
-    parser.add_argument("--interval", type=int, default=5, help="巡检周期间隔（秒），默认 5 秒")
-    parser.add_argument("--once", action="store_true", help="仅执行单次巡检并退出")
-    parser.add_argument("--url", type=str, default=BASE_API, help="后台服务根地址，默认 http://127.0.0.1:8000")
+def main() -> None:
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser(description="本机只读工单计数；不认领、不采集")
+    parser.add_argument("--interval", type=int, default=5, help="巡检间隔秒数，必须为正整数")
+    parser.add_argument("--once", action="store_true", help="只读一次并退出")
+    parser.add_argument("--url", default=None, help="仅显示的前台地址；默认读取本机服务端口配置")
+    parser.add_argument("--db-path", default=None, help="本机任务库；默认 HARVEST_TASK_DB 或 server/tasks.db")
     args = parser.parse_args()
-
     try:
-        asyncio.run(run_auto_dispatcher(interval=args.interval, once=args.once, base_url=args.url))
+        asyncio.run(run_auto_dispatcher(args.interval, args.once, args.url, db_path=args.db_path))
     except KeyboardInterrupt:
-        print("\n👋 收到用户中断信号 (Ctrl+C)，自动巡检守护引擎已安全退出。")
+        print("只读巡检器已退出。")
+
 
 if __name__ == "__main__":
     main()

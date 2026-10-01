@@ -4,6 +4,10 @@
 """
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+from typing import Iterable
+
 # 长的在前，'副教授' 先于 '教授'、'教授级高级工程师' 先于 '教授' 命中。
 TITLE_KEYWORDS = sorted(
     ['教授', '副教授', '讲师', '高级讲师', '助理教授', '研究员', '副研究员', '助理研究员',
@@ -16,34 +20,27 @@ TITLE_KEYWORDS = sorted(
 
 _ENGLISH_TITLES = {
     'associate professor': '副教授',
-    'assistant professor': '讲师',
+    'assistant professor': '助理教授',
     'lecturer': '讲师',
     'professor': '教授'
 }
 
 
-def resolve_title(header_text: str) -> str:
-    """Earliest non-overlapping title keyword in a header/bio snippet; '教师' when none."""
+def title_mentions(text: str) -> tuple[str, ...]:
+    """Canonical, non-overlapping mentions in original Chinese/English order."""
     matches = []
     for kw in TITLE_KEYWORDS:
         pos = 0
         while True:
-            idx = header_text.find(kw, pos)
+            idx = text.find(kw, pos)
             if idx == -1:
                 break
             matches.append((idx, len(kw), kw))
             pos = idx + 1
 
-    if not matches:
-        low_header = header_text.lower()
-        for en_kw, zh_t in _ENGLISH_TITLES.items():
-            pos = 0
-            while True:
-                idx = low_header.find(en_kw, pos)
-                if idx == -1:
-                    break
-                matches.append((idx, len(en_kw), zh_t))
-                pos = idx + 1
+    for en_kw, zh_t in _ENGLISH_TITLES.items():
+        for match in re.finditer(r'(?<![A-Za-z])' + re.escape(en_kw) + r'(?![A-Za-z])', text, re.I):
+            matches.append((match.start(), len(en_kw), zh_t))
 
     if matches:
         matches.sort(key=lambda x: (x[0], -x[1]))
@@ -53,7 +50,35 @@ def resolve_title(header_text: str) -> str:
             if pos >= last_end:
                 non_overlapping.append(kw)
                 last_end = pos + length
-        if non_overlapping:
-            return non_overlapping[0]
+        return tuple(non_overlapping)
 
-    return "教师"
+    return ()
+
+
+def resolve_title(header_text: str) -> str:
+    """Earliest non-overlapping title keyword; '教师' when none."""
+    mentions = title_mentions(header_text)
+    return mentions[0] if mentions else '教师'
+
+
+@dataclass(frozen=True)
+class TitleSelection:
+    title: str
+    conflicts: tuple[str, ...] = ()
+
+
+def select_title(*, explicit: Iterable[str] = (), card_title: str = '教师',
+                 body_title: str = '教师') -> TitleSelection:
+    """Explicit own-profile fields > specific roster title > first body mention.
+
+    Multiple distinct explicit values require review; never pick one silently.
+    Inputs are canonical titles extracted by the deterministic reader.
+    """
+    fields = tuple(dict.fromkeys(value for value in explicit if value and value != '教师'))
+    if len(fields) > 1:
+        return TitleSelection('教师', fields)
+    if fields:
+        return TitleSelection(fields[0])
+    if card_title and card_title != '教师':
+        return TitleSelection(card_title)
+    return TitleSelection(body_title or '教师')

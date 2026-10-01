@@ -36,7 +36,7 @@ description: Use when claiming university faculty collection tasks, dispatching 
 
 ## 不可跳过的约束
 
-- 官网页面必须由真实浏览器访问。`batch_browser_extractor.py` 使用独立 HTTP 官网抓取，不能用于工单履约；旧 `harvest_template.py` 含硬编码邮箱过滤，也不作为当前交付工具。
+- 官网页面必须由真实浏览器访问。旧 `batch_browser_extractor.py`、`harvest_template.py`、`dom_dehydrator.py` 已移除 HTTP 采集、重复导出、黑名单与截断实现；导入或命令行运行均明确报错退出。历史实现保留在 Git；离线解析使用 `server.faculty_extractor`，已审计记录导出使用 `server.excel_export`。
 - 本地批量工具的 CLI 会另建 Playwright 浏览器上下文；当前宿主没有可靠的 MCP 页面对象移交接口。不得声称与宿主浏览器共用同一页面或 Cookie。
 - 模型（DeepSeek Harness + DeepSeek API）只用于页面结构判断与导航决策；其**产出物只允许含 URL 与 CSS 选择器**，严禁含姓名、职称、邮箱或简介文本，严禁用模型提取/转写/总结/改写这些字段。不为学术简介生成摘要，不用硬编码关键词黑名单清洗正文。
 - 图片 OCR、PDF 附件和共享详情页属于特殊分支；无证据或发生冲突时返回 Agent 复核。列表中没有个人主页的教师如实收录，简介与邮箱留空，不因没有详情页而漏掉。

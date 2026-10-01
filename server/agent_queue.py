@@ -374,7 +374,7 @@ class AgentTaskQueue:
         now = time.time()
         with self._connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            row = con.execute("SELECT status,worker_id,lease_until,lease_token FROM tasks WHERE task_id=?",
+            row = con.execute("SELECT status,worker_id,lease_until,lease_token,school,college FROM tasks WHERE task_id=?",
                               (task_id,)).fetchone()
             if row is None:
                 raise KeyError(task_id)
@@ -383,6 +383,18 @@ class AgentTaskQueue:
                     row["worker_id"] != worker_id or
                     row["lease_token"] != lease_token):
                 raise LeaseConflictError(task_id)
+
+            from server.delivery_fields import alias_issues, scope_issues
+            affiliations = scope_issues(records, school=row['school'], college=row['college'])
+            if affiliations:
+                raise ValueError(f'record scope mismatch: {affiliations}')
+            aliases = alias_issues(records)
+            if aliases:
+                raise ValueError(f'delivery field validation failed: {aliases}')
+            from server.excel_export import excel_cell_issues
+            cells = excel_cell_issues(records)
+            if cells:
+                raise ValueError(f'delivery field validation failed: {cells}')
 
             # Strict conservation: stats must explicitly contain total, with_email, and no_email (no auto-inferring)
             for req_field in ("total", "with_email", "no_email"):

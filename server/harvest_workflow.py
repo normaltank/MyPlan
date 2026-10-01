@@ -9,7 +9,7 @@ remain plan data and do not become branches in the core collector.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import re
 from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import urljoin
@@ -17,6 +17,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 from server.faculty_extractor import FacultyCandidate, FacultyDirectoryExtractor
+from server.detail_mecc import mailto_address_conflicts
 
 
 CaptureBranch = Callable[
@@ -297,7 +298,8 @@ def observe_roster(
             _compact(candidate.name) in compact for candidate in candidates
         ):
             unaccounted.append(
-                {"index": index, "links": links[:3], "text": card_text[:80]}
+                {"index": index, "links": links[:3], "text": card_text[:80],
+                 "mailto_conflicts": mailto_address_conflicts(card)}
             )
     return {
         "url": url,
@@ -326,7 +328,8 @@ def unrecognized_card_names(observation: dict[str, Any], url: str,
         name, title = FacultyDirectoryExtractor._clean_name(card.get("text", ""))
         name = _compact(name)
         if len(links) == 1 and _CARD_NAME.match(name) and name not in names:
-            found.append(FacultyCandidate(name=name, url=links[0], title=title, card_context=card["text"]))
+            found.append(FacultyCandidate(name=name, url=links[0], title=title, card_context=card["text"],
+                                          mailto_conflicts=tuple(card.get("mailto_conflicts", ()))))
             names.add(name)
     return found
 
@@ -353,8 +356,7 @@ def _apply_name_decisions(
             unresolved.append(item)
             awaiting.append(person)
         elif decision["verdict"] == "person":
-            found.append(FacultyCandidate(name=decision["verified_name"], url=person.url,
-                                          title=person.title, card_context=person.card_context))
+            found.append(replace(person, name=decision["verified_name"], name_review_reason=''))
     return awaiting
 
 
@@ -513,7 +515,13 @@ def reconcile_rosters(
             unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
         candidates.extend(found)
 
-    unique = {(candidate.name, candidate.url): candidate for candidate in candidates}
+    unique = {}
+    for candidate in candidates:
+        key = (candidate.name, candidate.url)
+        previous = unique.get(key)
+        conflicts = tuple(dict.fromkeys((previous.mailto_conflicts if previous else ())
+                                        + candidate.mailto_conflicts))
+        unique[key] = replace(candidate, mailto_conflicts=conflicts)
     # A rare-surname name on a list without personal pages that is also a teacher
     # with a personal page in this college is that teacher (同名合并); the page
     # already carries the evidence, so nobody has to confirm the name again.

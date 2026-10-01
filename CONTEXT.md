@@ -50,7 +50,7 @@ $$\text{教师列表（有邮箱）} + \text{无邮箱教师列表} = \text{该�
 ### 学院浏览器智能体采集与 CS 深模块协同 (Browser Subagent & CS Deep Module)
 * **浏览器智能体采集**：Subagent 操控当前宿主提供的真实浏览器工具（Playwright MCP: `browser_navigate`, `browser_click`, `browser_evaluate`, `browser_wait_for` 等）自主探索师资名录、动态 AJAX 翻页与穿透个人主页。允许有目的的必要多轮浏览器交互，杜绝任何“先开浏览器再跑独立 HTTP 脚本”的形式主义。
 * **CS 深模块协同处理**：底层算法（DOM 同构子树聚类、盒模型物理断句、MECC 正文容器隔离）用于解析、去噪和清洗浏览器所提取的页面 HTML/DOM 内容，保障零关键词黑名单与邮箱防污染，但不能替代浏览器本身的交互与采集。
-* *注：历史文档中提及的“两级采集管道 Fast-Path 脚本直通 (`batch_browser_extractor.py`)”已退居为离线算法验证与测试工具，不再作为智能体生产采集流程。*
+* *注：历史文档中提及的“两级采集管道 Fast-Path 脚本直通 (`batch_browser_extractor.py`)”已退役为明确报错的兼容入口；历史实现可查 Git。离线算法验证使用 `server.faculty_extractor` 解析已保存的浏览器 HTML，不运行旧 HTTP 脚本。*
 
 ### DOM 同构子树聚类 (Isomorphic Subtree Clustering)
 依据树论与结构指纹（Structural Tag Sequence, STS），在列表 DOM 树中计算同胞节点标签路径频率，通过选取最大同构子树簇识别教师卡片。
