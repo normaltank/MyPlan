@@ -118,7 +118,9 @@ class HarvestState:
 
     def save_roster_progress(self, branch: dict[str, Any], url: str, html: str, sequence: int) -> dict:
         """Keep a contiguous prefix; a lost cursor update only causes a safe retry."""
-        if type(sequence) is not int or not 0 <= sequence < branch.get("max_pages", 20):
+        # Without max_pages the capture has no page cap, so neither does its checkpoint.
+        if (type(sequence) is not int or sequence < 0
+                or (branch.get("max_pages") is not None and sequence >= branch["max_pages"])):
             raise ValueError("invalid roster sequence")
         previous = [] if sequence == 0 else self.load_roster_progress(branch)
         if len(previous) != sequence:
@@ -138,7 +140,8 @@ class HarvestState:
         if cursor is None:
             return []
         refs = cursor["meta"].get("pages")
-        if (not isinstance(refs, list) or not 1 <= len(refs) <= branch.get("max_pages", 20)
+        if (not isinstance(refs, list) or not refs
+                or (branch.get("max_pages") is not None and len(refs) > branch["max_pages"])
                 or type(cursor["meta"].get("sequence")) is not int
                 or cursor["meta"]["sequence"] != len(refs) - 1):
             return []

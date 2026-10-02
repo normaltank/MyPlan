@@ -252,6 +252,55 @@ def _identity_cards(items: list[dict], allowed: bool) -> str:
     return ''.join(cards)
 
 
+_HTML_EMAIL_REASONS = {
+    "shared_contact": "多位教师处同时出现，属公共或共享地址",
+    "in_other_teacher_scope": "也出现在其他教师的卡片或个人页",
+    "assigned_to_other_record": "已是其他教师的邮箱",
+    "spells_other_teacher": "拼写对应其他教师姓名",
+    "also_spells_other_teacher": "拼写也对应其他教师姓名",
+}
+
+
+def _html_email_cards(items: list[dict]) -> str:
+    cards = []
+    for item in items:
+        options = []
+        first = True
+        for option in item["candidates"]:
+            reasons = "；".join(_HTML_EMAIL_REASONS.get(r, r) for r in option["reasons"])
+            contexts = "".join("<blockquote>…" + escape(text) + "…</blockquote>"
+                               for text in option["card_context"] + option["page_context"])
+            checked = " checked" if option["selectable"] and first else ""
+            first = first and not option["selectable"]
+            options.append('<label class="email-option"><input type="radio" name="html-email-'
+                           + escape(item["id"]) + '" value="' + escape(option["email"], quote=True) + '"'
+                           + checked + ('' if option["selectable"] else ' disabled') + '> '
+                           + escape(option["email"])
+                           + ('<small>不能选择：' + escape(reasons) + '</small>' if not option["selectable"]
+                              else '<small>' + escape(reasons) + '</small>' if reasons else '')
+                           + (contexts or '<small>原文中以变体形式出现，请打开来源页核对。</small>')
+                           + '</label>')
+        buttons = ('<button type="button" data-verdict="select">保存所选邮箱</button>'
+                   if any(o["selectable"] for o in item["candidates"]) else '')
+        if item["none_allowed"]:
+            buttons += ('<button type="button" data-verdict="none" class="secondary">'
+                        '确认此教师无个人邮箱</button>')
+        if not buttons:
+            buttons = '<p>没有可归属的候选地址，也没有证明无个人邮箱的依据；请管理员核对来源。</p>'
+        status = {"select": "已保存邮箱：" + item.get("saved_email", ""), "none": "已确认无个人邮箱"}.get(
+            item.get("saved_verdict", ""), "")
+        cards.append('<section class="card html-email-card" data-id="' + escape(item["id"]) + '">'
+                     '<h2>邮箱归属复核：' + escape(item["name"]) + '</h2>'
+                     '<p class="meta">来源页 ' + _page_link(item["url"])
+                     + (' · 多人共享页' if item.get("shared_page") else '') + '</p>'
+                     '<p>名录卡片原文：</p><blockquote>' + escape(item.get("card_text", "")[:300]) + '</blockquote>'
+                     '<p>程序无法确定哪个地址属于本人。请对照下列原文选择；只能选择页面上实际出现、'
+                     '且没有指向他人证据的地址。</p>' + "".join(options)
+                     + '<div class="actions">' + buttons + '</div>'
+                     '<p class="status" role="status">' + escape(status) + '</p></section>')
+    return "".join(cards)
+
+
 def render_review_page(items: list[dict], email_items: list[dict] | None = None, *,
                        decision_url: str = '/decision',
                        email_decision_url: str = '/email-decision',
@@ -259,7 +308,9 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                        return_url: str = '/',
                        name_items: list[dict] | None = None,
                        name_decision_url: str = '', identity_items: list[dict] | None = None,
-                       identity_decision_url: str = '', can_review_identity: bool = True) -> str:
+                       identity_decision_url: str = '', can_review_identity: bool = True,
+                       html_email_items: list[dict] | None = None,
+                       html_email_decision_url: str = '') -> str:
     cards = []
     for item in items:
         crop = base64.b64encode(item["crop_bytes"]).decode("ascii")
@@ -292,6 +343,8 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                            + '</section>')
     if email_cards:
         body += '<h2>邮箱冲突</h2>' + "\n".join(email_cards)
+    if html_email_items:
+        body += '<h2>网页邮箱归属</h2>' + _html_email_cards(html_email_items)
     name_cards = _name_cards(name_items or [])
     if name_cards:
         body += ('<h2>姓名待确认</h2><p>这些名字的姓不在常用姓氏表里，或是外籍译名等程序认不出的名字，'
@@ -304,6 +357,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     email_js = json.dumps(email_decision_url).replace('<', '\\u003c')
     name_js = json.dumps(name_decision_url).replace('<', '\\u003c')
     identity_js = json.dumps(identity_decision_url).replace('<', '\\u003c')
+    html_email_js = json.dumps(html_email_decision_url).replace('<', '\\u003c')
     retry_js = json.dumps(retry_url).replace('<', '\\u003c')
     csrf_js = json.dumps(csrf_token).replace('<', '\\u003c')
     footer = ''
@@ -342,7 +396,17 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "if(!response.ok)throw await failure(response);"
             "status.textContent=verdict==='insufficient'?'证据不足，保持阻断':'已保存身份决定；来源变化后须重新复核';}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
-            "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card)').forEach(card=>{"
+            "document.querySelectorAll('.html-email-card').forEach(card=>{"
+            "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
+            "const status=card.querySelector('.status');const verdict=button.dataset.verdict;"
+            "const selected_email=verdict==='select'?(card.querySelector('input:checked')?.value||''):'';"
+            "try{const response=await fetch(" + html_email_js + ",{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
+            "body:JSON.stringify({id:card.dataset.id,verdict,selected_email})});"
+            "if(!response.ok)throw await failure(response);"
+            "status.textContent=verdict==='none'?'已确认无个人邮箱':'已保存邮箱：'+selected_email;}"
+            "catch(error){status.textContent='保存失败：'+error.message;}});});"
+            "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
             "const verified_text=card.querySelector('textarea').value;"
             "try{const response=await fetch(" + decision_js + ",{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
