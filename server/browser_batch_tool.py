@@ -162,6 +162,30 @@ def _roster_signature(html: str, url: str) -> tuple:
     return tuple((cand.name, cand.url, cand.title) for cand in found)
 
 
+_BANNER_TOKENS = re.compile(r"slide|carous|banner|swiper", re.I)
+
+
+def _is_banner_arrow(control: Tag, roster_nodes: list[Tag]) -> bool:
+    """A script-only arrow whose nearby slide box holds images and no roster card.
+
+    Real pagers are never matched: they sit in a pager container or carry a
+    navigable href, and both are checked before this is consulted.
+    """
+    slider = control.parent
+    for _ in range(3):
+        if slider is None or getattr(slider, "name", None) in {None, "body", "html", "main", "[document]"}:
+            return False
+        tokens = " ".join(slider.get("class", [])) + " " + str(slider.get("id", ""))
+        if _BANNER_TOKENS.search(tokens):
+            break
+        slider = slider.parent
+    else:
+        return False
+    touches_roster = any(node is slider or slider in node.parents or node in slider.parents
+                         for node in roster_nodes)
+    return not touches_roster and len(slider.find_all("img")) >= 2
+
+
 def _pagination_candidates(html: str, current_url: str,
                            card_selector: str | None = None) -> list[str | None]:
     """Find bounded pagination leads from browser-rendered structure, not names."""
@@ -205,6 +229,9 @@ def _pagination_candidates(html: str, current_url: str,
         if not (is_next or in_pager):
             continue
         href = control.get("href", "").strip()
+        if (roster_nodes and not in_pager and (not href or href.startswith(("#", "javascript:")))
+                and _is_banner_arrow(control, roster_nodes)):
+            continue
         target = urljoin(current_url, href) if href and not href.startswith(("#", "javascript:")) else None
         if target == current_url:
             target = None  # Same-URL controls can update the roster through AJAX.
