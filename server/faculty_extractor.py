@@ -69,7 +69,6 @@ except ImportError:
     from titles import TITLE_KEYWORDS, resolve_title, select_title
 
 TEMPLATE_NAME_PRIOR = 0.7
-_IMAGE_FILE = re.compile(r"\.(?:jpe?g|png|gif|bmp|webp)$", re.IGNORECASE)
 _NAME_SHAPED = re.compile(r"[\u4e00-\u9fff]{2,4}|[\u4e00-\u9fff]{1,8}(?:[·•][\u4e00-\u9fff]{1,8}){1,3}")
 
 # '李星教授介绍': a 2-4 character name, a title keyword, then an introduction suffix.
@@ -418,8 +417,6 @@ class FacultyDirectoryExtractor:
             context = LayoutAwareTokenizer.get_clean_text(card, preserve_content=True)
             for name, title, href in (list(linked_slots.values()) if len(linked_slots) > 1 else [slot]):
                 href = href or first_href([card], base_url)
-                if href and _IMAGE_FILE.search(urlparse(href).path):
-                    href = None  # A card linking only to its photo file has no profile page.
                 title = select_title(explicit=explicit_title_candidates(context), card_title=title,
                                      body_title=resolve_title(context)).title
                 reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'
