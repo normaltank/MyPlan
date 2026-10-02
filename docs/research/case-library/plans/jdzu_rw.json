@@ -1,0 +1,50 @@
+{
+  "case_id": "jdzu_rw",
+  "entry_url": "http://rwxy.jdzu.edu.cn/szdw/zrjs.htm",
+  "captured_at": "2026-10-02T00:56:03Z",
+  "shape": "department_intro_articles_with_member_paragraphs",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "景德镇学院",
+    "college": "人文学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "http://rwxy.jdzu.edu.cn/info/1111/8001.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "http://rwxy.jdzu.edu.cn/info/1111/8021.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "http://rwxy.jdzu.edu.cn/info/1111/7991.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "http://rwxy.jdzu.edu.cn/info/1111/8011.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "http://rwxy.jdzu.edu.cn/info/1111/20241.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > div > p:has(img)",
+        "single_page": true
+      }
+    ]
+  }
+}

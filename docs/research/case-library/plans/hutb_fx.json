@@ -1,0 +1,23 @@
+{
+  "case_id": "hutb_fx",
+  "entry_url": "https://slpa.hutb.edu.cn/szdw/xyjs",
+  "captured_at": "2026-10-02T00:43:37Z",
+  "shape": "dated_article_list_roster",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "湖南工商大学",
+    "college": "法学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 2,
+    "branches": [
+      {
+        "url": "https://slpa.hutb.edu.cn/szdw/xyjs",
+        "card_selector": "div.detail > ul.common-list > li",
+        "next_selector": "div.pagebox a.next:not([href^='javascript'])",
+        "max_pages": 10,
+        "profile_content_selector": "div.detail > div.content"
+      }
+    ]
+  }
+}

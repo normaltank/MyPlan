@@ -1,0 +1,22 @@
+{
+  "case_id": "hnist_ai",
+  "entry_url": "https://ai.hnist.cn/xygk/szdw2.htm",
+  "captured_at": "2026-10-01T23:50:34Z",
+  "shape": "photo_cards_with_degree_suffix",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "湖南理工大学",
+    "college": "人工智能学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://ai.hnist.cn/xygk/szdw2.htm",
+        "single_page": true,
+        "card_selector": "div.sz_div > ul > li",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

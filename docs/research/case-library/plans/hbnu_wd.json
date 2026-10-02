@@ -1,0 +1,22 @@
+{
+  "case_id": "hbnu_wd",
+  "entry_url": "https://phy.hbnu.edu.cn/4428/list.htm",
+  "captured_at": "2026-10-01T23:19:36Z",
+  "shape": "single_table_with_section_header_rows",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "湖北师范大学",
+    "college": "物理与电子科学学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://phy.hbnu.edu.cn/4428/list.htm",
+        "single_page": true,
+        "card_selector": "div.wp_articlecontent table > tbody > tr:has(td:nth-child(5))",
+        "profile_content_selector": "div.wp_articlecontent"
+      }
+    ]
+  }
+}

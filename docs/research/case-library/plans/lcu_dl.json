@@ -1,0 +1,22 @@
+{
+  "case_id": "lcu_dl",
+  "entry_url": "https://hjxy.lcu.edu.cn/szll/zyjs/index.htm",
+  "captured_at": "2026-10-01T23:17:18Z",
+  "shape": "grouped_linked_name_cards",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "聊城大学",
+    "college": "地理与环境学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://hjxy.lcu.edu.cn/szll/zyjs/index.htm",
+        "single_page": true,
+        "card_selector": "div.teacherList > div.teacherLi",
+        "profile_content_selector": "div.dir > div.dirCont"
+      }
+    ]
+  }
+}

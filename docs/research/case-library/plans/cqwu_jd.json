@@ -1,0 +1,34 @@
+{
+  "case_id": "cqwu_jd",
+  "entry_url": "https://jdxy.cqwu.edu.cn/channel_22389.html",
+  "captured_at": "2026-10-02T00:16:54Z",
+  "shape": "rank_tabs_plus_overlapping_doctor_tab",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "重庆文理学院",
+    "college": "智能制造工程学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://jdxy.cqwu.edu.cn/channel_22389.html",
+        "single_page": true,
+        "card_selector": "div.jiaoshi",
+        "profile_content_selector": "div.content-txt"
+      },
+      {
+        "url": "https://jdxy.cqwu.edu.cn/channel_22390.html",
+        "single_page": true,
+        "card_selector": "div.jiaoshi",
+        "profile_content_selector": "div.content-txt"
+      },
+      {
+        "url": "https://jdxy.cqwu.edu.cn/channel_22391.html",
+        "single_page": true,
+        "card_selector": "div.jiaoshi",
+        "profile_content_selector": "div.content-txt"
+      }
+    ]
+  }
+}
