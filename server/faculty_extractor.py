@@ -197,6 +197,9 @@ class FacultyDirectoryExtractor:
         if not raw:
             return "", "教师"
         title_found = "教师"
+        # A news-list roster may put the publish date inside the name link
+        # ('2026-05-14班爱玲（副教授）'); the date is not part of the name.
+        raw = re.sub(r'^\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?\s*', '', raw)
         # Match Chinese or ASCII parentheses: （教授）, (副教授), （博导/教授）
         paren_match = re.search(r'[（\(]([^）\)]+)[）\)]', raw)
         if paren_match:
