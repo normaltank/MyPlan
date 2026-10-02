@@ -1,0 +1,64 @@
+{
+  "case_id": "uzz_jd",
+  "entry_url": "https://jdgc.uzz.edu.cn/xygk/szdw1/jxgcjys.htm",
+  "captured_at": "2026-10-02T01:32:25Z",
+  "shape": "section_tables_by_teaching_office",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "枣庄学院",
+    "college": "机电工程学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/jxgcjys.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      },
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/dqgcjys.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      },
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/jqrgcjys.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      },
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/znzb.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      },
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/cxcyjys.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      },
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/gysjjys.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      },
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/sjjxjys.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      },
+      {
+        "url": "https://jdgc.uzz.edu.cn/xygk/szdw1/syzx.htm",
+        "single_page": true,
+        "card_selector": "div.art-body table td a[href]",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

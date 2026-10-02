@@ -1,0 +1,22 @@
+{
+  "case_id": "czc_sw",
+  "entry_url": "http://swx.czc.edu.cn/szll.htm",
+  "captured_at": "2026-10-02T01:16:44Z",
+  "shape": "pinyin_ordered_linked_name_grid",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "长治学院",
+    "college": "生命科学系",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "http://swx.czc.edu.cn/szll.htm",
+        "single_page": true,
+        "card_selector": "div.main_main table td:has(a)",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

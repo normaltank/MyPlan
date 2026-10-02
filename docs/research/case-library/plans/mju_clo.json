@@ -1,0 +1,22 @@
+{
+  "case_id": "mju_clo",
+  "entry_url": "https://clo.mju.edu.cn/szdw/list.htm",
+  "captured_at": "2026-10-02T02:00:29Z",
+  "shape": "rank_sublists_on_overview_page",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "闽江学院",
+    "college": "服装与艺术工程学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://clo.mju.edu.cn/szdw/list.htm",
+        "single_page": true,
+        "card_selector": "li.wp_sublist:not(:has(a[href^='/syzx/'])) ul.list > li",
+        "profile_content_selector": "div.wp_articlecontent"
+      }
+    ]
+  }
+}

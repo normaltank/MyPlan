@@ -1,0 +1,22 @@
+{
+  "case_id": "hnsyu_jx",
+  "entry_url": "https://jixie.hnsyu.edu.cn/xygk/szdw1.htm",
+  "captured_at": "2026-10-02T01:16:44Z",
+  "shape": "multi_rank_groups_plus_doctor_group_with_pdf_profiles",
+  "support": "unsupported_mechanism",
+  "reusable": false,
+  "plan": {
+    "school": "邵阳学院",
+    "college": "机械与能源工程学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://jixie.hnsyu.edu.cn/xygk/szdw1.htm",
+        "single_page": true,
+        "card_selector": "div.List-teacher01 > ul > li",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

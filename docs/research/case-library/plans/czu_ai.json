@@ -1,0 +1,28 @@
+{
+  "case_id": "czu_ai",
+  "entry_url": "http://ai.czu.edu.cn/szdw1/zrjs.htm",
+  "captured_at": "2026-10-02T02:29:37Z",
+  "shape": "unlinked_full_table_plus_dated_professor_list",
+  "support": "supported_after_fix",
+  "reusable": true,
+  "plan": {
+    "school": "池州学院",
+    "college": "大数据与人工智能学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "http://ai.czu.edu.cn/szdw1/zrjs.htm",
+        "single_page": true,
+        "card_selector": "div[id^='vsb_content'] table > tbody > tr"
+      },
+      {
+        "url": "http://ai.czu.edu.cn/szdw1/jsbml.htm",
+        "card_selector": "ul.list > li",
+        "next_selector": "a.Next:first-of-type",
+        "max_pages": 6,
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}
