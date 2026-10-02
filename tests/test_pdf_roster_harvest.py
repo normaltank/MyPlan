@@ -176,9 +176,10 @@ async def test_table_pdf_roster_waits_for_the_name_review_then_delivers(site, tm
 
     assert report["delivery_ready"] is False
     assert [item["status"] for item in report["unresolved"]] == [name_review.STATUS]
-    assert len(records) == 5 and {row["简介"] for row in records} == {""}
+    assert len(records) == 7 and {row["简介"] for row in records} == {""}
     assert {row["姓名"]: row["职称"] for row in records}["孙三立"] == "讲师（校聘副教授）"
-    assert not {"吴六", "郑七"} & {row["姓名"] for row in records}
+    # The 实验技术人员 section of the same PDF is read too.
+    assert {"吴六", "郑七"} <= {row["姓名"] for row in records}
 
     audit = Path(report["audit_path"])
     [item] = name_review.collect_items(audit)
@@ -186,6 +187,6 @@ async def test_table_pdf_roster_waits_for_the_name_review_then_delivers(site, tm
     report, records = await _run(site, tmp_path, VIEWER)
 
     assert report["unresolved"] == [] and report["delivery_ready"] is True
-    assert report["total"] == 6 and report["no_email"] == 6
+    assert report["total"] == 8 and report["no_email"] == 8
     workbook = load_workbook(report["excel_path"])
-    assert workbook["教师列表"].max_row - 1 + workbook["无邮箱教师列表"].max_row - 1 == 6
+    assert workbook["教师列表"].max_row - 1 + workbook["无邮箱教师列表"].max_row - 1 == 8

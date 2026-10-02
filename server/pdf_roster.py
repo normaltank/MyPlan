@@ -21,9 +21,10 @@ cell, one row per person) is read by columns instead: each row is a record,
 its name and title are the cells under the ``姓名`` and ``职称`` headers, and a
 cell wrapped onto two lines stays in its row.  A table row is not a biography,
 so the record's biography stays empty.  Section headings above a header row
-(``一、专任教师``) say which staff category a table lists; when a document
-holds several categories, only the section that names 专任教师 is admitted
-and the others are recorded as excluded sections, never silently merged.
+(``一、专任教师``, ``二、实验技术人员``) are kept as each row's evidence and
+every section is read: no row is dropped by its heading.  The same header
+repeated at the top of a continuation page, with no new heading before it,
+continues its section.
 
 Nothing is guessed.  A record whose own text holds another heading, a heading
 the reader could not name, an OCR name that is not confident and not
@@ -247,7 +248,6 @@ def _record_text(lines: list[LayoutLine]) -> str:
 # ── Table-form PDF rosters ───────────────────────────────────────────────────
 NAME_HEADER = "姓名"
 TITLE_HEADER = "职称"
-FACULTY_SECTION = "专任教师"
 _HEADER_CELL = re.compile(r"^[\u4e00-\u9fff]{2,6}$")
 _DIGITS = re.compile(r"^\d{1,4}$")
 
@@ -288,7 +288,7 @@ class TableRow:
     number: int
     page: int
     cells: dict[str, str]
-    section: str | None
+    section: int                # index into TableLayout.sections
     lines: list[LayoutLine]
 
 
@@ -310,19 +310,22 @@ def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
         return None
     result = TableLayout([], [], [], Counter())
     columns: list[tuple[str, float]] | None = None
-    section: str | None = None
     pending_heading: str | None = None
     for page, rows in page_rows:
         for row in rows:
             texts = [line.compact for line in row]
             if _is_header(row):
+                if (columns is not None and pending_heading is None
+                        and texts == [name for name, _ in columns]):
+                    # The header repeated on a continuation page: the same table goes on.
+                    columns = [(line.compact, _center(line)) for line in row]
+                    result.skipped["repeated_header"] += 1
+                    continue
                 columns = [(line.compact, _center(line)) for line in row]
-                section = pending_heading
+                result.sections.append({"heading": pending_heading, "header": texts, "page": page, "rows": 0})
                 pending_heading = None
-                result.sections.append({"heading": section, "header": [name for name, _ in columns],
-                                        "page": page, "rows": 0})
                 continue
-            if len(row) == 1 and _DIGITS.match(texts[0]):
+            if len(row) == 1 and (_DIGITS.match(texts[0]) or _PAGE_NUMBER.match(row[0].text)):
                 # A page number, or an index cell left alone on its line.
                 result.skipped["lone_number"] += 1
                 continue
@@ -362,7 +365,7 @@ def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
             result.rows.append(TableRow(len(result.rows) + 1, page,
                                         {name: " ".join(text for _, text in sorted(parts))
                                          for name, parts in cells.items()},
-                                        section, row))
+                                        len(result.sections) - 1, row))
     if pending_heading is not None:
         result.issues.append({"status": "pdf_roster_table_row_unassigned", "page": pages[-1], "cells": 1})
     return result
@@ -375,18 +378,11 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
 
     source = {"url": page_url, "media_url": media_url}
     unresolved = [{**source, **issue} for issue in table.issues]
-    headings = [item["heading"] for item in table.sections]
-    named_faculty = [heading for heading in headings if heading and FACULTY_SECTION in heading]
-    if len(table.sections) > 1 and not named_faculty:
-        unresolved.append({**source, "status": "pdf_roster_table_section_unverified",
-                           "sections": len(table.sections)})
-    for item in table.sections:
-        item["admitted"] = (len(table.sections) == 1 or bool(item["heading"] and FACULTY_SECTION in item["heading"]))
-    admitted_sections = {item["heading"] for item in table.sections if item["admitted"]}
-    rows = [row for row in table.rows if row.section in admitted_sections]
-    for item in table.sections:
+    # Every section is read; its heading stays with each row as evidence.
+    rows = table.rows
+    for section, item in enumerate(table.sections):
         # An index column numbers its section 1..N: a gap is a row the reader missed.
-        numbers = [row.cells.get("序号", "") for row in table.rows if row.section == item["heading"]]
+        numbers = [row.cells.get("序号", "") for row in rows if row.section == section]
         if "序号" in item["header"] and sorted(numbers, key=lambda value: (len(value), value)) != [
                 str(index) for index in range(1, len(numbers) + 1)]:
             unresolved.append({**source, "status": "pdf_roster_table_index_gap", "section_rows": len(numbers),
@@ -399,7 +395,7 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
     for row in rows:
         cell = row.cells[NAME_HEADER]
         title = row.cells.get(TITLE_HEADER, "").strip() or title_default
-        evidence = {"section": row.section, "cells": row.cells, "page": row.page,
+        evidence = {"section": table.sections[row.section]["heading"], "cells": row.cells, "page": row.page,
                     "bboxes": [[round(value, 2) for value in line.bbox] for line in row.lines]}
         item = {**source, "segment": row.number, "pages": [row.page]}
         name = _name_like(re.sub(r"\s+", "", cell)) if re.fullmatch(r"[\u4e00-\u9fff·•\s]+", cell) else None
@@ -438,9 +434,7 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
     records = [record for record in records if names[record.name] == 1]
     if not records and not unresolved:
         unresolved.append({**source, "status": "pdf_roster_records_not_found"})
-    return {"records": records, "unresolved": unresolved, "accounted": accounted,
-            "sections": table.sections,
-            "excluded_rows": sum(1 for row in table.rows if row.section not in admitted_sections)}
+    return {"records": records, "unresolved": unresolved, "accounted": accounted, "sections": table.sections}
 
 
 def reconcile_pdf(original: bytes, scanned: dict, reviewed: set[tuple[int, int]], *, page_url: str,
@@ -463,8 +457,7 @@ def reconcile_pdf(original: bytes, scanned: dict, reviewed: set[tuple[int, int]]
                                                      if state == "unresolved"),
                        "not_person_rows": sorted(index for index, state in found["accounted"].items()
                                                  if state == "not_person"),
-                       "sections": found["sections"], "excluded_section_rows": found["excluded_rows"],
-                       "skipped_lines": dict(table.skipped)}
+                       "sections": found["sections"], "skipped_lines": dict(table.skipped)}
         row_of = {id(line): row.number for row in table.rows for line in row.lines}
         layout = [{"page": line.page, "bbox": [round(value, 2) for value in line.bbox],
                    "size": round(line.size, 2), "bold": line.bold, "source": line.source,
