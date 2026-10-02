@@ -56,6 +56,8 @@ _SPLIT = re.compile(r"[\s\u3000,，、;；:：|/()（）\[\]【】<>《》\"'“
 _LABELS = {"姓名", "教师", "老师", "导师", "简介", "个人简介", "个人简历", "简历",
            "导师简介", "教师简介"}
 _NAME_LABEL = re.compile(r"姓\s*名\s*[:：]?\s*([\u4e00-\u9fff·•]{2,8})")
+# '职务：学院党委书记' names a post; the record's title is on the line after it.
+_POST_LINE = re.compile(r"^\s*职\s*务\s*[:：]")
 _BARE_NAME_LABEL = re.compile(r"^\s*姓\s*名\s*[:：]?\s*$")
 _HAN_NAME = re.compile(r"^[\u4e00-\u9fff]{2,4}$")
 _MINORITY_NAME = re.compile(r"^[\u4e00-\u9fff]{1,6}[·•][\u4e00-\u9fff]{1,8}$")
@@ -254,7 +256,8 @@ def text_name(segment: Segment) -> tuple[str | None, str, int]:
         shape = heading_shape(line)
         if shape:
             name = shape[0]
-            title = (_title_in(line) or next((found for found in map(_title_in, lines[:2]) if found), None)
+            heading = [text for text in lines if not _POST_LINE.match(text)][:2]
+            title = (_title_in(line) or next((found for found in map(_title_in, heading) if found), None)
                      or "教师")
             rest = lines[index + 1:]
             # '陈厚、尤再进、董平……' is a list of people, not one record's heading.
@@ -381,12 +384,22 @@ class SegmentedReconciliation:
     shared_emails: set[str]
 
 
+def _blank(segment: Segment) -> bool:
+    """An empty spacer between records (a '<tr><td>&nbsp;</td></tr>' row) holds no person."""
+    return not (re.sub(r"\s", "", segment.text) or segment.images or segment.start_image
+                or segment.links or segment.emails)
+
+
 def reconcile_page(html: str, url: str, branch: dict) -> SegmentedReconciliation:
     page = split_segments(html, url, branch["container_selector"], branch["record_start_selector"])
     unresolved = list(page.issues)
     records, pending = [], []
     shared = page.shared_emails
+    blank = 0
     for segment in page.segments:
+        if _blank(segment):
+            blank += 1
+            continue
         name, title, extra = text_name(segment)
         if extra:
             unresolved.append({"url": url, "status": "segment_multiple_names",
@@ -409,7 +422,8 @@ def reconcile_page(html: str, url: str, branch: dict) -> SegmentedReconciliation
         unresolved.append({"url": url, "status": "segment_duplicate_name", "occurrences": names.count(duplicate)})
     observation = {"url": url, "kind": KIND, "container_selector": branch["container_selector"],
                    "record_start_selector": branch["record_start_selector"],
-                   "visible_segments": len(page.segments), "text_named": len(records),
+                   "visible_segments": len(page.segments) - blank, "blank_segments": blank,
+                   "text_named": len(records),
                    "image_named_pending": len(pending), "preamble_emails": len(page.preamble_emails),
                    "unaccounted_segments": [item["segment"] for item in unresolved if "segment" in item]}
     return SegmentedReconciliation(records, pending, observation, unresolved, shared)
@@ -421,8 +435,11 @@ def verification_summary(html: str, url: str, container_selector: str,
     page = split_segments(html, url, container_selector, record_start_selector)
     items = []
     counts = {"text_named": 0, "image_only": 0, "unnamed_without_image": 0,
-              "multiple_name_lines": 0, "multiple_emails": 0, "with_links": 0}
+              "multiple_name_lines": 0, "multiple_emails": 0, "with_links": 0, "blank": 0}
     for segment in page.segments:
+        if _blank(segment):
+            counts["blank"] += 1
+            continue
         name, _title, extra = text_name(segment)
         counts["text_named"] += bool(name)
         counts["image_only"] += (not name) and bool(segment.images)

@@ -1,0 +1,36 @@
+{
+  "case_id": "hsu_sx",
+  "entry_url": "https://sxx.hsu.edu.cn/szdw/list.htm",
+  "captured_at": "2026-10-01T21:06:18Z",
+  "shape": "shared_article_rows_photo_bio",
+  "support": "supported_after_fix",
+  "reusable": true,
+  "plan": {
+    "school": "黄山学院",
+    "college": "数学与统计学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://sxx.hsu.edu.cn/cd/1c/c2706a183580/page.htm",
+        "kind": "segmented",
+        "container_selector": "div.wp_articlecontent",
+        "record_start_selector": "div.wp_articlecontent table.wp_editor_art_table > tbody > tr",
+        "single_page": true
+      },
+      {
+        "url": "https://sxx.hsu.edu.cn/bb/85/c2706a179077/page.htm",
+        "kind": "segmented",
+        "container_selector": "div.wp_articlecontent",
+        "record_start_selector": "div.wp_articlecontent table.wp_editor_art_table > tbody > tr",
+        "single_page": true
+      },
+      {
+        "url": "https://sxx.hsu.edu.cn/bb/84/c2706a179076/page.htm",
+        "kind": "segmented",
+        "container_selector": "div.wp_articlecontent",
+        "record_start_selector": "div.wp_articlecontent table.wp_editor_art_table > tbody > tr",
+        "single_page": true
+      }
+    ]
+  }
+}

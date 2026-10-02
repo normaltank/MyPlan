@@ -1,0 +1,43 @@
+{
+  "case_id": "qjnu_sj",
+  "entry_url": "https://stxy.qjnu.edu.cn/channels/12642.html",
+  "captured_at": "2026-10-01T22:18:06Z",
+  "shape": "rank_articles_labelled_records",
+  "support": "supported_after_fix",
+  "reusable": true,
+  "plan": {
+    "school": "曲靖师范学院",
+    "college": "数学与经济学学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://stxy.qjnu.edu.cn/contents/12647/28439.html",
+        "kind": "segmented",
+        "container_selector": "div.infodetail",
+        "record_start_selector": "div.infodetail > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "https://stxy.qjnu.edu.cn/contents/12648/28440.html",
+        "kind": "segmented",
+        "container_selector": "div.infodetail",
+        "record_start_selector": "div.infodetail > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "https://stxy.qjnu.edu.cn/contents/12649/28442.html",
+        "kind": "segmented",
+        "container_selector": "div.infodetail",
+        "record_start_selector": "div.infodetail > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "https://stxy.qjnu.edu.cn/contents/12650/28441.html",
+        "kind": "segmented",
+        "container_selector": "div.infodetail",
+        "record_start_selector": "div.infodetail > p:has(img)",
+        "single_page": true
+      }
+    ]
+  }
+}

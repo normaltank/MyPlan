@@ -1,0 +1,22 @@
+{
+  "case_id": "whu_maths",
+  "entry_url": "https://maths.whu.edu.cn/teacher/zrjs.htm",
+  "captured_at": "2026-10-01T21:13:13Z",
+  "shape": "paginated_cards_external_profiles",
+  "support": "defect_repro_only",
+  "reusable": false,
+  "plan": {
+    "school": "武汉大学",
+    "college": "数学与统计学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 4,
+    "branches": [
+      {
+        "url": "https://maths.whu.edu.cn/teacher/zrjs.htm",
+        "next_selector": "div.pagebar span.p_next > a",
+        "max_pages": 20,
+        "card_selector": "ul.subDoctor_stateList > li"
+      }
+    ]
+  }
+}

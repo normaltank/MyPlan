@@ -1,0 +1,22 @@
+{
+  "case_id": "jhun_jy",
+  "entry_url": "https://jyxy.jhun.edu.cn/36/7d/c902a13949/page.htm",
+  "captured_at": "2026-10-01T22:18:37Z",
+  "shape": "linked_name_grid_with_concurrent_annotation",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "江汉大学",
+    "college": "教育学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://jyxy.jhun.edu.cn/36/7d/c902a13949/page.htm",
+        "single_page": true,
+        "card_selector": "div.wp_articlecontent table.wp_editor_art_table td",
+        "profile_content_selector": "div.wp_articlecontent"
+      }
+    ]
+  }
+}

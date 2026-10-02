@@ -1,0 +1,35 @@
+{
+  "case_id": "dzu_db",
+  "entry_url": "https://dbxy.dzu.edu.cn/info/1035/1284.htm",
+  "captured_at": "2026-10-01T23:22:30Z",
+  "shape": "screenshot_table_image_articles",
+  "support": "unsupported_mechanism",
+  "reusable": false,
+  "plan": {
+    "school": "德州学院",
+    "college": "别尔哥罗德食品科学学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://dbxy.dzu.edu.cn/info/1035/1284.htm",
+        "single_page": true,
+        "card_selector": "div.v_news_content img"
+      },
+      {
+        "url": "https://dbxy.dzu.edu.cn/info/1035/1283.htm",
+        "single_page": true,
+        "card_selector": "div.v_news_content img"
+      },
+      {
+        "url": "https://dbxy.dzu.edu.cn/info/1035/1285.htm",
+        "single_page": true,
+        "card_selector": "div.v_news_content img"
+      },
+      {
+        "url": "https://dbxy.dzu.edu.cn/info/1035/1286.htm",
+        "single_page": true,
+        "card_selector": "div.v_news_content img"
+      }
+    ]
+  }
+}

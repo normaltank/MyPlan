@@ -1,0 +1,51 @@
+{
+  "case_id": "pdsu_eim",
+  "entry_url": "https://eim.pdsu.edu.cn/szdw/dqgcjqzdh.htm",
+  "captured_at": "2026-10-01T22:23:59Z",
+  "shape": "photo_link_cards_foreign_names_by_major",
+  "support": "unsupported_mechanism",
+  "reusable": false,
+  "plan": {
+    "school": "平顶山学院",
+    "college": "马拉加工程学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://eim.pdsu.edu.cn/szdw/dqgcjqzdh.htm",
+        "next_selector": "div.content-main a.Next:first-of-type",
+        "max_pages": 20,
+        "card_selector": "div.content-main td:has(> a > img)"
+      },
+      {
+        "url": "https://eim.pdsu.edu.cn/szdw/dzxxgc.htm",
+        "next_selector": "div.content-main a.Next:first-of-type",
+        "max_pages": 20,
+        "card_selector": "div.content-main td:has(> a > img)"
+      },
+      {
+        "url": "https://eim.pdsu.edu.cn/szdw/txgc.htm",
+        "next_selector": "div.content-main a.Next:first-of-type",
+        "max_pages": 20,
+        "card_selector": "div.content-main td:has(> a > img)"
+      },
+      {
+        "url": "https://eim.pdsu.edu.cn/szdw/rjgc.htm",
+        "next_selector": "div.content-main a.Next:first-of-type",
+        "max_pages": 20,
+        "card_selector": "div.content-main td:has(> a > img)"
+      },
+      {
+        "url": "https://eim.pdsu.edu.cn/szdw/wlwgc.htm",
+        "next_selector": "div.content-main a.Next:first-of-type",
+        "max_pages": 20,
+        "card_selector": "div.content-main td:has(> a > img)"
+      },
+      {
+        "url": "https://eim.pdsu.edu.cn/szdw/xbyyjs.htm",
+        "next_selector": "div.content-main a.Next:first-of-type",
+        "max_pages": 20,
+        "card_selector": "div.content-main td:has(> img)"
+      }
+    ]
+  }
+}

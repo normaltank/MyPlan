@@ -1,0 +1,36 @@
+{
+  "case_id": "shxy_tj",
+  "entry_url": "http://tjxy.shxy.edu.cn/xyjj/szdw.htm",
+  "captured_at": "2026-10-01T22:32:47Z",
+  "shape": "section_articles_photo_paragraph_bios",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "绥化学院",
+    "college": "特殊教育学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "http://tjxy.shxy.edu.cn/info/1056/3150.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "http://tjxy.shxy.edu.cn/info/1056/3481.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:has(img)",
+        "single_page": true
+      },
+      {
+        "url": "http://tjxy.shxy.edu.cn/info/1056/3944.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:has(img)",
+        "single_page": true
+      }
+    ]
+  }
+}

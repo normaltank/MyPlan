@@ -1,0 +1,21 @@
+{
+  "case_id": "hnuahe_jr",
+  "entry_url": "https://jinrong.hnuahe.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T20:14:56Z",
+  "shape": "nested_table_linked_names",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "河南牧业经济学院",
+    "college": "金融与会计学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://jinrong.hnuahe.edu.cn/szdw/zrjs.htm",
+        "single_page": true,
+        "card_selector": "table.tdba > tbody > tr > td:nth-of-type(2) > a, table.tdba table td > a",
+        "profile_content_selector": "div.concon > div.v_news_content"
+      }
+    ]
+  }
+}

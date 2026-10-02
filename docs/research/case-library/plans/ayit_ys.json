@@ -1,0 +1,64 @@
+{
+  "case_id": "ayit_ys",
+  "entry_url": "https://ysxy.ayit.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T22:06:47Z",
+  "shape": "paragraph_bios_blank_paragraph_delimited",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "安阳工学院",
+    "college": "艺术设计学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://ysxy.ayit.edu.cn/szdw/yh.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:first-child, div.v_news_content > p:has(> br:only-child) + p",
+        "single_page": true
+      },
+      {
+        "url": "https://ysxy.ayit.edu.cn/szdw/gh.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:first-child, div.v_news_content > p:has(> br:only-child) + p",
+        "single_page": true
+      },
+      {
+        "url": "https://ysxy.ayit.edu.cn/szdw/dh.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:first-child, div.v_news_content > p:has(> br:only-child) + p",
+        "single_page": true
+      },
+      {
+        "url": "https://ysxy.ayit.edu.cn/szdw/sjcdsj.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:first-child, div.v_news_content > p:has(> br:only-child) + p",
+        "single_page": true
+      },
+      {
+        "url": "https://ysxy.ayit.edu.cn/szdw/hjyssj.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:first-child, div.v_news_content > p:has(> br:only-child) + p",
+        "single_page": true
+      },
+      {
+        "url": "https://ysxy.ayit.edu.cn/szdw/cpsj.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:first-child, div.v_news_content > p:has(> br:only-child) + p",
+        "single_page": true
+      },
+      {
+        "url": "https://ysxy.ayit.edu.cn/szdw/gysj.htm",
+        "kind": "segmented",
+        "container_selector": "div.v_news_content",
+        "record_start_selector": "div.v_news_content > p:first-child, div.v_news_content > p:has(> br:only-child) + p",
+        "single_page": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "case_id": "gznc_jky",
+  "entry_url": "https://jiaoguanxi.gznc.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T20:07:03Z",
+  "shape": "table_roster_profileless",
+  "support": "supported_after_fix",
+  "reusable": true,
+  "plan": {
+    "school": "贵州师范学院",
+    "college": "教育科学学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://jiaoguanxi.gznc.edu.cn/szdw/zrjs1.htm",
+        "single_page": true,
+        "card_selector": "table > tbody > tr:not(.firstRow)"
+      }
+    ]
+  }
+}

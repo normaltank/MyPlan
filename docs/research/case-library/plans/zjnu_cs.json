@@ -1,0 +1,20 @@
+{
+  "case_id": "zjnu_cs",
+  "entry_url": "https://cs.zjnu.edu.cn/16749/list.htm",
+  "captured_at": "2026-10-01T21:10:19Z",
+  "shape": "embedded_pdf_table_roster",
+  "support": "unsupported_handed_over",
+  "reusable": false,
+  "plan": {
+    "school": "浙江师范大学",
+    "college": "计算机科学与技术学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://cs.zjnu.edu.cn/16768/list.htm",
+        "single_page": true,
+        "card_selector": "div.wp_articlecontent"
+      }
+    ]
+  }
+}

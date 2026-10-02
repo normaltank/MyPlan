@@ -1,0 +1,23 @@
+{
+  "case_id": "wfu_tm",
+  "entry_url": "https://jzgcxy.wfu.edu.cn/ggjs/list.htm",
+  "captured_at": "2026-10-01T23:52:01Z",
+  "shape": "photo_cards_rank_colon_name",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "潍坊学院",
+    "college": "土木与交通学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "https://jzgcxy.wfu.edu.cn/ggjs/list.htm",
+        "next_selector": "ul.wp_paging a.next:not([href^='javascript'])",
+        "max_pages": 20,
+        "card_selector": "div.wp_listalbumn",
+        "profile_content_selector": "div.wp_articlecontent"
+      }
+    ]
+  }
+}

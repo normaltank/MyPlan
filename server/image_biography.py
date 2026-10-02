@@ -71,7 +71,11 @@ def media_references(html: str, base_url: str) -> list[MediaReference]:
         if element.name in {"img", "source"}:
             srcset = element.get("srcset") or ""
             raw_url = (element.get("data-src") or element.get("src")
-                       or (srcset.split(",", 1)[0].strip().split(" ", 1)[0] if srcset else ""))
+                       or (srcset.split(",", 1)[0].strip().split(" ", 1)[0] if srcset else "")).strip()
+            if not raw_url:
+                # A template placeholder (<img src="">) shows nothing; resolved,
+                # it would name the page itself as the picture.
+                continue
             kind = "image"
         else:
             raw_url = element.get("href") or element.get("data") or element.get("src") or ""

@@ -1,0 +1,20 @@
+{
+  "case_id": "hytc_geo",
+  "entry_url": "https://geo.hytc.edu.cn/szdw/jsyl.htm",
+  "captured_at": "2026-10-01T22:30:36Z",
+  "shape": "scanned_table_image_roster",
+  "support": "unsupported_mechanism",
+  "reusable": false,
+  "plan": {
+    "school": "淮阴师范学院",
+    "college": "地理科学与规划学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://geo.hytc.edu.cn/szdw/jsyl.htm",
+        "single_page": true,
+        "card_selector": "#vsb_content img.img_vsb_content"
+      }
+    ]
+  }
+}

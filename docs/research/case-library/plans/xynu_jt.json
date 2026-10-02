@@ -1,0 +1,22 @@
+{
+  "case_id": "xynu_jt",
+  "entry_url": "http://jgxy.xynu.edu.cn/info/1009/10347.htm",
+  "captured_at": "2026-10-02T01:52:59Z",
+  "shape": "rank_grid_names_linking_to_biography_images",
+  "support": "unsupported_mechanism",
+  "reusable": false,
+  "plan": {
+    "school": "信阳师范大学",
+    "college": "建筑与土木工程学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "http://jgxy.xynu.edu.cn/info/1009/10347.htm",
+        "single_page": true,
+        "card_selector": "div.v_news_content td:has(a)",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

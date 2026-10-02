@@ -1,0 +1,20 @@
+{
+  "case_id": "jxycu_sj",
+  "entry_url": "https://sjxy.jxycu.edu.cn/szdw/list.htm",
+  "captured_at": "2026-10-01T20:08:18Z",
+  "shape": "whitespace_name_list_text",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "宜春学院",
+    "college": "人工智能与信息工程学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://sjxy.jxycu.edu.cn/jsmd/list.htm",
+        "single_page": true,
+        "card_selector": "div.wp_articlecontent p"
+      }
+    ]
+  }
+}

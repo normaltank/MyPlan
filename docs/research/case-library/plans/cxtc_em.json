@@ -1,0 +1,22 @@
+{
+  "case_id": "cxtc_em",
+  "entry_url": "http://ems.cxtc.edu.cn/xygk/szdw/zzjs.htm",
+  "captured_at": "2026-10-02T01:11:35Z",
+  "shape": "one_table_per_person_cards_with_post_labels",
+  "support": "partially_supported",
+  "reusable": false,
+  "plan": {
+    "school": "楚雄师范学院",
+    "college": "管理与经济学院",
+    "source_kind": "university_faculty_roster",
+    "profile_concurrency": 3,
+    "branches": [
+      {
+        "url": "http://ems.cxtc.edu.cn/xygk/szdw/zzjs.htm",
+        "single_page": true,
+        "card_selector": "table.winstyle44525 > tbody > tr > td:has(span.titlestyle44525)",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

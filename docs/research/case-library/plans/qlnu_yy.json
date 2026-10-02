@@ -1,0 +1,20 @@
+{
+  "case_id": "qlnu_yy",
+  "entry_url": "http://yyxyn.qlnu.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T23:53:53Z",
+  "shape": "plain_text_name_chains_with_role_lines",
+  "support": "supported_after_fix",
+  "reusable": true,
+  "plan": {
+    "school": "齐鲁师范学院",
+    "college": "音乐学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "http://yyxyn.qlnu.edu.cn/szdw.htm",
+        "single_page": true,
+        "card_selector": "#vsb_content > p"
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "case_id": "cquet_ai",
+  "entry_url": "https://rgzn.cquet.edu.cn/szdw.htm",
+  "captured_at": "2026-10-01T20:31:46Z",
+  "shape": "titled_name_grid_linked",
+  "support": "supported_after_fix",
+  "reusable": true,
+  "plan": {
+    "school": "重庆电子科技职业大学",
+    "college": "人工智能与大数据学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://rgzn.cquet.edu.cn/szdw/jsml.htm",
+        "single_page": true,
+        "card_selector": "div.v_news_content table td",
+        "profile_content_selector": "div.v_news_content"
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "case_id": "gnnu_jg",
+  "entry_url": "https://jgxy.gnnu.edu.cn/szdw.htm",
+  "captured_at": "2026-10-02T00:32:46Z",
+  "shape": "reverse_numbered_pages_dead_link_photo_cards",
+  "support": "supported",
+  "reusable": true,
+  "plan": {
+    "school": "赣南师范大学",
+    "college": "经济管理与法学学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "https://jgxy.gnnu.edu.cn/szdw.htm",
+        "card_selector": "#datalist > div.item",
+        "next_selector": "span.p_next > a",
+        "max_pages": 8
+      }
+    ]
+  }
+}

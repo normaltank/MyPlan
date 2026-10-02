@@ -197,6 +197,9 @@ class FacultyDirectoryExtractor:
         if not raw:
             return "", "教师"
         title_found = "教师"
+        # A news-list roster may put the publish date inside the name link
+        # ('2026-05-14班爱玲（副教授）'); the date is not part of the name.
+        raw = re.sub(r'^\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?\s*', '', raw)
         # Match Chinese or ASCII parentheses: （教授）, (副教授), （博导/教授）
         paren_match = re.search(r'[（\(]([^）\)]+)[）\)]', raw)
         if paren_match:
@@ -392,6 +395,11 @@ class FacultyDirectoryExtractor:
                     labels.append((raw, href))
                     labels.extend((token, href) for token in primary_tokens([anchor]))
             labels.extend((token, None) for token in primary_tokens([card]))
+            # One table cell may split a name across inline runs ('<span>杨</span>
+            # <span>曼</span>'); its leaf strings alone expose only the surname.
+            labels.extend((cell.get_text(' ', strip=True), None)
+                          for cell in card.find_all(['td', 'th'])
+                          if len(list(cell.stripped_strings)) > 1)
             linked_slots = {}
             for raw, href in labels:
                 name, title = cls._clean_name(raw)

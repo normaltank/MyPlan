@@ -1,0 +1,20 @@
+{
+  "case_id": "gdou_hg",
+  "entry_url": "http://hygc.gdou.edu.cn/szdw/jsml.htm",
+  "captured_at": "2026-10-02T01:47:16Z",
+  "shape": "iframe_vsb_attachment_pdf_table_roster",
+  "support": "unsupported_handed_over",
+  "reusable": false,
+  "plan": {
+    "school": "广东海洋大学",
+    "college": "海洋工程与能源学院",
+    "source_kind": "university_faculty_roster",
+    "branches": [
+      {
+        "url": "http://hygc.gdou.edu.cn/szdw/jsml.htm",
+        "single_page": true,
+        "card_selector": "div.nr-info div[id^='vsb_content'] > p"
+      }
+    ]
+  }
+}
