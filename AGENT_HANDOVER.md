@@ -44,7 +44,7 @@
 
 ### 4. 姓名规则和邮箱归属规则现在在哪
 
-- 姓名：名录页判定是 `server/name_list.py` 的 `_person_name`，分段名录是 `server/segmented_roster.py` 的 `_name_like`，两份逻辑相同，常量 `NAME_PRIOR_FLOOR`、`_HAN_NAME`、`_MINORITY_NAME` 各定义一次，少数民族姓名正则已不一致（`{2,6}·{2,8}` 与 `{1,6}·{1,8}`）。姓名先验 `name_prob` 和生僻姓判断 `rare_surname_name` 在 `Opus/iso_mining.py`，生僻姓表是 `Opus/rare_surnames.txt`。合并方案见对齐执行方案 B 包，等 badr 定点号规则。
+- 姓名：唯一的判定是 `server/name_list.py` 的 `_person_name`，常量 `NAME_PRIOR_FLOOR`、`_HAN_NAME`、`_MINORITY_NAME` 也只在那里定义；`server/segmented_roster.py` 以 `_name_like` 的名字引用它，`pdf_roster`、`image_table_roster` 再从分段名录引用。少数民族点号两边最少字数是 `MINORITY_SIDE_MIN = 1`（badr 10-08 选定）。姓名先验 `name_prob` 和生僻姓判断 `rare_surname_name` 在 `Opus/iso_mining.py`，生僻姓表是 `Opus/rare_surnames.txt`。
 - 邮箱归属：主规则是 `server/detail_mecc.py` 的 `is_personal_email_for_scholar`、`is_institutional_email`（拼音模型在 `Opus/email_matching.py`）。`server/faculty_extractor.py` 在 `detail_mecc` 可用时直接导入这两个函数；不可用时用文件内的降级版（只按纯数字地址认人，和主规则口径不同），L2 算法层导入失败时 `strip_invisible` 也有降级版。`find_emails` 在 `faculty_extractor.py` 和 `detail_mecc.py` 各有一份，两处的 `FREE_MAIL_DOMAINS` 都没有被使用。去重方案见对齐执行方案 D 包。
 
 ---
