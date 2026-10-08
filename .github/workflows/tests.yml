@@ -41,5 +41,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv venv --python 3.12 && uv pip sync requirements-dev.lock
       - run: .venv/bin/python -m playwright install --with-deps chromium
-      - run: .venv/bin/python -I .github/diag_native_chrome.py || true
       - run: .venv/bin/python -m pytest -m browser -q
+      - if: always()
+        run: .venv/bin/python -I .github/diag_native_chrome.py || true
