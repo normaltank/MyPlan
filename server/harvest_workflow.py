@@ -16,7 +16,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from server.faculty_extractor import FacultyCandidate, FacultyDirectoryExtractor
+from server.faculty_extractor import FacultyCandidate, FacultyDirectoryExtractor, html_table_rows
 from server.detail_mecc import mailto_address_conflicts
 
 
@@ -291,11 +291,19 @@ def observe_roster(
 ) -> dict[str, Any]:
     """Compare visible source units with independently extracted candidates."""
 
-    cards = BeautifulSoup(html, "html.parser").select(selector)
+    soup = BeautifulSoup(html, "html.parser")
+    cards = soup.select(selector)
+    table_rows = html_table_rows(soup)
     candidate_urls = {item.url for item in candidates if item.url != url}
     unaccounted = []
     blank = 0
+    structural_rows = []
     for index, card in enumerate(cards, 1):
+        row = card if card.name == "tr" else card.find_parent("tr")
+        kind = table_rows.get(id(row), {}).get("kind")
+        if kind in ("header", "section"):
+            structural_rows.append({"index": index, "kind": kind, "text": card.get_text(" ", strip=True)})
+            continue
         anchors = ([card] if card.name == "a" and card.has_attr("href") else []) + card.select("a[href]")
         links = [urljoin(url, a["href"]) for a in anchors]
         card_text = card.get_text(" ", strip=True)
@@ -317,10 +325,15 @@ def observe_roster(
     return {
         "url": url,
         "card_selector": selector,
-        "visible_cards": len(cards) - blank,
+        "visible_cards": len(cards) - blank - len(structural_rows),
         "blank_cards": blank,
         "extracted_candidates": len(candidates),
         "unaccounted_cards": unaccounted,
+        **({"structural_rows": structural_rows} if structural_rows else {}),
+        **({"html_table_rows": [{"roster_url": url, "profile_url": person.url,
+                                 "name": person.name, **person.table_row}
+                                for person in candidates if person.table_row is not None]}
+           if any(person.table_row is not None for person in candidates) else {}),
     }
 
 
