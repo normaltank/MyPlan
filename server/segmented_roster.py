@@ -33,8 +33,9 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
-from server.faculty_extractor import (FacultyDirectoryExtractor, LayoutAwareTokenizer,
-                                      TITLE_KEYWORDS, find_emails)
+from server.faculty_extractor import LayoutAwareTokenizer, TITLE_KEYWORDS, find_emails
+# The one person-name rule; pdf_roster and image_table_roster import it from here.
+from server.name_list import NAME_PRIOR_FLOOR, _HAN_NAME, _person_name as _name_like
 
 # faculty_extractor puts the Opus algorithm layer on sys.path under its flat
 # module names; import through the same names so there is one copy of each.
@@ -46,7 +47,6 @@ SELECTORS = ("container_selector", "record_start_selector")
 
 # Admission thresholds for names read from images.
 AUTO_NAME_CONFIDENCE = 0.9
-NAME_PRIOR_FLOOR = 0.5
 # The image biography audit matches owners within the first five OCR lines;
 # a name found later could not be attributed there either.
 NAME_SCAN_LINES = 5
@@ -55,12 +55,12 @@ TEXT_NAME_LINES = 3
 _SPLIT = re.compile(r"[\s\u3000,，、;；:：|/()（）\[\]【】<>《》\"'“”]+")
 _LABELS = {"姓名", "教师", "老师", "导师", "简介", "个人简介", "个人简历", "简历",
            "导师简介", "教师简介"}
-_NAME_LABEL = re.compile(r"姓\s*名\s*[:：]?\s*([\u4e00-\u9fff·•]{2,8})")
+# A dotted name is taken whole: an 8-character cut of '迪丽热巴•迪力木拉提' is another name.
+_NAME_LABEL = re.compile(r"姓\s*名\s*[:：]?\s*([一-鿿]{1,6}[·•][一-鿿]{1,8}"
+                         r"|[一-鿿·•]{2,8})")
 # '职务：学院党委书记' names a post; the record's title is on the line after it.
 _POST_LINE = re.compile(r"^\s*职\s*务\s*[:：]")
 _BARE_NAME_LABEL = re.compile(r"^\s*姓\s*名\s*[:：]?\s*$")
-_HAN_NAME = re.compile(r"^[\u4e00-\u9fff]{2,4}$")
-_MINORITY_NAME = re.compile(r"^[\u4e00-\u9fff]{1,6}[·•][\u4e00-\u9fff]{1,8}$")
 _REVIEWABLE_LINE = re.compile(r"^[\u4e00-\u9fff·•\s]{2,8}$")
 _HEAD_WORDS = {"男", "女", "博士", "硕士", "博导", "硕导", "博士生导师", "硕士生导师",
                "高级工程师", "工程师", "高级实验师", "中共党员", "党员", "系主任", "副主任", "主任",
@@ -198,14 +198,6 @@ def split_segments(html: str, url: str, container_selector: str,
 
 
 # ── Names ────────────────────────────────────────────────────────────────────
-def _name_like(token: str) -> str | None:
-    cleaned, _title = FacultyDirectoryExtractor._clean_name(token)
-    cleaned = cleaned.strip(".。")
-    if not (_HAN_NAME.match(cleaned) or _MINORITY_NAME.match(cleaned)):
-        return None
-    return cleaned if name_prob(cleaned) >= NAME_PRIOR_FLOOR else None
-
-
 def _title_in(line: str) -> str | None:
     found = [(line.find(keyword), -len(keyword), keyword)
              for keyword in TITLE_KEYWORDS if keyword in line]
