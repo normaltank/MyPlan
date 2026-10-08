@@ -53,6 +53,10 @@
 - `server/recon_contract.py` 的 `validate_submission` 原样转给模型（只削 schema 报错的输入值）；`server/recon_browser_mcp.py` 的 `submit_plan` 记住被打回的提交：同一计划无新浏览器调用时不重判，第二次给出 stop `recon_gate_stalled`；全部 `page_only` 时给出 stop `recon_page_unverifiable`。
 - `agent_recon._execute_harness` 用 `_watch_gate` 跟踪回复，遇到 stop 抛 `ReconGateStopped`（属于 `ReconPlanError`），并记下每个会话最后一次打回；超时/预算错误带 `last_gate_rejections`。两个码在 `recovery_policy._GROUPS`：页面类 access，worker 不再派补缺侦察；stalled 归 structure。
 
+### 6. 改了代码，可交付学院是多了还是少了（案例库离线回放）
+
+- `server/case_replay.py`（`python -m server.case_replay <案例目录>`）用当前 `browser_batch_tool.run_plan` 重跑共享目录 `case-library/evidence/` 里保存的实网案例，请求只由保存的页面和原件应答，其余 404，不联网、不调模型。输出每个学院保存时与回放时的就绪、人数、未解决项，首行是就绪学院数。改采集代码的 PR 可以用它对比前后；用法和限制见 `docs/operations.md` 第 10 节。
+
 ---
 
 > **2026-10-02 文档治理与 Claude 派工**：根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，`CLAUDE.md` 为读取入口。OCR 修复及宪法已提交并同步 main（`4fe72c2`、`10370eb`）；服务是否加载仍按下方部署记录判断。用户指定在 [Claude Projects → MyPlan 主对话](https://claude.ai/code/project/chan_012KwoNrMicyn2LoBSKGmCan) 派工，现有两个项目内实现线程：多人 PDF 名录采集、HTML 邮箱歧义复核恢复；具体范围见 [任务规格](docs/implementation/2026-10-02-claude-assignment.md)，要求独立 PR，不自动合并／部署。此前误开的两个独立 Code 会话已显示 Idle，不再继续。PR #4 仅改项目说明，实际与 main 的 AGENTS.md 存在合并冲突，且有过期状态和额外确认要求；本轮只审阅，未修改或合并该 PR。
