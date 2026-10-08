@@ -179,3 +179,25 @@ async def test_profile_proof_names_failures_that_block_every_container_on_both_o
             assert result["page_blocking_requests"] == [{"type": "fetch", "status": 500, "path": "/api/visits"}]
         finally:
             await browser.close()
+
+
+def test_staged_recon_reports_a_gate_stop_against_its_branch(monkeypatch):
+    from server import agent_recon
+    target = {"school": TARGET["school"], "college": TARGET["college"], "url": "https://gate.example.edu/"}
+    child = {"status": "profile_content_not_verified", "url": "https://gate.example.edu/child", "page_only": True}
+    def execute(prompt, sid, cfg, patches):
+        if cfg["phase"] == "discovery":
+            plan = {"school": target["school"], "college": target["college"],
+                    "source_kind": "university_faculty_roster", "branches": [{"url": URL}]}
+            events = event("browser_navigation", {}, {"items": [{"url": URL}]}, "d")
+            return SimpleNamespace(final_response=json.dumps(plan), finish_reason="completed", events=events)
+        stop = ReconGateStopped("recon_page_unverifiable", [child])
+        stop.phase_events = []
+        raise stop
+    monkeypatch.setattr(agent_recon, "_execute_harness", execute)
+    with pytest.raises(ReconGateStopped) as caught:
+        agent_recon._run_staged_harness("gate", {"target": target, "timeout_seconds": 60}, ())
+    assert caught.value.safe_feedback["issues"] == [
+        {"status": "recon_page_unverifiable", "url": URL, "gate_issues": [child]}]
+    assert [phase.get("gate_stop") for phase in caught.value.diagnostics["phases"]] == [
+        None, "recon_page_unverifiable"]

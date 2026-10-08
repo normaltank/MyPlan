@@ -1073,8 +1073,9 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             exc.phase_session_id = sid
             raise
         except ReconGateStopped as exc:
-            for item in exc.safe_feedback["issues"]:
-                item["url"] = item.get("url") or url
+            # The stop is about this session's branch; the gate issues keep their own pages.
+            exc.safe_feedback = {"issues": [{"status": exc.code, "url": url, "gate_issues": [
+                gate for item in exc.safe_feedback["issues"] for gate in item["gate_issues"]]}]}
             exc.phase_metric = {"phase": phase, "session_id": sid, "effort": phase_cfg.get("effort"),
                                 "evidence_root": str(recon_evidence_root() / sid), "gate_stop": exc.code,
                                 **run_metrics(exc.phase_events)}
