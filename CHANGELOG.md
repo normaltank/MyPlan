@@ -4,6 +4,10 @@
 
 - `find_emails` 只在 `server/detail_mecc.py` 定义，`server/faculty_extractor.py` 改为导入并继续导出同名函数，调用方不变；删除两份没有任何代码使用的 `FREE_MAIL_DOMAINS`。算法层（Opus）或 detail_mecc 导入失败时，faculty_extractor 现在直接导入报错，不再用更宽松的降级邮箱归属规则和名字过滤继续跑（badr 10-08 同意）；worker 自检遇到这种情况照旧拒绝启动。原来验证降级路径能跑的测试改为验证会报错。
 
+## 2026-10-08 · 姓名判定规则只留一份（未部署）
+
+- 普通名单页（`server/name_list.py`）和分段名录（`server/segmented_roster.py`，PDF/图片表格经它引用）原来各有一份姓名判定和常量，少数民族点号名的最少字数已经不一致。现在只在 `name_list._person_name` 定义一份；点号两边最少字数由 `MINORITY_SIDE_MIN` 决定（badr 选定 1）。分段名录“姓名：”标签不再把长点号名截成 8 个字。
+
 ## 2026-10-08 · 交接文档补上 10-02 之后合并的模块索引，待办追加代码对齐 E、F、G（只改文档）
 
 - AGENT_HANDOVER.md 顶部新增一节：PR #17 到 #25 各加了什么和入口文件，7 个人工复核模块的状态码与决策文件，失败去向的唯一定义处，姓名和邮箱归属规则的位置；docs/review-backlog.md 追加代码对齐 E、F、G 三项。
