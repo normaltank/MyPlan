@@ -69,9 +69,44 @@ _GONE = (404, 410)
 _RECURRING_TYPES = {"script", "stylesheet"}
 
 
-def failed_resources(failed: list[tuple[str, str, int | None]]) -> list[tuple[str, str]]:
-    """Failures as (address without query, type), comparable across page opens."""
-    return [(urlsplit(url)._replace(query="", fragment="").geturl(), kind) for url, kind, _ in failed]
+def failed_resources(failed: list[tuple[str, str, int | None]]) -> list[tuple[str, str, int | None]]:
+    """Failures as (address without query, type, status), comparable across page opens."""
+    return [(urlsplit(url)._replace(query="", fragment="").geturl(), kind, status)
+            for url, kind, status in failed]
+
+
+# An image inside the profile the server answers 404/410 on two opens is missing
+# for every reader. When the page gives it no room either, nothing was ever shown
+# there, so the profile as rendered is the profile as published (an editor's
+# leftover placeholder). A loaded 1x1 copy laid out in its place measures the
+# room: only the page's own sizing (attributes, CSS) makes it larger. A broken
+# image's own icon is the browser's, not the page's, so it is not measured.
+_UNSIZED_IMAGES = """async args => {
+  const root=document.querySelector(args.selector);
+  if(!root) return args.urls.map(()=>false);
+  const pixel='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const result=[];
+  for(const url of args.urls){
+    const images=[...root.querySelectorAll('img')].filter(img=>img.currentSrc===url || img.src===url);
+    let unsized=images.length>0;
+    for(const img of images){
+      if(img.parentElement && img.parentElement.tagName==='PICTURE'){ unsized=false; continue; }
+      const probe=img.cloneNode(false);
+      probe.removeAttribute('srcset');
+      probe.removeAttribute('loading');
+      probe.removeAttribute('id');
+      probe.src=pixel;
+      img.after(probe);
+      let loaded=true;
+      try { await probe.decode(); } catch(error) { loaded=false; }
+      const box=probe.getBoundingClientRect();
+      probe.remove();
+      if(!loaded || box.width>1 || box.height>1) unsized=false;
+    }
+    result.push(unsized);
+  }
+  return result;
+}"""
 
 
 _EXTERNAL_REQUESTS = """args => {
@@ -292,10 +327,19 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                         or (item[1] == 'stylesheet' and item in gone)]
         failed_images = [item for item in failed if item[1] == 'image']
         ignored = len(presentation)
+        unpublished_images = []
         if failed_images and facts['container_count'] == 1:
             inside = await page.evaluate(_CONTENT_IMAGES,
                                          {'selector': selector, 'urls': [url for url, _, _ in failed_images]})
             ignored += sum(not value for value in inside)
+            gone_inside = [item[0] for item, value, resource
+                           in zip(failed_images, inside, failed_resources(failed_images))
+                           if value and item[2] in _GONE and resource in recurring]
+            # A body made only of images goes to image review instead.
+            if gone_inside and _profile_text(html, selector, start_selector, page.url):
+                unsized = await page.evaluate(_UNSIZED_IMAGES, {'selector': selector, 'urls': gone_inside})
+                unpublished_images = [url for url, value in zip(gone_inside, unsized) if value]
+                ignored += len(unpublished_images)
         # A permanently missing script or fetch/XHR (e.g. a visit counter) does
         # not block an intact server-rendered profile. Compare both text and
         # media references; browser-built content and transient errors still block.
@@ -339,6 +383,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                       dom_stable=stable, network_idle=idle,
                       ignored_external_image_failures=ignored,
                       server_rendered_content=server_rendered,
+                      unpublished_images=sorted(set(unpublished_images)),
                       ignored_external_image_pending=ignored_pending,
                       blocking_pending_request_count=blocking_pending,
                       blocking_failed_request_count=blocking_failures,

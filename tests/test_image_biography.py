@@ -132,6 +132,26 @@ async def test_portrait_with_no_body_text_does_not_become_a_biography(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_image_the_browser_proved_gone_and_unsized_is_not_fetched(tmp_path):
+    url = "https://faculty.example.edu/p/1"
+    spacer = "https://faculty.example.edu/editor/spacer.gif"
+    html = '<article><h1>张富有</h1><p>教授</p><img src="/editor/spacer.gif"><img src="/gone.png"></article>'
+    fetched = []
+
+    async def missing(asset_url):
+        fetched.append(asset_url)
+        raise RuntimeError("HTTP 404")
+
+    result = await audit_profile_media({url: html}, {url: {"张富有"}}, tmp_path,
+                                       fetch_asset=missing, ocr_engine=lambda _: ([], None),
+                                       unpublished_media={url: {spacer}})
+    assert fetched == ["https://faculty.example.edu/gone.png"]
+    assert result["unpublished_media"] == [{"profile_url": url, "media_url": spacer,
+                                            "status": "image_gone_without_display_area"}]
+    assert [item["status"] for item in result["unresolved"]] == ["image_bio_asset_failed"]
+
+
+@pytest.mark.asyncio
 async def test_full_html_biography_does_not_treat_linked_research_pdf_as_resume(tmp_path):
     url = "https://faculty.example.edu/p/1"
     paragraph = "完整学习经历、任职经历与科研成果均在本页正文呈现。" * 10
