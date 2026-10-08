@@ -32,11 +32,11 @@
 | `server/identity_review.py`（学院内同名多主页） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
 | `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个） | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
 | `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`，且 `kind == "image"` | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
-| `server/image_table_review.py`（整图表格逐格纠字、整图人数） | 13 个 `table_*`，由 `server/image_table_roster.py` 产生；`task_image_review.py` 里另手抄了一份 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
+| `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生；`task_image_review.py` 直接引用，`tests/test_review_status_registry.py` 核对与 recovery_policy 一致） | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
 
 大学级复核另走一套：`server/university_identity_review.py`（跨学院同名），决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，不用 JSON，也不经过 `task_image_review.py`。
 
-已知问题（见 `docs/review-backlog.md` 的 2026-10-08 代码对齐条目）：每加一种复核要改 `task_image_review.py` 的状态集合、`review_complete` 和 `carry_review_decisions` 三处；`table_*` 状态码有两份。
+已知问题（见 `docs/review-backlog.md` 的 2026-10-08 代码对齐条目）：每加一种复核要改 `task_image_review.py` 的状态集合、`review_complete` 和 `carry_review_decisions` 三处（`table_*` 状态码已在 PR #29 收成一份）。
 
 ### 3. 失败去向只在一处定义
 
