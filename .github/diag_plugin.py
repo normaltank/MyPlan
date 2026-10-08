@@ -1,4 +1,5 @@
 """Temporary pytest plugin: log the native Chrome fallback during the browser suite."""
+import subprocess
 import time
 import traceback
 
@@ -8,6 +9,10 @@ _launch, _collect = b._launch_native_chrome, b._collect_native_pages
 
 
 def _logged_launch(chrome_exe, urls):
+    ps = subprocess.run(["ps", "-eo", "comm,pcpu,etimes"], capture_output=True, text=True).stdout.splitlines()
+    busy = [line for line in ps[1:] if float(line.split()[-2]) > 5]
+    print("\n[diag] chrome procs", sum("chrom" in line for line in ps), "busy", busy[:15],
+          "load", open("/proc/loadavg").read().strip(), flush=True)
     t = time.monotonic()
     proc, user_dir, port = _launch(chrome_exe, urls)
     print("\n[diag] launch", urls, round(time.monotonic() - t, 2), "port", port, "rc", proc.poll(), flush=True)
