@@ -94,3 +94,50 @@ async def test_transient_failures_and_script_built_content_still_block(tmp_path)
     missing_portrait = await verify(tmp_path, f'<article><img src="/photo.jpg">{BODY}</article>')
     assert missing_portrait["confirmed"] is False
     assert missing_portrait["blocking_requests"][0]["type"] == "image"
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+@pytest.mark.parametrize('path', ['/index/flow', '/wm/api/visit/write/123'])
+@pytest.mark.parametrize('method', ['fetch', 'xhr'])
+async def test_gone_counter_endpoint_does_not_block_intact_profile(tmp_path, path, method):
+    request = (f'fetch({json.dumps(path)})' if method == 'fetch' else
+               f'const request=new XMLHttpRequest();request.open("GET", {json.dumps(path)});request.send()')
+    html = f'<article>{BODY}</article><script>{request}</script>'
+    result = await verify(tmp_path, html)
+    assert result['confirmed'] is True, result
+    assert result['server_rendered_content'] is True
+    assert result['failed_request_count'] == 1
+    assert result['blocking_failed_request_count'] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+@pytest.mark.parametrize('status', ['abort', 503])
+async def test_transient_counter_failures_remain_blocking(tmp_path, status):
+    html = f'<article>{BODY}</article><script>fetch("/index/flow")</script>'
+    result = await verify(tmp_path, html, {"https://scope.example.edu/index/flow": (status, '', 'text/plain')})
+    assert result['confirmed'] is False
+    assert result['reason'] == 'network_not_idle'
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_gone_fetch_does_not_release_browser_built_body(tmp_path):
+    html = ('<article><p>加载中</p></article>'
+            f'<script>document.querySelector("article").innerHTML={json.dumps(BODY)};'
+            'fetch("/biography")</script>')
+    result = await verify(tmp_path, html)
+    assert result['confirmed'] is False
+    assert result['server_rendered_content'] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_gone_fetch_does_not_release_browser_added_biography_media(tmp_path):
+    html = (f'<article>{BODY}</article><script>fetch("/index/flow");'
+            'document.querySelector("article").insertAdjacentHTML("beforeend", '
+            '\'<img src="/cv.png">\');</script>')
+    result = await verify(tmp_path, html, {'https://scope.example.edu/cv.png': (200, '', 'image/png')})
+    assert result['confirmed'] is False
+    assert result['server_rendered_content'] is False
