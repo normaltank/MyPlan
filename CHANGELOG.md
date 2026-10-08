@@ -2,6 +2,10 @@
 
 ## 2026-10-08 · CLAUDE.md 加一条：改模块、流程或核心概念的 PR 须同时更新交接文档索引
 
+## 2026-10-08 · 交接文档改正表格复核状态码的说法（只改文档）
+
+- AGENT_HANDOVER.md 两处改为：`table_*` 状态码只在 `image_table_review.STATUSES` 定义（PR #29），不再说“手抄了一份”。
+
 ## 2026-10-08 · 表格复核状态码只在一处定义（行为不变，未部署）
 
 - 表格 OCR 的 13 个复核状态码改由 `server/image_table_review.py` 的 `STATUSES` 导出，`task_image_review.py` 直接引用，不再手抄；新增一致性测试 `tests/test_review_status_registry.py`，各复核模块声明的状态码必须在 recovery_policy 的 review 组里，表格名单实际产出的状态码必须已登记。
