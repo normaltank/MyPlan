@@ -9,7 +9,7 @@ Action = Literal["access", "structure", "review", "stop"]
 # These are internal machine codes, not content keywords or extraction filters.
 _GROUPS = {
     "access": """profile_navigation_failed browser_navigation_failed image_bio_asset_failed
-        segment_name_asset_failed pdf_roster_asset_failed table_asset_failed""",
+        segment_name_asset_failed pdf_roster_asset_failed table_asset_failed recon_page_unverifiable""",
     "review": """rare_surname_needs_review segment_name_needs_review distinct_profile_identity_unverified
         zero_person_delivery_requires_review image_bio_email_conflict image_bio_low_confidence
         image_bio_ocr_incomplete image_bio_owner_unresolved image_bio_unreadable_profile
@@ -39,7 +39,7 @@ _GROUPS = {
         profile_content_start_selector_without_container roster_card_mismatch segment_container_not_unique
         segment_multiple_names segment_name_missing segment_start_empty segment_start_nested segments_not_verified
         selector_not_verified single_page_pagination_unverified single_page_has_next image_roster_coverage_mismatch
-        name_list_item_unrecognized table_image_selector_unverified""",
+        name_list_item_unrecognized table_image_selector_unverified recon_gate_stalled""",
     "stop": """lease_renewal_failed repair_skipped_task_deadline recon_budget_exceeded recon_phase_limit
         recon_failed task_timeout missing_entry_url delivery_sync_failure missing_audit_file""",
 }

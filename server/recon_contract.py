@@ -119,8 +119,10 @@ def validate_submission(plan: Any, phase: str, target: dict | None,
         validate_model_plan(complete, school=target["school"], college=target["college"])
     except (PlanHygieneError, ValueError, TypeError, KeyError):
         return [{"path": "$", "status": "structure_contract_rejected"}]
-    # Evidence issues already use controlled status codes. Strip URLs/selectors as well.
-    return [{"path": "$.branches" if phase == "full" else "$", "status": item["status"]}
+    # Evidence issues carry only controlled codes, counts, and the URLs and
+    # selectors this plan already passed hygiene with or this browser observed.
+    # Without them a scout knows a check failed but not where, and resubmits blind.
+    return [{"path": "$.branches" if phase == "full" else "$", **item}
             for item in selector_evidence_issues(complete, events, target.get("repair_profiles"))]
 
 
