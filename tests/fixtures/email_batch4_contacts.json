@@ -1,0 +1,83 @@
+[
+  {
+    "case_id": "cxtc_em",
+    "姓名": "王甲",
+    "主页": "https://fixture.example.edu/people/0",
+    "matches": [
+      "sample0@example.edu"
+    ],
+    "contact_html": "<p style=\"margin-top:2.5pt; margin-right:0%; margin-bottom:2.5pt; text-indent:0.0pt; line-height:14.5pt; page-break-after:auto\"><span style=\"font-size:10.5pt; font-family:宋体\">邮 箱：</span><span style=\"font-size:10.5pt; font-family:宋体\">sample0</span><span style=\"font-size:10.5pt; font-family:宋体\">@example.edu</span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  },
+  {
+    "case_id": "cxtc_em",
+    "姓名": "李乙",
+    "主页": "https://fixture.example.edu/people/1",
+    "matches": [
+      "sample1@example.edu"
+    ],
+    "contact_html": "<p style=\"margin-top:2.5pt; margin-right:0%; margin-bottom:2.5pt; text-indent:0.0pt; line-height:14.5pt; page-break-after:auto\"><strong style=\"font-size:10.5pt; font-family:微软雅黑; color:#990000; font-variant:normal; text-transform:none; letter-spacing:0.0pt; font-style:normal\">邮 箱：</strong><span style=\"font-size:10.5pt; font-family:宋体\">sample1@example.edu</span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  },
+  {
+    "case_id": "cxtc_em",
+    "姓名": "张丙",
+    "主页": "https://fixture.example.edu/people/2",
+    "matches": [
+      "sample2@example.edu"
+    ],
+    "contact_html": "<p><span style='color: rgb(192, 0, 0); font-family: \"微软雅黑\",\"sans-serif\"; font-size: 16px;'>邮 箱：<span style=\"font-size: 14px; color: rgb(0, 0, 0); font-family: 宋体, SimSun;\">sample2@example.edu</span></span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  },
+  {
+    "case_id": "cxtc_em",
+    "姓名": "陈丁",
+    "主页": "https://fixture.example.edu/people/3",
+    "matches": [
+      "sample3@example.edu"
+    ],
+    "contact_html": "<p style=\"margin-top:2.5pt; margin-right:0%; margin-bottom:2.5pt; text-indent:0.0pt; line-height:normal; page-break-before:auto; page-break-after:auto; vsb_temp-mode:char; punctuation-trim:none; punctuation-wrap:hanging; text-autospace:ideograph-numeric ideograph-other; word-break:normal; direction:ltr\"><strong style=\"font-size:10.5pt; font-family:微软雅黑; color:#990000; font-variant:normal; text-transform:none; letter-spacing:0.0pt; font-style:normal\">邮 箱</strong><strong style=\"font-size:8.0pt; font-family:微软雅黑; color:#990000; font-variant:normal; text-transform:none; letter-spacing:0.0pt; font-style:normal\">：</strong><span style=\"font-size:8.0pt; font-family:微软雅黑\">sample3@example.edu</span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  },
+  {
+    "case_id": "cxtc_em",
+    "姓名": "刘戊",
+    "主页": "https://fixture.example.edu/people/4",
+    "matches": [
+      "sample4@example.edu"
+    ],
+    "contact_html": "<p style=\"margin-top:2.5pt; margin-bottom:2.5pt; line-height:14.5pt\"><strong style=\"font-size:10.5pt; font-family:微软雅黑; color:#990000\">邮 箱：</strong><span style=\"font-size:10.5pt; font-family:宋体\">sample4@example.edu</span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  },
+  {
+    "case_id": "cxtc_em",
+    "姓名": "赵己",
+    "主页": "https://fixture.example.edu/people/5",
+    "matches": [
+      "sample5@example.edu"
+    ],
+    "contact_html": "<p class=\"MsoNormal\" style=\"direction:ltr\"><strong style=\"font-size:10.5pt; font-family:微软雅黑; color:#990000; font-variant:normal; text-transform:none; letter-spacing:0.0pt; mso-font-kerning:0.0pt; font-style:normal\">邮 箱</strong><span style=\"font-family:宋体\">：</span><span style=\"font-family:Calibri\">sample5@example.edu</span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  },
+  {
+    "case_id": "cxtc_em",
+    "姓名": "周庚",
+    "主页": "https://fixture.example.edu/people/6",
+    "matches": [
+      "sample6@example.edu"
+    ],
+    "contact_html": "<p style=\"margin-top:2.5pt; margin-bottom:2.5pt; line-height:14.5pt\"><strong style=\"font-size:10.5pt; font-family:微软雅黑; color:#990000\">邮 箱：</strong><span style=\"font-size:10.5pt; font-family:宋体\">sample6@example.edu</span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  },
+  {
+    "case_id": "mju_clo",
+    "姓名": "吴辛",
+    "主页": "https://fixture.example.edu/people/7",
+    "matches": [
+      "sample7@example.edu",
+      "alternate7@163.com"
+    ],
+    "contact_html": "<p class=\"cjk\" style=\"line-height:1.5em;margin-bottom:0cm;\"><span style='font-size:16px;font-family:微软雅黑, \"microsoft yahei\";line-height:1.5em;'>Email</span><span style='font-size:16px;font-family:微软雅黑, \"microsoft yahei\";line-height:1.5em;'>：</span><span style='font-family:\"times new roman\", serif;font-size:15px;line-height:1.5em;'><span lang=\"en-US\" style='font-size:16px;font-family:微软雅黑, \"microsoft yahei\";line-height:1.5em;'>sample7@example.edu</span></span><span style=\"font-family:仿宋;font-size:15px;line-height:1.5em;\"><span lang=\"zh-CN\" style='font-size:16px;font-family:微软雅黑, \"microsoft yahei\";line-height:1.5em;'>，</span></span><span style='font-family:\"times new roman\", serif;font-size:15px;line-height:1.5em;'><span lang=\"en-US\" style='font-size:16px;font-family:微软雅黑, \"microsoft yahei\";line-height:1.5em;'>alternate7@163.com</span></span></p>",
+    "evidence_kind": "anonymized_browser_contact_markup"
+  }
+]

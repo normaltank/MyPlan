@@ -198,15 +198,24 @@ class ProfileDetail:
     status: str = "ok"  # 'ok', 'no_profile', 'fetch_failed'
 
 
-_CONTACT_FIELD = re.compile(r"^(?:(?:电子|联系)?(?:邮箱|邮件)|e-?mail)(?:\s*[:：]\s*|\s+|$)", re.I)
+# CMS/Word contact headings pad Chinese glyphs with ordinary or NBSP spaces.
+# Match spacing in the label only; never normalise the biography or address.
+_CHINESE_CONTACT = r"(?:邮\s*箱|邮\s*件|信\s*箱)"
+_CHINESE_PREFIX = r"(?:个\s*人|联\s*系|工\s*作)"
+_ELECTRONIC = r"电\s*子"
+_ADDRESS = r"地\s*址"
+_CONTACT_FIELD = re.compile(
+    rf"^(?:(?:{_ELECTRONIC}|联\s*系)?\s*{_CHINESE_CONTACT}|e-?mail)(?:\s*[:：]\s*|\s+|$)", re.I)
 # A table cell standing beside the value is a label only when it holds nothing else.
-_CONTACT_LABEL_CELL = re.compile(r"^(?:(?:电子|联系)?(?:邮箱|邮件|信箱)(?:地址)?|e-?mail(?:\s*address)?)\s*[:：]?$", re.I)
+_CONTACT_LABEL_CELL = re.compile(
+    rf"^(?:(?:{_ELECTRONIC}|联\s*系)?\s*{_CHINESE_CONTACT}(?:\s*{_ADDRESS})?|e-?mail(?:\s*address)?)\s*[:：]?$", re.I)
 
 
 # A label right before an address. It must start a field: '学院公共邮箱' or
 # '课题组邮箱' qualify a mailbox as someone else's and are not this label.
 _TEXT_CONTACT_LABEL = re.compile(
-    r"(?<![一-鿿A-Za-z])(?:个人|联系|工作)?(?:电子)?(?:邮箱|邮件|信箱|e-?mail)(?:地址|\s*address)?\s*[:：]?\s*$",
+    rf"(?<![一-鿿A-Za-z])(?:{_CHINESE_PREFIX}\s*)?(?:{_ELECTRONIC}\s*)?"
+    rf"(?:{_CHINESE_CONTACT}|e-?mail)(?:\s*{_ADDRESS}|\s*address)?\s*[:：]?\s*$",
     re.I)
 _CONTACT_JOINER = re.compile(r"^\s*(?:[;；,，、/]|或|or)\s*$", re.I)
 
@@ -226,7 +235,15 @@ def labeled_text_emails(text: str) -> List[str]:
         spans = [(m.start(), m.end(), m.group(0).lower()) for m in EMAIL_REGEX.finditer(text)]
     found, previous_end, previous_labeled = [], 0, False
     for start, end, address in spans:
-        labeled = bool(_TEXT_CONTACT_LABEL.search(text[max(0, start - 24):start])) or (
+        prefix = text[max(0, start - 24):start]
+        label = _TEXT_CONTACT_LABEL.search(prefix)
+        # Do not start halfway through a padded label prefix after its
+        # leading boundary was rejected ('他人电 子 邮 件'). Whitespace
+        # between independent fields ('教授 邮箱') remains a field boundary.
+        before = prefix[:label.start()] if label else ''
+        partial_prefix = re.search(rf'(?:{_CHINESE_PREFIX}|{_ELECTRONIC})\s*$', before)
+        standalone = bool(label) and not partial_prefix
+        labeled = standalone or (
             previous_labeled and _CONTACT_JOINER.match(text[previous_end:start]) is not None)
         if labeled and address.lower() not in {item.lower() for item in found}:
             found.append(address)
