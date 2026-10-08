@@ -35,10 +35,17 @@ def delivery_scope(con, batch_id, school):
             "eligibility_basis": "completed_college_audits"}
 
 
+def _merge_key(task, seq, record):
+    name, url = field_value(record, "姓名"), field_value(record, "主页")
+    # A roster URL or missing profile is not sufficient evidence for merging.
+    return (name, url) if name and url and url != task["url"] else (task["task_id"], seq)
+
+
 def _assemble(con, rows):
     records, identities, by_key, by_name, conflicts = [], [], {}, {}, []
     from server.identity_review import audit_pairs, observation_key
     from server.delivery_fields import export_field_value, normalize_export_records
+    from server import university_identity_review as university_review
     approved_pairs, task_records = set(), {}
     for task in rows:
         saved = [(seq, json.loads(payload)) for seq, payload in con.execute(
@@ -50,19 +57,35 @@ def _assemble(con, rows):
         except (ValueError, KeyError, TypeError, OSError):
             conflicts.append({"kind": "identity_review_evidence_invalid", "requires_review": True,
                               "task_id": task["task_id"]})
+    # University review groups hold every original observation of a name before any merge.
+    school = rows[0]["school"] if rows else ""
+    observed = {}
+    for task in rows:
+        stats = json.loads(task["stats_json"])
+        sources = university_review.sources_by_profile(stats)
+        for seq, record in task_records[task["task_id"]]:
+            observed.setdefault(field_value(record, "姓名"), []).append(
+                (university_review.observation(task, seq, record, stats, sources),
+                 _merge_key(task, seq, record), record))
+    groups = {name: university_review.build_group(
+                  school, name, [{**o, "record": record} for o, _, record in items], [k for _, k, _ in items])
+              for name, items in observed.items() if len(items) > 1}
+    decisions = university_review.latest_decisions(con, school)
+    released = {name for name, group in groups.items()
+                if university_review.decision_applies(decisions.get(group["group_id"]), group)}
+    flagged = set()
     for task in rows:
         for seq, record in task_records[task["task_id"]]:
             name = field_value(record, "姓名")
-            url = field_value(record, "主页")
-            # A roster URL or missing profile is not sufficient evidence for merging.
-            key = (name, url) if name and url and url != task["url"] else (task["task_id"], seq)
+            key = _merge_key(task, seq, record)
             source = {"task_id": task["task_id"], "seq": seq, "college": task["college"]}
-            if name in by_name and key not in by_name[name] and any(
+            if name in by_name and key not in by_name[name] and name not in released and any(
                     frozenset((observation_key(records[by_key[prior]]), observation_key(record))) not in approved_pairs
                     for prior in by_name[name]):
                 conflicts.append({"kind": "homonym_or_distinct_profile", "identity_keys": [
                     hashlib.sha256(repr(k).encode()).hexdigest() for k in sorted([*by_name[name], key], key=repr)],
-                    "requires_review": True})
+                    "review_group_id": groups[name]["group_id"], "requires_review": True})
+                flagged.add(name)
             by_name.setdefault(name, set()).add(key)
             if key in by_key:
                 identity = identities[by_key[key]]
@@ -93,7 +116,14 @@ def _assemble(con, rows):
     for record, identity in zip(records, identities):
         task = tasks_by_id[identity['sources'][0]['task_id']]
         export_records.extend(normalize_export_records([record], school=task['school'], college=task['college']))
+    review_groups = []
+    for name in sorted(flagged | released):
+        decision = decisions.get(groups[name]["group_id"])
+        review_groups.append({**groups[name], "decision": decision, "applied": name in released})
     return {"records": export_records, "identities": identities, "identity_conflicts": conflicts,
+            "review_groups": review_groups,
+            "university_identity_reviews": [university_review.certificate(g["decision"])
+                                            for g in review_groups if g["applied"]],
             "task_ids": [r["task_id"] for r in rows],
             "college_snapshots": [{"college": r["college"], "task_id": r["task_id"],
                 "finished_at": r["finished_at"], "audit": json.loads(r["stats_json"])} for r in rows]}
@@ -107,6 +137,19 @@ def university_snapshot(con, school, task_ids=None):
     latest = {r["college"]: r for r in rows}
     rows = [latest[k] for k in sorted(latest)]
     return _assemble(con, rows)
+
+
+def scope_identity_review(queue, batch_id, school):
+    """Review groups of one requested delivery scope, read with the same rules as publication."""
+    with queue._connect() as con:
+        scope = delivery_scope(con, batch_id, school)
+        if scope["state"] != "ready":
+            return {"scope": scope, "groups": []}
+        snapshot = university_snapshot(con, school, scope["task_ids"])
+    scope["identity_conflicts"] = snapshot["identity_conflicts"]
+    if any(c["requires_review"] for c in snapshot["identity_conflicts"]):
+        scope["state"] = "blocked"
+    return {"scope": scope, "groups": snapshot["review_groups"]}
 
 
 def manifest_snapshot_is_safe(queue, manifest):
@@ -128,7 +171,12 @@ def manifest_snapshot_is_safe(queue, manifest):
                 if "coverage" in audit and (audit["coverage"].get("complete") is not True
                                             or audit["coverage"].get("issues")):
                     return False
-            return not any(c["requires_review"] for c in _assemble(con, rows)["identity_conflicts"])
+            assembled = _assemble(con, rows)
+            # The workbook is safe only under the university decisions it was built with.
+            applied = [c["decision_id"] for c in assembled["university_identity_reviews"]]
+            recorded = [c["decision_id"] for c in manifest.get("university_identity_reviews", [])]
+            return (sorted(applied) == sorted(recorded)
+                    and not any(c["requires_review"] for c in assembled["identity_conflicts"]))
     except (ValueError, KeyError, TypeError, AttributeError):
         return False
 
@@ -148,7 +196,8 @@ def _publish_current(exporter, root, safe_school, school, current):
         "coverage_scope": "latest_completed_college_snapshots",
         "colleges": [c["college"] for c in current["college_snapshots"]],
         "college_snapshots": current["college_snapshots"], "identities": current["identities"],
-        "identity_conflicts": current["identity_conflicts"], "updated_at": time.time(),
+        "identity_conflicts": current["identity_conflicts"],
+        "university_identity_reviews": current["university_identity_reviews"], "updated_at": time.time(),
         "snapshot_version": fingerprint}
     if state == "ready" and (old_fingerprint != fingerprint or not (root / f"{safe_school}.xlsx").is_file()):
         staging = root / f".{safe_school}.{uuid.uuid4().hex}.xlsx"
@@ -218,7 +267,11 @@ def publish_delivery(queue, batch_id, school, output_root):
             scope["identity_conflicts"] = snapshot["identity_conflicts"]
             current_status = _publish_current(exporter, root, safe_school, school, current)
             return {"delivery_scope": scope, "university_excel": None, **current_status}
-        encoded = json.dumps({"scope": scope, "snapshots": snapshot["college_snapshots"]}, sort_keys=True, ensure_ascii=False)
+        reviews = snapshot["university_identity_reviews"]
+        # Applied university decisions are part of the version; unreviewed scopes keep their old version id.
+        encoded = json.dumps({"scope": scope, "snapshots": snapshot["college_snapshots"],
+                              **({"university_identity_reviews": reviews} if reviews else {})},
+                             sort_keys=True, ensure_ascii=False)
         version = hashlib.sha256(encoded.encode()).hexdigest()[:20]
         directory = root / "versions" / hashlib.sha256(school.encode()).hexdigest()[:16] / version
         directory.mkdir(parents=True, exist_ok=True)
@@ -234,6 +287,7 @@ def publish_delivery(queue, batch_id, school, output_root):
             manifest = {"version": version, "school": school, "scope": scope,
                 "created_at": time.time(), "identities": snapshot["identities"],
                 "identity_conflicts": snapshot["identity_conflicts"],
+                "university_identity_reviews": reviews,
                 "college_snapshots": snapshot["college_snapshots"],
                 **counts}
             temp_manifest = directory / f".{uuid.uuid4().hex}.json"

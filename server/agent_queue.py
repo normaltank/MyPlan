@@ -179,6 +179,8 @@ class AgentTaskQueue:
             con.execute("""CREATE TABLE IF NOT EXISTS university_deliveries (
                 version TEXT PRIMARY KEY,batch_id TEXT NOT NULL,school TEXT NOT NULL,
                 manifest_json TEXT NOT NULL,created_at REAL NOT NULL)""")
+            from server.university_identity_review import ensure_schema as ensure_university_reviews
+            ensure_university_reviews(con)
             con.execute("""CREATE TABLE IF NOT EXISTS worker_presence (
                 instance_id TEXT PRIMARY KEY,last_seen REAL NOT NULL)""")
             con.execute("""CREATE TABLE IF NOT EXISTS worker_selfcheck (

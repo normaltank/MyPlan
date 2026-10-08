@@ -7,7 +7,7 @@ import sqlite3
 from html import escape
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 from typing import Optional, List
 
@@ -244,6 +244,18 @@ class NameReviewRequest(BaseModel):
     verified_name: str = ''
 
 
+class UniversityReviewDecisionRequest(BaseModel):
+    school: str
+    group_id: str
+    verdict: str
+    reason: str = ''
+    expected_revision: int = Field(0, ge=0)
+
+
+class UniversityPublishRequest(BaseModel):
+    school: str
+
+
 class IdentityReviewRequest(BaseModel):
     id: str
     verdict: str
@@ -412,6 +424,8 @@ def present_task(data, scope):
     if identity_review:
         data["counts_basis"] = "profile_observations_not_verified_people"
         data["current_step"] = f"已保留 {data.get('stats', {}).get('total', 0)} 条页面观察；身份与人数待复核"
+    if identity_review and data.get("batch_id"):
+        data["university_review_url"] = _university_review_url(data["batch_id"], data["school"])
     if identity_review or (scope["state"] != "ready"
             and str(data.get("download_url", "")).startswith("/download/versions/")):
         data["download_url"] = ""
@@ -582,6 +596,82 @@ async def retry_task_after_image_review(task_id: str, request: Request):
     return {'status': 'queued', 'task_id': task_id}
 
 
+def _university_review_url(batch_id: str | None, school: str) -> str:
+    return f"/review/university/{quote(batch_id, safe='')}?school={quote(school, safe='')}" if batch_id else ''
+
+
+def _university_scope(batch_id: str, school: str, request: Request):
+    """A university scope is visible only to someone who can view every task in it."""
+    from server.university_delivery import scope_identity_review
+    status = agent_queue.get_batch_status(batch_id)
+    user = _user(request)
+    if (not status or school not in {task['school'] for task in status['subtasks']}
+            or any(not _can_view(user, task['owner_user_id']) for task in status['subtasks'])):
+        raise HTTPException(status_code=404, detail='大学交付范围不存在')
+    return scope_identity_review(agent_queue, batch_id, school)
+
+
+def _public_group(group: dict) -> dict:
+    decision = group.get('decision')
+    return {'group_id': group['group_id'], 'name': group['name'], 'applied': group['applied'],
+            'can_be_distinct': group['merge_keys_distinct'],
+            'decision': {key: decision[key] for key in ('revision', 'verdict', 'reason', 'reviewed_at')}
+                        if decision else None,
+            'observations': [{'task_id': o['task_id'], 'seq': o['seq'], 'college': o['college'],
+                              'audit_sha256': o['audit_sha256'],
+                              'record': {field: identity_review.field_value(o['record'], field)
+                                         for field in ('姓名', '主页', '职称', '邮箱', '简介')}}
+                             for o in group['observations']]}
+
+
+@app.get('/review/university/{batch_id}', response_class=HTMLResponse)
+async def university_identity_review_page(batch_id: str, request: Request, school: str = Query(...)):
+    from server import university_identity_review as university_review
+    review = _university_scope(batch_id, school, request)
+    base = f"/api/university-review/{quote(batch_id, safe='')}"
+    return university_review.render_page(school, review['scope'], review['groups'],
+        can_decide=_user(request).role == 'admin', csrf_token=request.cookies.get(CSRF_COOKIE, ''),
+        decision_url=base + '/decisions', publish_url=base + '/publish')
+
+
+@app.get('/api/university-review/{batch_id}')
+async def get_university_identity_review(batch_id: str, request: Request, school: str = Query(...)):
+    review = _university_scope(batch_id, school, request)
+    return {'school': school, 'state': review['scope']['state'],
+            'groups': [_public_group(group) for group in review['groups']]}
+
+
+@app.post('/api/university-review/{batch_id}/decisions')
+async def save_university_identity_review(batch_id: str, payload: UniversityReviewDecisionRequest, request: Request):
+    from server import university_identity_review as university_review
+    review = _university_scope(batch_id, payload.school, request)
+    user = _user(request)
+    if user.role != 'admin':
+        raise HTTPException(status_code=403, detail='跨学院身份判定须由管理员核对来源后确认')
+    group = next((g for g in review['groups'] if g['group_id'] == payload.group_id), None)
+    if group is None:
+        raise HTTPException(status_code=409, detail='复核证据已变化，请刷新页面后重新核对')
+    try:
+        with agent_queue._connect() as con:
+            decision, created = university_review.save_decision(con, payload.school, group, payload.verdict,
+                payload.reason, reviewed_by=user.id, expected_revision=payload.expected_revision)
+    except university_review.RevisionConflict as exc:
+        raise HTTPException(status_code=409, detail='已有其他决定保存，请刷新页面后重新核对') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail='请填写判定理由；同一个人主页上的观察不能判为不同教师') from exc
+    return JSONResponse(status_code=201 if created else 200, content={
+        'group_id': decision['group_id'], 'revision': decision['revision'], 'verdict': decision['verdict']})
+
+
+@app.post('/api/university-review/{batch_id}/publish')
+async def publish_university_after_review(batch_id: str, payload: UniversityPublishRequest, request: Request):
+    from server.university_delivery import publish_delivery
+    _university_scope(batch_id, payload.school, request)
+    delivery = await asyncio.to_thread(publish_delivery, agent_queue, batch_id, payload.school, OUTPUT_DIR)
+    return {'state': delivery['delivery_scope']['state'], 'version': delivery.get('version'),
+            'download_url': delivery.get('download_url')}
+
+
 def _legacy_review_audit(audit_key: str, request: Request):
     if _user(request).role != 'admin':
         raise HTTPException(status_code=403, detail='仅管理员可查看历史复核材料')
@@ -665,6 +755,9 @@ async def get_batch_status(batch_id: str, request: Request = None):
     user = _internal_user(request)
     if any(not _can_view(user, task['owner_user_id']) for task in status['subtasks']):
         raise HTTPException(status_code=404, detail="Batch not found")
+    for scope in status["delivery_scopes"]:
+        if any(item.get("requires_review") for item in scope.get("identity_conflicts", [])):
+            scope["review_url"] = _university_review_url(batch_id, scope["school"])
     scopes = {scope["school"]: scope for scope in status["delivery_scopes"]}
     status["subtasks"] = [present_task(_public_task(task), scopes[task["school"]])
                           for task in status["subtasks"]]
