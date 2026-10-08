@@ -155,6 +155,7 @@ class FacultyCandidate:
     card_context: str = ""
     name_review_reason: str = ""
     mailto_conflicts: Tuple[Tuple[str, ...], ...] = ()
+    table_row: Optional[dict] = None
 
 @dataclass(frozen=True)
 class FacultyProfile:
@@ -165,6 +166,73 @@ class FacultyProfile:
     emails: tuple = ()          # every address inside the content container, in order
     contact_emails: tuple = ()
     status: str = 'ok'
+
+
+def html_table_rows(soup: BeautifulSoup) -> dict[int, dict]:
+    """Read row-table structure, without deciding which staff roles to keep.
+
+    Only tables with an explicit 姓名 column participate; name grids and nested
+    member cards keep their existing path. Keys refer to nodes in this soup.
+    A full-width cell is a section heading, and repeated column headers keep
+    the current section. Rowspans carry a shared remark into each covered row.
+    """
+    result = {}
+
+    def span(cell, attr):
+        value = str(cell.get(attr, "1"))
+        return max(1, int(value)) if value.isdigit() else 1
+
+    for table_index, table in enumerate(soup.find_all("table"), 1):
+        rows = [row for row in table.find_all("tr") if row.find_parent("table") is table]
+        headers = [row for row in rows
+                   if "姓名" in [re.sub(r"\s+", "", cell.get_text())
+                                 for cell in row.find_all(["td", "th"], recursive=False)]
+                   and len(row.find_all(["td", "th"], recursive=False)) > 1]
+        if not headers:
+            continue
+        width = sum(span(cell, "colspan") for cell in headers[0].find_all(["td", "th"], recursive=False))
+        header, section, pending = None, None, {}
+        for row_index, row in enumerate(rows, 1):
+            cells = row.find_all(["td", "th"], recursive=False)
+            texts = [LayoutAwareTokenizer.get_clean_text(cell, preserve_content=True) for cell in cells]
+            compact = [re.sub(r"\s+", "", text) for text in texts]
+            if "姓名" in compact and len(cells) > 1:
+                header = [label for label, cell in zip(compact, cells)
+                          for _ in range(span(cell, "colspan"))]
+                width = len(header)
+                pending = {}
+                result[id(row)] = {"kind": "header"}
+                continue
+            if len(cells) == 1 and span(cells[0], "colspan") >= width:
+                if not texts[0]:
+                    continue  # An empty spacer does not end the staff section.
+                section = texts[0]
+                pending = {}
+                result[id(row)] = {"kind": "section"}
+                continue
+            if header is None:
+                continue
+            grid = {column: cell for column, (cell, _) in pending.items()}
+            pending = {column: (cell, remaining - 1) for column, (cell, remaining) in pending.items()
+                       if remaining > 1}
+            column = 0
+            for cell in cells:
+                while column in grid:
+                    column += 1
+                for offset in range(span(cell, "colspan")):
+                    grid[column + offset] = cell
+                    if span(cell, "rowspan") > 1:
+                        pending[column + offset] = (cell, span(cell, "rowspan") - 1)
+                column += span(cell, "colspan")
+            fields = {}
+            for column, cell in sorted(grid.items()):
+                label = header[column] if column < len(header) else ""
+                key = label if label and label not in fields else f"column_{column + 1}"
+                fields[key] = LayoutAwareTokenizer.get_clean_text(cell, preserve_content=True)
+            result[id(row)] = {"kind": "person", "name_cell": grid.get(header.index("姓名")),
+                               "evidence": {"table_index": table_index, "row_index": row_index,
+                                            "section": section, "cells": fields}}
+    return result
 
 class FacultyDirectoryExtractor:
     """
@@ -381,12 +449,22 @@ class FacultyDirectoryExtractor:
     @classmethod
     def _verified_card_candidates(cls, html: str, base_url: str, selector: str):
         """Account for each verified card; full-page mining cannot override its boundary."""
-        cards = BeautifulSoup(html, 'html.parser').select(selector)
+        soup = BeautifulSoup(html, 'html.parser')
+        cards = soup.select(selector)
+        table_rows = html_table_rows(soup)
         if cards and all(card.name == 'img' for card in cards):
             return cls.extract_with_review(html, base_url)
         slots = []
         for card in cards:
-            anchors = ([card] if card.name == 'a' else []) + card.find_all('a')
+            row = card if card.name == 'tr' else card.find_parent('tr')
+            table = table_rows.get(id(row), {})
+            if table.get('kind') in ('header', 'section'):
+                continue
+            # A labelled name column is stronger than another cell that looks
+            # like a surname (e.g. a department or an office contact).
+            name_scope = table.get('name_cell') if card is row else None
+            name_scope = name_scope if name_scope is not None else card
+            anchors = ([name_scope] if name_scope.name == 'a' else []) + name_scope.find_all('a')
             labels = []
             for anchor in anchors:
                 raw = anchor.get_text(' ', strip=True)
@@ -394,11 +472,13 @@ class FacultyDirectoryExtractor:
                     href = first_href([anchor], base_url)
                     labels.append((raw, href))
                     labels.extend((token, href) for token in primary_tokens([anchor]))
-            labels.extend((token, None) for token in primary_tokens([card]))
+            if name_scope is not card:
+                labels.append((name_scope.get_text(' ', strip=True), None))
+            labels.extend((token, None) for token in primary_tokens([name_scope]))
             # One table cell may split a name across inline runs ('<span>杨</span>
             # <span>曼</span>'); its leaf strings alone expose only the surname.
             labels.extend((cell.get_text(' ', strip=True), None)
-                          for cell in card.find_all(['td', 'th'])
+                          for cell in name_scope.find_all(['td', 'th'])
                           if len(list(cell.stripped_strings)) > 1)
             linked_slots = {}
             for raw, href in labels:
@@ -419,12 +499,12 @@ class FacultyDirectoryExtractor:
                 continue
             context = LayoutAwareTokenizer.get_clean_text(card, preserve_content=True)
             for name, title, href in (list(linked_slots.values()) if len(linked_slots) > 1 else [slot]):
-                href = href or first_href([card], base_url)
+                href = href or first_href([name_scope], base_url)
                 title = select_title(explicit=explicit_title_candidates(context), card_title=title,
                                      body_title=resolve_title(context)).title
                 reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'
                 slots.append((FacultyCandidate(name, href or base_url, title, context, reason,
-                                                mailto_address_conflicts(card)), name_prob(name)))
+                                                mailto_address_conflicts(card), table.get('evidence')), name_prob(name)))
         trusted = sum(prob >= 0.5 for _, prob in slots)
         linked = sum(person.url != base_url for person, _ in slots)
         found, review = [], []

@@ -1230,6 +1230,20 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     coverage["complete"] = coverage["complete"] and not unresolved
     coverage["unresolved_count"] = len(unresolved)
     pdf_record_keys = {(record.page_url, record.name) for record in pdf_reading["records"]}
+    table_sources = [{**source, "roster_snapshot": next((snap["path"] for snap in snapshots
+                      if snap["kind"] == "directory" and snap["url"] == source["roster_url"]), None)}
+                     for observation in roster_observations
+                     for source in observation.get("html_table_rows", [])]
+
+    def table_row_sources(row):
+        urls = {row["主页"]}
+        urls.update(dead for dead, live in aliases.items() if live == row["主页"])
+        for merge in identity_merges:
+            if merge["name"] == row["姓名"] and merge["kept_url"] == row["主页"]:
+                urls.update(merge["merged_list_urls"])
+        return [source for source in table_sources
+                if source["name"] == row["姓名"] and source["profile_url"] in urls]
+
     coverage["field_sources"] = [{"record_index": index, "profile_url": row["主页"],
         "profile_snapshot": next((snap["path"] for snap in snapshots
                                   if snap["kind"] == "profile" and snap["url"] == row["主页"]), None),
@@ -1244,6 +1258,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                               if (row["主页"], row["姓名"]) in segment_records else "candidate_and_profile"),
         **({"segment_record": segment_records[(row["主页"], row["姓名"])].provenance()}
            if (row["主页"], row["姓名"]) in segment_records else {}),
+        **({"html_table_rows": table_row_sources(row)} if table_row_sources(row) else {}),
         "image_biography_evidence": [item for item in media_audit["evidence"]
                                       if item["profile_url"] == row["主页"]
                                       and item.get("assigned_name") == row["姓名"]],
