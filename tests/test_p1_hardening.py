@@ -80,6 +80,51 @@ def test_each_native_chrome_gets_its_own_port_and_profile_which_is_removed(monke
         assert proc.stopped and not user_dir.exists()
 
 
+class _SlowChrome(_FakeChrome):
+    """Writes its port only after a cold start longer than the old 15s window."""
+
+    def __init__(self, args, **kwargs):
+        self.args = args
+        self.user_dir = Path(next(a for a in args if a.startswith("--user-data-dir=")).split("=", 1)[1])
+        self.polls = 0
+        self.stopped = False
+        self.exit_code = kwargs.pop("exit_code", None)
+
+    def poll(self):
+        self.polls += 1
+        if self.polls == 30:
+            (self.user_dir / "DevToolsActivePort").write_text("41000\n/devtools/browser/x\n", encoding="ascii")
+        return self.exit_code
+
+
+def _fake_clock(monkeypatch, step):
+    now = [0.0]
+
+    def tick():
+        now[0] += step
+        return now[0]
+    monkeypatch.setattr(browser_batch_tool.time, "monotonic", tick)
+    monkeypatch.setattr(browser_batch_tool.time, "sleep", lambda _seconds: None)
+
+
+def test_a_slow_cold_start_is_waited_for_while_chrome_is_alive(monkeypatch, tmp_path):
+    import subprocess
+    monkeypatch.setattr(subprocess, "Popen", _SlowChrome)
+    _fake_clock(monkeypatch, 1.0)  # the port appears about 30 seconds after launch
+    proc, user_dir, port = browser_batch_tool._launch_native_chrome(tmp_path / "chrome", ["https://a.edu/"])
+    assert port == 41000
+    browser_batch_tool._stop_native_chrome(proc, user_dir)
+
+
+def test_a_chrome_that_exits_is_not_waited_for(monkeypatch, tmp_path):
+    import subprocess
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **kw: _SlowChrome(args, exit_code=1, **kw))
+    _fake_clock(monkeypatch, 1.0)
+    proc, user_dir, port = browser_batch_tool._launch_native_chrome(tmp_path / "chrome", ["https://a.edu/"])
+    assert port is None and proc.polls == 1
+    browser_batch_tool._stop_native_chrome(proc, user_dir)
+
+
 @pytest.mark.browser
 def test_concurrent_native_chrome_fetches_do_not_cross(monkeypatch, tmp_path):
     monkeypatch.delenv("HARVEST_DISABLE_NATIVE_CHROME_FALLBACK", raising=False)

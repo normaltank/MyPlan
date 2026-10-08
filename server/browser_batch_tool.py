@@ -350,6 +350,11 @@ def _native_chrome_executable() -> Path | None:
 
 _NATIVE_CHROME_FLAGS = ("--headless=new", "--no-first-run", "--no-default-browser-check",
                         "--disable-search-engine-choice-screen", "--remote-debugging-port=0")
+# Chrome writes DevToolsActivePort once its fresh profile is initialised. That
+# takes seconds on a loaded or small machine (three concurrent cold starts on a
+# 2-core runner took over 15s), so a live process is waited for; the ceiling
+# only stops a browser that never becomes ready.
+_NATIVE_CHROME_START_SECONDS = 90
 
 
 def _launch_native_chrome(chrome_exe: Path, urls: list[str]) -> tuple[Any, Path, int | None]:
@@ -365,7 +370,7 @@ def _launch_native_chrome(chrome_exe: Path, urls: list[str]) -> tuple[Any, Path,
     proc = subprocess.Popen([str(chrome_exe), *_NATIVE_CHROME_FLAGS, f"--user-data-dir={user_dir}", *urls],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     port_file = user_dir / "DevToolsActivePort"
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + _NATIVE_CHROME_START_SECONDS
     while time.monotonic() < deadline and proc.poll() is None:
         with contextlib.suppress(OSError, ValueError, IndexError):
             return proc, user_dir, int(port_file.read_text(encoding="ascii").splitlines()[0])
