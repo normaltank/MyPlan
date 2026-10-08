@@ -1,5 +1,7 @@
 # 变更记录
 
+## 2026-10-08 · CLAUDE.md 加一条：改模块、流程或核心概念的 PR 须同时更新交接文档索引
+
 ## 2026-10-08 · 邮箱工具只留一份实现（未部署）
 
 - `find_emails` 只在 `server/detail_mecc.py` 定义，`server/faculty_extractor.py` 改为导入并继续导出同名函数，调用方不变；删除两份没有任何代码使用的 `FREE_MAIL_DOMAINS`。算法层（Opus）或 detail_mecc 导入失败时，faculty_extractor 现在直接导入报错，不再用更宽松的降级邮箱归属规则和名字过滤继续跑（badr 10-08 同意）；worker 自检遇到这种情况照旧拒绝启动。原来验证降级路径能跑的测试改为验证会报错。
