@@ -28,7 +28,7 @@ def site(monkeypatch):
         def do_GET(self):
             path = self.path.split("?")[0]
             served["requested"].append(path)
-            if path == "/files/mentors.pdf":
+            if path in ("/files/mentors.pdf", "/virtual_attach_file.vsb"):
                 body, content_type = served["pdf"]
             elif path in served["pages"]:
                 body, content_type = served["pages"][path].encode("utf-8"), "text/html; charset=utf-8"
@@ -97,17 +97,21 @@ async def _run(site, tmp_path, card, *, listing=False, source_kind="university_f
 
 VIEWER = '<iframe src="/system/pdfjs/viewer.html?file=%2Ffiles%2Fmentors.pdf"></iframe>'
 LINK = '<p><a href="/files/mentors.pdf">导师名单下载</a></p>'
+# 广东海洋大学: a VSB attachment names its type only in the query.
+VSB = '<p><iframe src="/virtual_attach_file.vsb?afc=EMlU-x&amp;oid=17&amp;nid=4308&amp;e=.pdf"></iframe></p>'
 
 
 @pytest.mark.asyncio
 @pytest.mark.browser
-@pytest.mark.parametrize("card", [VIEWER, LINK], ids=["pdfjs_viewer", "download_link"])
-async def test_pdf_roster_page_delivers_people_from_the_pdf(site, tmp_path, card):
+@pytest.mark.parametrize("card,media", [(VIEWER, "/files/mentors.pdf"), (LINK, "/files/mentors.pdf"),
+                                        (VSB, "/virtual_attach_file.vsb")],
+                         ids=["pdfjs_viewer", "download_link", "vsb_attachment"])
+async def test_pdf_roster_page_delivers_people_from_the_pdf(site, tmp_path, card, media):
     report, records = await _run(site, tmp_path, card)
     embed = site["root"] + "/info/1132/19852.htm"
 
     assert report["unresolved"] == [] and report["delivery_ready"] is True
-    assert "/files/mentors.pdf" in site["requested"]
+    assert media in site["requested"]
     by_name = {row["姓名"]: row for row in records}
     assert sorted(by_name) == ["张伟", "李娜", "王强"]
     assert by_name["李娜"]["简介"] == ("李娜，女，副教授\n主讲机械原理，发表论文十余篇。\n"
@@ -156,9 +160,10 @@ async def test_reading_the_pdf_does_not_approve_its_source(site, tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.browser
-async def test_html_served_for_the_pdf_keeps_the_source_review_stop(site, tmp_path):
+@pytest.mark.parametrize("card", [VIEWER, VSB], ids=["pdfjs_viewer", "vsb_attachment"])
+async def test_html_served_for_the_pdf_keeps_the_source_review_stop(site, tmp_path, card):
     site["pdf"] = (b"<html>login</html>", "text/html")
-    report, records = await _run(site, tmp_path, VIEWER)
+    report, records = await _run(site, tmp_path, card)
 
     assert records == [] and report["delivery_ready"] is False
     assert {item["status"] for item in report["unresolved"]} == {

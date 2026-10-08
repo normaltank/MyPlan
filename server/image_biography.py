@@ -58,6 +58,20 @@ class MediaReference:
     linked: bool = False
 
 
+def _query_names_pdf(raw_url: str) -> bool:
+    """An attachment handler names the file type in its query, not its path.
+
+    VSB sites serve ``/virtual_attach_file.vsb?afc=...&e=.pdf``; download
+    scripts take ``?file=roster.pdf``.  This is only a lead: the reader still
+    requires the fetched bytes to carry the PDF signature.
+    """
+    try:
+        values = parse_qs(urlparse(raw_url).query).values()
+    except ValueError:
+        return False
+    return any(value.strip().lower().endswith(".pdf") for group in values for value in group)
+
+
 def media_references(html: str, base_url: str) -> list[MediaReference]:
     """Return image and PDF references in DOM order from a scoped page."""
     soup = BeautifulSoup(html, "html.parser")
@@ -90,7 +104,7 @@ def media_references(html: str, base_url: str) -> list[MediaReference]:
                     file_path = urlparse(file_url).path.lower()
                 except ValueError:
                     continue
-                if not file_url or not file_path.endswith(".pdf"):
+                if not file_url or not (file_path.endswith(".pdf") or _query_names_pdf(file_url)):
                     continue
                 # PDF.js resolves relative file parameters against its viewer,
                 # not the containing article. Decode query escaping once.
@@ -98,6 +112,7 @@ def media_references(html: str, base_url: str) -> list[MediaReference]:
                 path = urlparse(raw_url).path.lower()
             label = element.get_text(" ", strip=True).lower()
             if not (path.endswith(".pdf") or label.endswith(".pdf")
+                    or (path.rsplit("/", 1)[-1] != "viewer.html" and _query_names_pdf(raw_url))
                     or element.get("type", "").lower() == "application/pdf"):
                 continue
             kind = "pdf"
