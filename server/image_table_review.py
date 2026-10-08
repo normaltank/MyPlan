@@ -13,6 +13,15 @@ from PIL import Image
 
 from server.image_table_roster import POLICY, REVIEW_FILE, load_reviews, parse_cells
 
+# Review codes image_table_roster raises; each is filed under "review" in recovery_policy.
+STATUSES = frozenset({
+    "table_grid_ambiguous", "table_header_unresolved", "table_cell_low_confidence", "table_cell_unreadable",
+    "table_text_unassigned", "table_name_segmentation_ambiguous", "table_full_image_review_missing",
+    "table_index_gap", "table_row_unassigned", "table_name_unreadable", "table_duplicate_name",
+    "table_email_ambiguous", "table_record_unresolved"})
+# Every table issue carries this prefix, including the asset failure and recon's selector check.
+ISSUE_PREFIX = "table_"
+
 
 def items(audit_path):
     audit_path = Path(audit_path).resolve()

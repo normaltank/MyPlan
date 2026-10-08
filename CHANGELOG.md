@@ -1,5 +1,9 @@
 # 变更记录
 
+## 2026-10-08 · 表格复核状态码只在一处定义（行为不变，未部署）
+
+- 表格 OCR 的 13 个复核状态码改由 `server/image_table_review.py` 的 `STATUSES` 导出，`task_image_review.py` 直接引用，不再手抄；新增一致性测试 `tests/test_review_status_registry.py`，各复核模块声明的状态码必须在 recovery_policy 的 review 组里，表格名单实际产出的状态码必须已登记。
+
 ## 2026-10-08 · 本机 Chrome 兜底不再因冷启动慢而放弃（未部署）
 
 - 本机 Chrome 兜底读取原来只给新开的 Chrome 15 秒写出调试端口，超时就当失败返回空。机器忙或核数少时，几个 Chrome 同时冷启动初始化新配置要更久（CI 2 核 runner 上三个并发冷启动实测 1 到 15 秒以上，进程一直活着、没有卡死）。现在只要 Chrome 进程还活着就等它就绪，90 秒上限只用来挡住永远起不来的浏览器；进程退出时立即放弃，和原来一样。
