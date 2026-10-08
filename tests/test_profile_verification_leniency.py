@@ -2,7 +2,8 @@
 
 Real CMS pages seen in production: a Word-pasted <style style="display:none"> inside the
 body, an editor's hidden 'invisible' placeholder, a theme stylesheet or script that the
-server answers 404. Transient failures and hidden text that could be content still block.
+server answers 404, or that fails the same way again when the page is opened anew.
+Content requests, script-built bodies and hidden text that could be content still block.
 """
 import json
 
@@ -24,6 +25,7 @@ async def verify(tmp_path, html, assets=None, selector="article"):
         try:
             page = await (await new_browser_context(browser)).new_page()
             scout = BrowserScout(page, tmp_path)
+            opened = []
 
             async def route(request):
                 url = request.request.url
@@ -31,6 +33,9 @@ async def verify(tmp_path, html, assets=None, selector="article"):
                     await request.fulfill(body=html, content_type="text/html; charset=utf-8")
                 elif url in assets:
                     status, body, kind = assets[url]
+                    opened.append(url)
+                    if status == "abort-once":  # fails on the first open only
+                        status = "abort" if opened.count(url) == 1 else 200
                     if status == "abort":
                         await request.abort()
                     else:
@@ -79,14 +84,29 @@ async def test_missing_theme_assets_do_not_block_a_server_rendered_profile(tmp_p
 
 @pytest.mark.asyncio
 @pytest.mark.browser
-async def test_transient_failures_and_script_built_content_still_block(tmp_path):
-    aborted = await verify(tmp_path, f'<link rel="stylesheet" href="/theme.css"><article>{BODY}</article>',
-                           {"https://scope.example.edu/theme.css": ("abort", "", "text/css")})
-    assert aborted["confirmed"] is False and aborted["reason"] == "network_not_idle"
-    assert aborted["blocking_requests"][0]["type"] == "stylesheet"
+async def test_failures_settled_by_reopening_the_page(tmp_path):
+    # A stylesheet that fails once loads when the page is opened again.
+    once = await verify(tmp_path, f'<link rel="stylesheet" href="/theme.css"><article>{BODY}</article>',
+                        {"https://scope.example.edu/theme.css": ("abort-once", "", "text/css")})
+    assert once["confirmed"] is True and once["failed_request_count"] == 0
+    # One that fails on every open is how the page is published, like a 404
+    # (a mixed-content block, a 404 page Chromium refuses as a stylesheet).
+    always = await verify(tmp_path, f'<link rel="stylesheet" href="/theme.css?v=1"><article>{BODY}</article>',
+                          {"https://scope.example.edu/theme.css?v=1": ("abort", "", "text/css")})
+    assert always["confirmed"] is True and always["network_idle"] is True
+    # A script failing on every open still needs the body the server sent.
     server_error = await verify(tmp_path, f'<script src="/app.js"></script><article>{BODY}</article>',
                                 {"https://scope.example.edu/app.js": (503, "", "text/javascript")})
-    assert server_error["confirmed"] is False
+    assert server_error["confirmed"] is True and server_error["server_rendered_content"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_script_built_content_and_profile_media_still_block(tmp_path):
+    built = await verify(tmp_path, '<script src="/app.js"></script><article><p>加载中</p></article>'
+                                   f'<script>document.querySelector("article").innerHTML={json.dumps(BODY)}</script>',
+                         {"https://scope.example.edu/app.js": ("abort", "", "text/javascript")})
+    assert built["confirmed"] is False and built["server_rendered_content"] is False
     # the page rewrites the profile in the browser, so a missing script may have mattered
     rewritten = await verify(tmp_path, '<script src="/gone.js"></script><article><p>加载中</p></article>'
                                        f'<script>document.querySelector("article").innerHTML={json.dumps(BODY)}</script>')

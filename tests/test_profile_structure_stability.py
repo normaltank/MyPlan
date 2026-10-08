@@ -228,3 +228,23 @@ async def test_scoped_compound_selectors_for_same_node_are_accepted():
         assert pages[URL] and not issues and evidence[URL]['confirmed']
         assert evidence[URL]['profile_content_selector'] == '#root > .content'
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_capture_reopens_and_accepts_a_stylesheet_that_fails_on_every_open():
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        context = await browser.new_context()
+        async def route(request):
+            if request.request.url.endswith('theme.css'):
+                await request.abort()  # e.g. a 404 page Chromium refuses as a stylesheet
+            else:
+                await request.fulfill(body='<link rel="stylesheet" href="/theme.css">' + BODY,
+                                      content_type='text/html; charset=utf-8')
+        await context.route('**/*', route)
+        evidence = {}
+        _, issues = await capture_profiles(context, [URL], 1,
+            profile_content_selectors={URL: {('#text', None)}}, profile_content_evidence=evidence)
+        assert not issues and evidence[URL]['confirmed'] and evidence[URL]['network_idle']
+        assert evidence[URL]['failed_request_count'] == 1
+        await browser.close()

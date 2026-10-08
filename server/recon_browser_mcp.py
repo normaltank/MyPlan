@@ -242,11 +242,15 @@ class BrowserScout:
         captured = {}
         value = await verify_profile_container(self.page, selector, start, local_capture=captured)
         if value.get("reason") in PROFILE_TRANSIENT_REASONS:
-            # Late requests or a settling page pass with time; one more look
-            # here saves the scout a round trip for a condition no selector changes.
+            # Late requests or a settling page pass with time; opening the page
+            # again here saves the scout a round trip for a condition no selector
+            # changes, and a request failing the same way twice is the published page.
+            failed = captured.get("failed_requests")
             await asyncio.sleep(PROFILE_RETRY_SECONDS)
+            await self.page.reload(wait_until="domcontentloaded", timeout=30000)
             captured = {}
-            value = await verify_profile_container(self.page, selector, start, local_capture=captured)
+            value = await verify_profile_container(self.page, selector, start, local_capture=captured,
+                                                   recurring_failures=failed)
         if "html" in captured:
             self.save("html", captured["html"])
         else:
@@ -372,8 +376,10 @@ class BrowserScout:
                 from server.image_table_browser import verify_table_images
                 value["image_table"] = await verify_table_images(self.page, arguments["card_selector"])
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()
-            value["pagination"] = await self.page.evaluate(
-                "selector => __facultyRecon.pagination('body',0,12,false,selector)", arguments["card_selector"])
+            from server.browser_batch_tool import without_banner_arrows
+            value["pagination"] = without_banner_arrows(await self.page.content(), arguments["card_selector"],
+                await self.page.evaluate("selector => __facultyRecon.pagination('body',0,12,false,selector)",
+                                         arguments["card_selector"]))
             if "empty_state_selector" in arguments or "roster_container_selector" in arguments:
                 from server.empty_roster import verify_empty_roster
                 branch = {**arguments, "url": self.page.url, "single_page": True}

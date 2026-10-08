@@ -61,9 +61,17 @@ _CONTENT_IMAGES = """args => {
 # Requests that cannot change the text or images inside a profile container.
 _PRESENTATION_TYPES = {"font", "media", "manifest", "texttrack"}
 # A stylesheet or script the server answers 404/410 is missing for every reader,
-# so the page as rendered is the page as published. Any other failure may be
-# transient (and could change what is hidden), so it still blocks.
+# so the page as rendered is the page as published. So is one that fails the
+# same way again after the page is opened anew (a mixed-content block, a 404
+# page Chromium refuses as a stylesheet). Any other failure may be transient
+# (and could change what is hidden), so it still blocks.
 _GONE = (404, 410)
+_RECURRING_TYPES = {"script", "stylesheet"}
+
+
+def failed_resources(failed: list[tuple[str, str, int | None]]) -> list[tuple[str, str]]:
+    """Failures as (address without query, type), comparable across page opens."""
+    return [(urlsplit(url)._replace(query="", fragment="").geturl(), kind) for url, kind, _ in failed]
 
 
 _EXTERNAL_REQUESTS = """args => {
@@ -219,11 +227,14 @@ async def failure_details(page: Any, html: str, result: dict) -> dict:
 
 
 async def verify_profile_container(page: Any, selector: str, start_selector: str | None = None,
-                                   *, local_capture: dict[str, str] | None = None) -> dict:
+                                   *, local_capture: dict[str, Any] | None = None,
+                                   recurring_failures: list[tuple[str, str]] | None = None) -> dict:
     """Return compact facts; an optional Python-only sink retains the bound HTML.
 
     Browser tools do not expose the sink. It prevents a second page.content()
-    call from replacing the exact snapshot hashed by this proof.
+    call from replacing the exact snapshot hashed by this proof. The sink also
+    receives this open's ``failed_requests``; pass them back as
+    ``recurring_failures`` when the page is opened again.
     """
     from server.browser_readiness import install_request_tracking
     from server.profile_content import scope_profile_html
@@ -274,8 +285,11 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         # A failed stylesheet, font or an image that is not inside the container
         # (theme icons, CSS backgrounds) cannot change the captured profile.
         failed = list(tracker.failed_requests)
+        recurring = {tuple(item) for item in recurring_failures or ()}
+        gone = {item for item, resource in zip(failed, failed_resources(failed))
+                if item[2] in _GONE or (item[1] in _RECURRING_TYPES and resource in recurring)}
         presentation = [item for item in failed if item[1] in _PRESENTATION_TYPES
-                        or (item[1] == 'stylesheet' and item[2] in _GONE)]
+                        or (item[1] == 'stylesheet' and item in gone)]
         failed_images = [item for item in failed if item[1] == 'image']
         ignored = len(presentation)
         if failed_images and facts['container_count'] == 1:
@@ -286,7 +300,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         # not block an intact server-rendered profile. Compare both text and
         # media references; browser-built content and transient errors still block.
         failed_content_requests = [item for item in failed
-                                   if item[1] in {'script', 'xhr', 'fetch'} and item[2] in _GONE]
+                                   if item[1] in {'script', 'xhr', 'fetch'} and item in gone]
         other_blocking = [item for item in failed if item not in presentation and item not in failed_content_requests
                           and item[1] != 'image']
         server_rendered = False
@@ -359,6 +373,8 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         result['error_type'] = type(exc).__name__
     finally:
         result.update(pending_request_count=len(tracker.pending), failed_request_count=tracker.failures)
+        if local_capture is not None:
+            local_capture['failed_requests'] = failed_resources(tracker.failed_requests)
         if html is not None:
             result['html_sha256'] = hashlib.sha256(html.encode('utf-8')).hexdigest()
             if local_capture is not None:

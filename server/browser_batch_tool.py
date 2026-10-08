@@ -178,6 +178,53 @@ def _is_banner_arrow(control: Tag, roster_nodes: list[Tag]) -> bool:
     return not touches_roster and len(slider.find_all("img")) >= 2
 
 
+def _in_pager(control: Tag) -> bool:
+    ancestor = control
+    while ancestor is not None and getattr(ancestor, "name", None):
+        if ancestor.name in {"body", "html", "main"}:
+            return False
+        tokens = " ".join(ancestor.get("class", [])) + " " + str(ancestor.get("id", ""))
+        label = str(ancestor.get("aria-label", ""))
+        if re.search(r"(?:^|[-_\s])(?:pagination|pager|pages)(?:$|[-_\s])", tokens, re.I) or "pagination" in label.lower():
+            return True
+        ancestor = ancestor.parent
+    return False
+
+
+def _banner_arrow_outside_roster(control: Tag, roster_nodes: list[Tag]) -> bool:
+    href = control.get("href", "").strip()
+    return bool(roster_nodes and (not href or href.startswith(("#", "javascript:")))
+                and _is_banner_arrow(control, roster_nodes))
+
+
+def without_banner_arrows(html: str, card_selector: str, pagination: dict) -> dict:
+    """Recon's pagination candidates under this module's banner rule.
+
+    The recon gate and the harvest must agree on what a pager is; otherwise a
+    scout is asked to prove pagination the harvest would never follow.
+    """
+    items = pagination.get("items")
+    if not isinstance(items, list) or not items:
+        return pagination
+    soup = BeautifulSoup(html, "html.parser")
+    try:
+        roster_nodes = soup.select(card_selector)
+    except Exception:
+        return pagination
+    kept = []
+    for item in items:
+        try:
+            nodes = soup.select(item.get("selector") or "")
+        except Exception:
+            nodes = []
+        if not (len(nodes) == 1 and not _in_pager(nodes[0])
+                and _banner_arrow_outside_roster(nodes[0], roster_nodes)):
+            kept.append(item)
+    dropped = len(items) - len(kept)
+    return {**pagination, "items": kept, "total": pagination["total"] - dropped,
+            **({"banner_arrows_ignored": dropped} if dropped else {})}
+
+
 def _pagination_candidates(html: str, current_url: str,
                            card_selector: str | None = None) -> list[str | None]:
     """Find bounded pagination leads from browser-rendered structure, not names."""
@@ -207,22 +254,11 @@ def _pagination_candidates(html: str, current_url: str,
         control_classes = " ".join(control.get("class", []))
         is_next = is_next or bool(re.search(r"(?:^|[-_\s])(?:next|nextpage)(?:$|[-_\s])",
                                              control_classes, re.I))
-        ancestor = control
-        in_pager = False
-        while ancestor is not None and getattr(ancestor, "name", None):
-            if ancestor.name in {"body", "html", "main"}:
-                break
-            tokens = " ".join(ancestor.get("class", [])) + " " + str(ancestor.get("id", ""))
-            label = str(ancestor.get("aria-label", ""))
-            if re.search(r"(?:^|[-_\s])(?:pagination|pager|pages)(?:$|[-_\s])", tokens, re.I) or "pagination" in label.lower():
-                in_pager = True
-                break
-            ancestor = ancestor.parent
+        in_pager = _in_pager(control)
         if not (is_next or in_pager):
             continue
         href = control.get("href", "").strip()
-        if (roster_nodes and not in_pager and (not href or href.startswith(("#", "javascript:")))
-                and _is_banner_arrow(control, roster_nodes)):
+        if not in_pager and _banner_arrow_outside_roster(control, roster_nodes):
             continue
         target = urljoin(current_url, href) if href and not href.startswith(("#", "javascript:")) else None
         if target == current_url:

@@ -289,7 +289,7 @@ async def test_profile_proof_is_retried_when_the_page_had_not_settled(monkeypatc
     proofs = [{"confirmed": False, "reason": "network_not_idle"},
               {"confirmed": True, "html_sha256": hashlib.sha256(html.encode()).hexdigest()}]
 
-    async def verify(page, selector, start, *, local_capture=None):
+    async def verify(page, selector, start, *, local_capture=None, recurring_failures=None):
         local_capture["html"] = html
         return dict(proofs.pop(0))
     monkeypatch.setattr(profile_structure, "verify_profile_container", verify)

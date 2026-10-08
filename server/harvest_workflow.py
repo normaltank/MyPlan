@@ -116,6 +116,7 @@ async def capture_profiles(
         # Per-college fan-out first, then the site-wide slot shared with every
         # other college of the same university running in this process.
         async with semaphore, site_slot(url):
+            recurring = None  # requests that failed on the previous open of this page
             for attempt in range(3):
                 page = None
                 retryable = True
@@ -152,7 +153,8 @@ async def capture_profiles(
                             selector, start_selector = pair
                             local_capture = {}
                             proof = await verify_profile_container(page, selector, start_selector,
-                                                                   local_capture=local_capture)
+                                                                   local_capture=local_capture,
+                                                                   recurring_failures=recurring)
                             if len(scope_pairs) > 1:
                                 proof["equivalent_profile_content_selectors"] = sorted(
                                     selector for selector, _ in scope_pairs)
@@ -163,6 +165,7 @@ async def capture_profiles(
                                     and proof.get("reason") in TRANSIENT_PROOF_REASONS and attempt < 2):
                                 # Requests still in flight or a page still settling: open
                                 # the page again rather than judge it from one moment.
+                                recurring = local_capture.get("failed_requests")
                                 await asyncio.sleep(1.5 * (attempt + 1))
                                 continue
                             if (proof.get("confirmed") is not True
