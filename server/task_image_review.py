@@ -14,7 +14,11 @@ from .image_bio_review import (collect_email_conflict_items, collect_review_item
 
 IMAGE_REVIEW_STATUSES = {'image_bio_low_confidence', 'image_bio_email_conflict',
                          'segment_name_needs_review', name_review.STATUS, identity_review.STATUS,
-                         *html_email_review.STATUSES}
+                         *html_email_review.STATUSES, "table_grid_ambiguous", "table_header_unresolved",
+                         "table_cell_low_confidence", "table_cell_unreadable", "table_text_unassigned",
+                         "table_name_segmentation_ambiguous", "table_full_image_review_missing",
+                         "table_index_gap", "table_row_unassigned", "table_name_unreadable",
+                         "table_duplicate_name", "table_email_ambiguous", "table_record_unresolved"}
 
 
 def task_review_audit(output_dir: str | Path, task) -> Path | None:
@@ -64,6 +68,11 @@ def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[d
     audit = json.loads(audit_path.read_text(encoding='utf-8'))
     # An old audit has the HTML e-mail block but not its evidence; only a rerun can produce it.
     regenerate = html_email_review.evidence_missing(audit)
+    if audit.get("image_table_evidence"):
+        from server.image_table_review import review_complete as tables_complete
+        return tables_complete(audit_path) and not any(
+            not str(item.get("status", "")).startswith("table_")
+            for item in audit.get("unresolved", []))
     if not ocr_items and not email_items and not names and not identities and not html_emails and not regenerate:
         return False
     issues = {item.get('status') for item in audit.get('unresolved', [])}
@@ -124,7 +133,7 @@ def carry_review_decisions(task_root: str | Path, target_attempt: str | Path) ->
     source = source_audit.parent
     target.mkdir(parents=True, exist_ok=True)
     for filename in ('image_bio_reviews.json', 'image_bio_email_reviews.json', name_review.DECISIONS_FILE,
-                     identity_review.DECISIONS_FILE, html_email_review.DECISIONS_FILE):
+                     identity_review.DECISIONS_FILE, html_email_review.DECISIONS_FILE, 'image_table_reviews.json'):
         path = source / filename
         if path.is_file() and path.resolve().is_relative_to(root) and path.resolve() != (target / filename).resolve():
             shutil.copyfile(path, target / filename)

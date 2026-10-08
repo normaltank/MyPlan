@@ -1,0 +1,24 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>图片表格复核</title><style>
+body{font:16px/1.6 system-ui;max-width:1200px;margin:auto;padding:24px}
+.original{max-width:100%;height:auto}.cells{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+article{border:1px solid #ccd1d1;padding:12px;min-width:0}article img{max-width:100%}
+textarea{display:block;width:95%;min-height:70px}button{padding:8px;margin:8px}#status{white-space:pre-wrap}
+</style></head><body><a href="/review/task/<!--TASK-->">返回工单复核与恢复</a><h1>图片表格逐格复核</h1>
+<p>先保存格内文字，再核对完整原图人数。修改格内文字后须再次确认人数；原始 OCR 永久保留。</p>
+<!--TABLES--><p id="status" role="status"></p><script>
+const data=/*DATA*/;
+async function save(payload){
+ const status=document.getElementById('status');status.textContent='正在保存';
+ try{const response=await fetch(data.url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':data.csrf},
+ body:JSON.stringify(payload)});if(response.ok){location.reload();return;}
+ const body=await response.json();status.textContent=body.detail||'请求失败';}
+ catch(e){status.textContent='保存失败，请刷新后重试';}
+}
+document.querySelectorAll('.save-cell').forEach(button=>button.onclick=()=>{
+ const cell=button.closest('article');save({id:cell.dataset.cell,verified_text:cell.querySelector('textarea').value});
+});
+document.querySelectorAll('.full').forEach(button=>button.onclick=()=>{
+ save({id:button.dataset.id,expected_count:Number(button.closest('section').querySelector('.count').value)});
+});
+</script></body></html>

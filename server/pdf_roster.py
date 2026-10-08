@@ -82,6 +82,7 @@ class LayoutLine:
     rotated: bool = False
     excluded: str | None = None
     rel: float = 1.0            # size relative to the page's body text
+    cell_id: str | None = None  # image adapter evidence; absent for PDF lines
 
     @property
     def compact(self) -> str:
@@ -273,10 +274,10 @@ def _visual_rows(lines: list[LayoutLine]) -> list[list[LayoutLine]]:
     return sorted(rows, key=lambda row: min(item.bbox[1] for item in row))
 
 
-def _is_header(row: list[LayoutLine]) -> bool:
+def _is_header(row: list[LayoutLine], max_chars=6) -> bool:
     cells = [line.compact for line in row]
     return (len(cells) >= 2 and cells.count(NAME_HEADER) == 1
-            and all(_HEADER_CELL.match(cell) for cell in cells))
+            and all(re.fullmatch(r"[一-鿿]{2," + str(max_chars) + "}", cell) for cell in cells))
 
 
 def _center(line: LayoutLine) -> float:
@@ -290,6 +291,7 @@ class TableRow:
     cells: dict[str, str]
     section: int                # index into TableLayout.sections
     lines: list[LayoutLine]
+    cell_roles: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -300,13 +302,14 @@ class TableLayout:
     skipped: Counter
 
 
-def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
+def table_layout(lines: list[LayoutLine], *, allowed_sources=("pdf_text_layer",),
+                 max_header_chars=6) -> TableLayout | None:
     """Rows of a table-form roster, or None when the PDF has no name header row."""
-    usable = [line for line in lines if not line.rotated and line.source == "pdf_text_layer"
-              and line.excluded in (None, "page_number")]
+    usable = [line for line in lines if not line.rotated and line.source in allowed_sources
+              and line.excluded in (None, "page_number", "table_section_heading")]
     pages = sorted({line.page for line in usable})
     page_rows = [(page, _visual_rows([line for line in usable if line.page == page])) for page in pages]
-    if not any(_is_header(row) for _, rows in page_rows for row in rows):
+    if not any(_is_header(row, max_header_chars) for _, rows in page_rows for row in rows):
         return None
     result = TableLayout([], [], [], Counter())
     columns: list[tuple[str, float]] | None = None
@@ -314,7 +317,10 @@ def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
     for page, rows in page_rows:
         for row in rows:
             texts = [line.compact for line in row]
-            if _is_header(row):
+            if len(row) == 1 and row[0].excluded == "table_section_heading":
+                pending_heading = row[0].text.strip()
+                continue
+            if _is_header(row, max_header_chars):
                 if (columns is not None and pending_heading is None
                         and texts == [name for name, _ in columns]):
                     # The header repeated on a continuation page: the same table goes on.
@@ -336,6 +342,7 @@ def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
                     result.skipped["before_table"] += 1
                 continue
             cells: dict[str, list[tuple[float, str]]] = {}
+            roles = {}
             unaligned = []
             for line in row:
                 center = _center(line)
@@ -345,6 +352,8 @@ def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
                     unaligned.append(line)
                     continue
                 cells.setdefault(name, []).append((line.bbox[1], line.text.strip()))
+                if line.cell_id:
+                    roles[line.cell_id] = name
             if NAME_HEADER not in cells:
                 if len(row) == 1:
                     # Possibly the heading of the next table; decided by what follows.
@@ -365,7 +374,7 @@ def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
             result.rows.append(TableRow(len(result.rows) + 1, page,
                                         {name: " ".join(text for _, text in sorted(parts))
                                          for name, parts in cells.items()},
-                                        len(result.sections) - 1, row))
+                                        len(result.sections) - 1, row, roles))
     if pending_heading is not None:
         result.issues.append({"status": "pdf_roster_table_row_unassigned", "page": pages[-1], "cells": 1})
     return result
@@ -397,6 +406,8 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
         title = row.cells.get(TITLE_HEADER, "").strip() or title_default
         evidence = {"section": table.sections[row.section]["heading"], "cells": row.cells, "page": row.page,
                     "bboxes": [[round(value, 2) for value in line.bbox] for line in row.lines]}
+        if any(line.cell_id for line in row.lines):
+            evidence["cell_ids"] = [line.cell_id for line in row.lines if line.cell_id]
         item = {**source, "segment": row.number, "pages": [row.page]}
         name = _name_like(re.sub(r"\s+", "", cell)) if re.fullmatch(r"[\u4e00-\u9fff·•\s]+", cell) else None
         basis = "pdf_table_name_column"

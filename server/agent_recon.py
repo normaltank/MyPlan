@@ -197,7 +197,7 @@ _CJK = re.compile(r"[一-鿿]")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}")
 _URL = re.compile(r"^https?://", re.I)
 # 计划 schema 里允许出现的字面量（非 URL、非选择器的合法值）
-_SCHEMA_LITERALS = {"university_faculty_roster", "hospital_doctor_roster", "navigation", "segmented"}
+_SCHEMA_LITERALS = {"university_faculty_roster", "hospital_doctor_roster", "navigation", "segmented", "image_table"}
 _MODEL_PLAN_KEYS = {"school", "college", "source_kind", "branches",
                     "profile_concurrency", "profile_ready_selector"}
 _MODEL_BRANCH_KEYS = {"url", "kind", "source_kind", "card_selector", "single_page",
@@ -302,6 +302,11 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
             if child or not branch_valid(node) or node.get("single_page") is not True:
                 raise PlanHygieneError(f"{path} segmented branch requires container_selector, "
                                        "record_start_selector and single_page true only")
+            return
+        if node.get("kind") == "image_table":
+            if (child or node.get("single_page") is not True or not node.get("card_selector")
+                    or set(node) - {"url", "kind", "source_kind", "card_selector", "single_page"}):
+                raise PlanHygieneError("image_table allows only a single-page image selector")
             return
         if "profile_content_start_selector" in node and not node.get("profile_content_selector"):
             raise PlanHygieneError(f"{path} profile start requires a content selector")
@@ -559,6 +564,21 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
     aliases = browser_url_aliases(events)
     resolve = lambda url: resolved_browser_url(url, aliases)
     for branch in plan["branches"]:
+        if branch.get("kind") == "image_table":
+            verified = any(
+                args.get("card_selector") == branch.get("card_selector")
+                and resolve(result.get("url")) == resolve(branch["url"])
+                and (result.get("image_table") or {}).get("valid") is True
+                and type((result.get("image_table") or {}).get("image_count")) is int
+                and (result["image_table"]["image_count"] > 0)
+                and result["image_table"]["image_count"] == result.get("cardCount")
+                and len(result["image_table"].get("image_urls", [])) == result["image_table"]["image_count"]
+                and (result.get("pagination") or {}).get("total") == 0
+                for args, result, _ in observations)
+            if not verified:
+                issues.append({"status": "table_image_selector_unverified", "url": branch["url"],
+                               "selector": branch["card_selector"]})
+            continue
         if branch.get("kind") == "segmented":
             verified = any(
                 args.get("container_selector") == branch.get("container_selector")

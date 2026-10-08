@@ -9,7 +9,7 @@ Action = Literal["access", "structure", "review", "stop"]
 # These are internal machine codes, not content keywords or extraction filters.
 _GROUPS = {
     "access": """profile_navigation_failed browser_navigation_failed image_bio_asset_failed
-        segment_name_asset_failed pdf_roster_asset_failed""",
+        segment_name_asset_failed pdf_roster_asset_failed table_asset_failed""",
     "review": """rare_surname_needs_review segment_name_needs_review distinct_profile_identity_unverified
         zero_person_delivery_requires_review image_bio_email_conflict image_bio_low_confidence
         image_bio_ocr_incomplete image_bio_owner_unresolved image_bio_unreadable_profile
@@ -20,7 +20,11 @@ _GROUPS = {
         title_field_conflict excel_cell_too_long excel_invalid_xml_character mailto_address_conflict
         pdf_roster_not_pdf pdf_roster_unreadable pdf_roster_page_unreadable pdf_roster_raster_unread
         pdf_roster_records_not_found pdf_roster_heading_unrecognized pdf_roster_multiple_names
-        pdf_roster_shared_email pdf_roster_table_row_unassigned pdf_roster_table_index_gap""",
+        pdf_roster_shared_email pdf_roster_table_row_unassigned pdf_roster_table_index_gap
+        table_grid_ambiguous table_header_unresolved table_cell_low_confidence table_cell_unreadable
+        table_text_unassigned table_name_segmentation_ambiguous table_full_image_review_missing
+        table_index_gap table_row_unassigned table_name_unreadable table_duplicate_name
+        table_email_ambiguous table_record_unresolved""",
     "structure": """card_selector_empty card_selector_missing roster_selector_empty candidate_outside_cards child_limit_reached
         child_link_missing_href child_outside_verified_host child_roster_not_verified child_selector_empty
         empty_roster_conflict empty_roster_not_verified initial_control_not_unique initial_control_unchanged
@@ -35,7 +39,7 @@ _GROUPS = {
         profile_content_start_selector_without_container roster_card_mismatch segment_container_not_unique
         segment_multiple_names segment_name_missing segment_start_empty segment_start_nested segments_not_verified
         selector_not_verified single_page_pagination_unverified single_page_has_next image_roster_coverage_mismatch
-        name_list_item_unrecognized""",
+        name_list_item_unrecognized table_image_selector_unverified""",
     "stop": """lease_renewal_failed repair_skipped_task_deadline recon_budget_exceeded recon_phase_limit
         recon_failed task_timeout missing_entry_url delivery_sync_failure missing_audit_file""",
 }

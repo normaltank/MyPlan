@@ -38,6 +38,7 @@ class CapturedRosterPage:
     html: str
     branch: dict[str, Any]
     empty_roster_evidence: dict[str, Any] | None = None
+    image_table_evidence: dict[str, Any] | None = None
 
 
 @dataclass
@@ -69,6 +70,7 @@ class RosterReconciliation:
     # 多人 PDF 名录: verified cards that hold only PDFs, read later in the
     # browser session by server/pdf_roster.py.
     pdf_rosters: list[dict[str, Any]] = field(default_factory=list)
+    image_table_sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Page conditions that pass with time (flaky site, late requests, a settling
@@ -239,7 +241,8 @@ async def capture_sources(
 
         pages, errors, evidence = await capture_branch(browser_context, branch)
         result.roster_pages.extend(
-            CapturedRosterPage(url, page_html, branch, evidence.get("empty_roster"))
+            CapturedRosterPage(url, page_html, branch, evidence.get("empty_roster"),
+                               evidence.get("table_images", {}).get(url))
             for url, page_html in pages
         )
         result.unresolved.extend({**item, "branch_url": branch["url"]} for item in errors)
@@ -411,8 +414,19 @@ def reconcile_rosters(
     segment_shared: dict[str, set[str]] = {}
     segmented_pages: dict[str, str] = {}
     pdf_rosters: list[dict[str, Any]] = []
+    image_tables: list[dict[str, Any]] = []
     captured_pages = list(captured)
     for page in captured_pages:
+        if page.branch.get("kind") == "image_table":
+            proof = page.image_table_evidence or {}
+            if proof.get("valid") is not True or not proof.get("image_urls"):
+                unresolved.append({"url": page.url, "status": "table_image_selector_unverified"})
+            else:
+                image_tables.append({"url": page.url, "media_urls": proof["image_urls"],
+                                     "source_kind": page.branch.get("source_kind") or default_source})
+            observations.append({"url": page.url, "kind": "image_table",
+                                 "status": "image_table_pending", "visible_images": proof.get("image_count", 0)})
+            continue
         if page.branch.get("kind") == "segmented":
             from server.segmented_roster import reconcile_page
             source_kind = page.branch.get("source_kind") or default_source
@@ -588,6 +602,7 @@ def reconcile_rosters(
         segment_shared_emails=segment_shared,
         segmented_pages=segmented_pages,
         pdf_rosters=pdf_rosters,
+        image_table_sources=image_tables,
     )
 
 

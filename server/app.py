@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 if __package__:
     from .agent_queue import agent_queue, LeaseConflictError
     from .access_control import AccountStore, Account
+    from .image_table_routes import router as image_table_router
     from .task_image_review import (task_review_audit, has_image_review, review_items,
                                     review_complete, prepare_review_resume,
                                     legacy_review_audits, name_items)
@@ -36,6 +37,7 @@ if __package__:
 else:
     from agent_queue import agent_queue, LeaseConflictError
     from access_control import AccountStore, Account
+    from image_table_routes import router as image_table_router
     from task_image_review import (task_review_audit, has_image_review, review_items,
                                    review_complete, prepare_review_resume,
                                    legacy_review_audits, name_items)
@@ -486,7 +488,7 @@ async def task_image_review_page(task_id: str, request: Request):
         html_emails = _html_email_items(audit, task_id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据不完整，请管理员检查审计文件') from exc
-    return render_review_page(ocr_items, email_items,
+    rendered = render_review_page(ocr_items, email_items,
         decision_url=f'/api/task/{task_id}/review/ocr',
         email_decision_url=f'/api/task/{task_id}/review/email',
         retry_url=f'/api/task/{task_id}/review/retry',
@@ -495,6 +497,10 @@ async def task_image_review_page(task_id: str, request: Request):
         identity_items=identities, identity_decision_url=f'/api/task/{task_id}/review/identity',
         can_review_identity=_user(request).role == 'admin',
         html_email_items=html_emails, html_email_decision_url=f'/api/task/{task_id}/review/html-email')
+    if json.loads(audit.read_text(encoding="utf-8")).get("image_table_evidence"):
+        rendered = rendered.replace("</html>", '<p><a href="/review/task/' + escape(task_id)
+                                    + '/table">图片表格逐格复核</a></p></html>')
+    return rendered
 
 
 def _html_email_items(audit: Path, task_id: str) -> list[dict]:
@@ -905,6 +911,7 @@ async def download_file(filename: str, request: Request = None):
     return FileResponse(filepath, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=filepath.name)
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
+app.include_router(image_table_router)
 
 
 def _page(name: str) -> str:

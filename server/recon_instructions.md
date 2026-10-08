@@ -42,3 +42,8 @@ browser_navigate 的 page 摘要已给出标题、常见正文容器（命中数
 入口 URL：{url}
 
 未实际核实总页数或目标条数时，不要填写 max_pages/max_children 猜测值；省略即按真实终止控件/完整已核实子链接继续采集。这些字段仅用于调用方明确要求的有限范围。
+# 图片表格名录
+
+整份名单在一张或多张表格图片中时，使用 kind=image_table、single_page=true 和命中正文表格图片的 card_selector。
+先 browser_verify，须 image_table.valid=true 且无分页候选。不得填教师姓名、表头原文、字段值或人工核数。
+图片数量只证明资源覆盖，不等于教师人数；本地确定性程序按格 OCR，人工纠字，未解决项继续阻断交付。
