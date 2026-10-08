@@ -79,19 +79,22 @@ _INTRODUCED_NAME = re.compile(
 try:
     from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
                                     contact_email_candidates, labeled_text_emails, explicit_title_candidates,
-                                    mailto_address_conflicts)
+                                    mailto_address_conflicts, find_emails)
     DETAIL_MECC_AVAILABLE = True
 except ImportError:
     try:
         from detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
                                  contact_email_candidates, labeled_text_emails, explicit_title_candidates,
-                                 mailto_address_conflicts)
+                                 mailto_address_conflicts, find_emails)
         DETAIL_MECC_AVAILABLE = True
     except ImportError as _ex:
         log.warning("Detail MECC extractor unavailable: %s", _ex)
         DetailMECCExtractor = ProfileDetail = LayoutAwareTokenizer = contact_email_candidates = None
 
         def labeled_text_emails(text):  # no evidence reader: nothing is labelled
+            return []
+
+        def find_emails(text):  # the address reader lives in detail_mecc
             return []
 
         def explicit_title_candidates(text):
@@ -122,12 +125,6 @@ PRUNE_CLASSES = [
     'col_path', 'col_menu', 'breadcrumb', 'breadcrumbs', 'left_nav', 'nav_left'
 ]
 
-
-FREE_MAIL_DOMAINS = {
-    "163.com", "126.com", "yeah.net", "qq.com", "foxmail.com", "gmail.com",
-    "sina.com", "sina.cn", "sohu.com", "hotmail.com", "outlook.com",
-    "live.com", "yahoo.com", "aliyun.com", "139.com", "189.cn", "icloud.com"
-}
 
 if DETAIL_MECC_AVAILABLE:
     # One definition of "this address spells this teacher" for every path
@@ -723,15 +720,6 @@ class FacultyDirectoryExtractor:
 
         return candidates
 
-
-EMAIL_REGEX = re.compile(r'(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}'
-                         r'(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])')
-
-def find_emails(text: str) -> List[str]:
-    """All addresses in reading order, incl. '(at)'/'＠' obfuscations."""
-    if email_spans is not None:                     # original case kept for delivery
-        return [re.sub(r"\s+", "", _AT_RE.sub("@", text[a:b])).strip(".") for a, b, _ in email_spans(text)]
-    return [m.lower() for m in EMAIL_REGEX.findall(text)]
 
 class FacultyProfileExtractor:
     """
