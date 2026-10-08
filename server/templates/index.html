@@ -406,13 +406,14 @@
                 `<span class="kpi">提交 <b>${report.submitted_colleges}</b> 个学院</span>`
                 + `<span class="kpi">完成 <b>${report.completed_colleges}</b> 个学院</span>`
                 + `<span class="kpi">交付 <b>${report.delivered_record_rows}</b> 条教师记录</span>`
-                + `<span class="kpi${report.failed_colleges ? ' kpi-bad' : ''}">失败 <b>${report.failed_colleges}</b> 个学院</span>`;
+                + `<span class="kpi">待处理 <b>${report.pending_colleges || 0}</b> 个学院</span>`
+                + `<span class="kpi${report.terminal_failed_colleges ? ' kpi-bad' : ''}">失败 <b>${report.terminal_failed_colleges || 0}</b> 个学院</span>`;
             const rows = document.getElementById('employeeDailyRows');
             if (Array.isArray(report.employees)) {
                 rows.classList.remove('hidden');
                 rows.innerHTML = report.employees.length
-                    ? `<table class="table"><thead><tr><th>员工</th><th class="n">提交学院</th><th class="n">完成学院</th><th class="n">交付记录</th><th class="n">失败学院</th></tr></thead><tbody>`
-                      + report.employees.map(item => `<tr><td>${escapeHtml(item.display_name)}</td><td class="n">${item.submitted_colleges}</td><td class="n">${item.completed_colleges}</td><td class="n">${item.delivered_record_rows}</td><td class="n">${item.failed_colleges}</td></tr>`).join('')
+                    ? `<table class="table"><thead><tr><th>员工</th><th class="n">提交学院</th><th class="n">完成学院</th><th class="n">交付记录</th><th class="n">待处理学院</th><th class="n">失败学院</th></tr></thead><tbody>`
+                      + report.employees.map(item => `<tr><td>${escapeHtml(item.display_name)}</td><td class="n">${item.submitted_colleges}</td><td class="n">${item.completed_colleges}</td><td class="n">${item.delivered_record_rows}</td><td class="n">${item.pending_colleges || 0}</td><td class="n">${item.terminal_failed_colleges || 0}</td></tr>`).join('')
                       + '</tbody></table>'
                     : '<p class="hint">当天还没有员工工单</p>';
             } else {
@@ -833,7 +834,7 @@
                     } else if (task.status === 'failed') {
                         clearInterval(pollTimer);
                         if (!viewingHistory && !task.review_url) forgetRequest('task', targetId);
-                        setBadge(task.source_review_required ? '来源范围待核验' : '失败', task.source_review_required ? 'warn' : 'danger');
+                        setBadge(...failureLabel(task));
                         document.getElementById('downloadBtn').classList.add('hidden');
                         document.getElementById('statSummary').innerText = task.error || task.current_step || '任务失败，请查看审计记录';
                         for (const url of task.source_review_urls || []) {
@@ -865,6 +866,20 @@
             pollTimer = setInterval(tick, 1000);
         }
 
+        // A failed college keeps status 'failed'; its recorded codes say what it waits on.
+        const FAILURE_LABELS = {review: '待人工复核', structure: '待结构处理', access: '访问未成功，可重试',
+                                recon: '侦察未完成', failed: '失败'};
+        function failureLabel(task) {
+            if (task.source_review_required) return ['来源范围待核验', 'warn'];
+            const kind = task.failure_disposition || 'failed';
+            return [FAILURE_LABELS[kind] || '失败', kind === 'failed' ? 'danger' : 'warn'];
+        }
+
+        function failureBreakdown(counts) {
+            return ['review', 'structure', 'access', 'recon', 'failed'].filter(kind => counts?.[kind])
+                .map(kind => `${FAILURE_LABELS[kind]} ${counts[kind]} 个`).join('，');
+        }
+
         function subtaskRow(st) {
             let tone = 'neutral', text = '排队中', busy = false;
             if (st.status === 'running') { tone = 'info'; text = '采集中'; busy = true; }
@@ -873,10 +888,7 @@
                 text = st.counts_basis ? `待复核 (${st.stats?.total || 0}条观察)` : `完成 (${st.stats?.total || 0}人)`;
                 if (!st.counts_basis && st.stats?.cross_check?.status === 'difference') { tone = 'warn'; text += ' · 人数有差额待确认'; }
             }
-            if (st.status === 'failed') {
-                tone = st.source_review_required ? 'warn' : 'danger';
-                text = st.source_review_required ? '来源范围待核验' : '失败';
-            }
+            if (st.status === 'failed') [text, tone] = failureLabel(st);
             const download = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download title="下载该学院的双 Sheet Excel">${icon('download')}表格</a>` : '';
             const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>`
                 : st.university_review_url ? `<a href="${escapeHtml(st.university_review_url)}">${icon('review')}同名复核</a>` : '';
@@ -971,9 +983,10 @@
                         unlockUI();
                     } else if (batch.status === 'failed' || batch.status === 'partially_failed') {
                         clearInterval(pollTimer);
-                        setBadge('任务异常', 'danger');
-                        setResultTone('danger');
-                        document.getElementById('statSummary').innerText = `${batch.failed_colleges || 0} 个学院未通过，逐院状态见下方列表；需要人工复核的学院可点“人工复核”。`;
+                        const terminal = batch.terminal_failed_colleges || 0;
+                        setBadge(terminal ? '任务异常' : '待处理', terminal ? 'danger' : 'warn');
+                        setResultTone(terminal ? 'danger' : false);
+                        document.getElementById('statSummary').innerText = `完成 ${batch.completed_colleges} 个学院；${failureBreakdown(batch.failure_dispositions) || `${batch.failed_colleges || 0} 个学院未通过`}。逐院状态见下方列表；待人工复核的学院可点“人工复核”。`;
                         document.getElementById('downloadBtn').classList.add('hidden');
                         document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();

@@ -101,6 +101,27 @@ def _site_type_registry():
     return SiteTypeRegistry
 
 
+def failure_disposition(error: str | None, stats: dict[str, Any] | None) -> str:
+    """Next step for a failed college, from its recorded failure codes; the row stays 'failed'."""
+    try:
+        from .recovery_policy import failure_disposition as disposition
+        from .site_type_registry import classify_failure
+    except ImportError:  # imported as top-level ``agent_queue`` from server/
+        from recovery_policy import failure_disposition as disposition
+        from site_type_registry import classify_failure
+    return disposition(classify_failure(error or "", stats or {})[0])
+
+
+def _failure_counts(failed: Iterable[tuple[str | None, dict[str, Any]]]) -> dict[str, Any]:
+    """Failed colleges split into those still waiting on someone and terminal failures."""
+    by = {}
+    for error, stats in failed:
+        kind = failure_disposition(error, stats)
+        by[kind] = by.get(kind, 0) + 1
+    return {"failure_dispositions": by, "terminal_failed_colleges": by.get("failed", 0),
+            "pending_colleges": sum(by.values()) - by.get("failed", 0)}
+
+
 class AgentTaskQueue:
     def __init__(self, db_path: str | Path | None = None,
                  legacy_json_path: str | Path | None = None) -> None:
@@ -554,7 +575,7 @@ class AgentTaskQueue:
             submitted = con.execute("SELECT COUNT(*) FROM tasks WHERE task_type='harvest' "
                 "AND created_at>=? AND created_at<?" + clause,
                 (start, end, *owner_args)).fetchone()[0]
-            finished = con.execute("SELECT status,stats_json FROM tasks WHERE task_type='harvest' "
+            finished = con.execute("SELECT status,stats_json,error FROM tasks WHERE task_type='harvest' "
                 "AND finished_at>=? AND finished_at<?" + clause,
                 (start, end, *owner_args)).fetchall()
         completed = [row for row in finished if row['status'] == 'completed']
@@ -562,7 +583,9 @@ class AgentTaskQueue:
                 'completed_colleges': len(completed),
                 'delivered_record_rows': sum(json.loads(row['stats_json']).get('total', 0)
                                              for row in completed),
-                'failed_colleges': sum(row['status'] == 'failed' for row in finished)}
+                'failed_colleges': sum(row['status'] == 'failed' for row in finished),
+                **_failure_counts((row['error'], json.loads(row['stats_json']))
+                                  for row in finished if row['status'] == 'failed')}
 
     def touch_worker(self, instance_id: str) -> None:
         with self._connect() as con:
@@ -647,6 +670,7 @@ class AgentTaskQueue:
                 "delivery_state": "ready" if all(s["state"] == "ready" for s in scopes) else
                     "blocked" if any(s["state"] == "blocked" for s in scopes) else "collecting",
                 "completed_colleges": completed, "failed_colleges": failed,
+                **_failure_counts((t.error, t.stats) for t in tasks if t.status == "failed"),
                 "status": batch_status,
                 "progress": int(sum(t.progress for t in tasks) / len(tasks)),
                 "current_step": active.current_step if active else "排队中...",
