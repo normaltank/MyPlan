@@ -2,7 +2,11 @@
 
 ## 2026-10-08 · 姓名判定规则只留一份（未部署）
 
-- 普通名单页（`server/name_list.py`）和分段名录（`server/segmented_roster.py`，PDF/图片表格经它引用）原来各有一份姓名判定和常量，少数民族点号名的最少字数已经不一致。现在只在 `name_list._person_name` 定义一份；点号两边最少字数由 `MINORITY_SIDE_MIN` 决定（暂按推荐取 1，待 badr 确认）。分段名录“姓名：”标签不再把长点号名截成 8 个字。
+- 普通名单页（`server/name_list.py`）和分段名录（`server/segmented_roster.py`，PDF/图片表格经它引用）原来各有一份姓名判定和常量，少数民族点号名的最少字数已经不一致。现在只在 `name_list._person_name` 定义一份；点号两边最少字数由 `MINORITY_SIDE_MIN` 决定（badr 选定 1）。分段名录“姓名：”标签不再把长点号名截成 8 个字。
+
+## 2026-10-08 · 交接文档补上 10-02 之后合并的模块索引，待办追加代码对齐 E、F、G（只改文档）
+
+- AGENT_HANDOVER.md 顶部新增一节：PR #17 到 #25 各加了什么和入口文件，7 个人工复核模块的状态码与决策文件，失败去向的唯一定义处，姓名和邮箱归属规则的位置；docs/review-backlog.md 追加代码对齐 E、F、G 三项。
 
 ## 2026-10-08 · 本机 Chrome 兜底不再因冷启动慢而放弃（未部署）
 
