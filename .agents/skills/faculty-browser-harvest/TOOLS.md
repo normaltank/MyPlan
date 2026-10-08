@@ -80,20 +80,10 @@ python -m server.browser_batch_tool --plan <计划文件.json> --output-dir serv
 python -m server.browser_poster_tool --url <官方图片名录页> --output-dir server/outputs
 ```
 
-工具滚动页面以触发懒加载，等待图片载入，再给出 `screenshot_path`、`ocr_path`、`unloaded_image_count` 和 `warnings`。若有图片未加载或滚动上限告警，Subagent 先在浏览器中核查并补拍；截图仍须人工查看完整范围。逐人对照原图，并记录图片中可见的总人数后，才可在批量工具计划中添加：
+工具滚动页面以触发懒加载，等待图片载入，再给出 `screenshot_path`、`ocr_path`、`unloaded_image_count` 和 `warnings`。截图与 OCR 原文只用来判断名录结构，Subagent 不把其中的人名、职称写进计划。批量工具与服务器侦察使用同一口径，计划出现 `verified_candidates` 或 `poster_reviews` 会直接报错。
 
-```json
-{
-  "poster_reviews": [
-    {"source_url": "https://faculty.example.edu/poster", "reviewed_full_image": true, "expected_count": 1}
-  ],
-  "verified_candidates": [
-    {"name": "张富有", "title": "教授", "source_url": "https://faculty.example.edu/poster", "evidence_path": "server/outputs/poster_<校验码>.png"}
-  ]
-}
-```
-
-`source_url` 必须是计划中的分支 URL，`evidence_path` 必须是实际存在的截图。`expected_count` 是 Subagent 从完整图片核实的可见人数；若已确认姓名数不等于它，工具阻止导出。图片有无法辨认的区域或人数无法确认时，不设置 `reviewed_full_image=true`，保留待复核。若有个人主页，可加 `profile_url`，批量工具会用浏览器访问；没有主页则以名录页为主页、简介和邮箱留空。OCR 行若不能确认，保持未解决状态，不凭猜测补人。
+- 每人一段的图文记录（照片或姓名图片在前、简介在后）按上文 `segmented` 分支提交，姓名由本地 OCR 读取，不能核对的进入图片审核页由人核对原图。
+- 整张海报承载的名单，目前没有确定性读取模块。该分支保持未解决（`no_candidates_on_roster_page`），学院不能导出完整成果；在结果中标明原因，不凭 OCR 行或截图补人。
 
 医院医生名录若要计入大学教师表，计划还必须逐人提供当前个人页中的大学任职证据：
 

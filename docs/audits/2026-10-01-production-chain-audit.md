@@ -15,7 +15,7 @@
 | A4 | 批量子任务的“表格”和单学院“下载学院中间成果”链接全部 404 | 已复现缺陷，已由 PR #8 修复 | 无需处理 |
 | T1 | `dbfdfb9` 上 `tests/test_empty_roster.py` 一项测试失败 | 已在 `main` 修复（`850d8c9`） | 无需处理 |
 | S1 | 采集完成后若回传 Web 失败（如 Web 重启），工单直接终态失败，只能重新提单 | 尚未证实的疑点 | 可以暂缓 |
-| C1 | IDE 海报流程的 `verified_candidates` 由 Subagent 录入姓名、职称，与宪法“数据由确定性代码提取”不一致 | 宪法一致性（非生产 worker 路径） | 可以暂缓（需负责人决策） |
+| C1 | IDE 海报流程的 `verified_candidates` 由 Subagent 录入姓名、职称，与宪法“数据由确定性代码提取”不一致 | 宪法一致性（非生产 worker 路径） | 已处理（2026-10-08，按现行流程拒收） |
 | L1 | 同一批次两个学院出现同名不同人，大学版本被阻断，且没有跨学院复核入口 | 已知功能限制 | 保持现状，需决策 |
 | L2–L4 | 末页“下一页”仍可点、短彩色图片按照片跳过、`split_glued_numeric` 空操作 | 已知功能限制 | 保持现状 |
 
@@ -95,6 +95,7 @@ PR #8（`4dc1c13`）按下文第一种方案修复：`build_payload` 不再发�
 
 - **生产 worker 路径符合宪法**：模型输出只经 `check_plan_hygiene`（`agent_recon.py:281` 拒绝非结构字段）与 `validate_model_plan` 进入计划；`submit_plan` 绑定本轮观察与摘要；`build_repair_feedback` 回传给侦察模型的只有状态码、URL、选择器和整数计数，不含教师数据或页面叙述。字段全部由确定性代码从页面、图片 OCR 提取。
 - **C1 IDE 海报流程**：`browser_batch_tool.py:101-117,893-905` 接受计划里的 `verified_candidates`（姓名、职称），`.agents/skills/faculty-browser-harvest/TOOLS.md:80-100` 让 Subagent 对照截图逐人录入。有截图证据和 `expected_count` 门禁，生产 worker 也会拒绝这个字段（`tests/test_agent_recon_hygiene.py:92`），但它仍是“模型录入数据”，与宪法第二条不一致。建议负责人决定：保留为人工复核通道，并在文档中写明“只能由人确认”；或者停用。**可以暂缓**，不影响生产交付。
+  - 2026-10-08 处理：负责人决定按现行流程统一口径。`browser_batch_tool._validate_plan` 遇到 `verified_candidates` 或 `poster_reviews` 直接报错（与服务器侦察 `validate_model_plan` 一致），并删除录入人名入表、海报覆盖放行和 `agent_verified` 资格分支。每人一段的图文记录走 `segmented` 本地 OCR 与图片审核页；整张海报名单在确定性读取模块完成前保持未解决。`verified_appointments`（医院任职引文）不在本条范围，未改。
 
 ## 与并行任务的重叠
 

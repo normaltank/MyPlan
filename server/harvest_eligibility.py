@@ -47,9 +47,6 @@ def classify_candidates(
         if "university_faculty_roster" in source_kinds:
             decision.update(status="eligible", evidence_kind="university_faculty_roster")
             admitted.append(candidate)
-        elif "agent_verified" in source_kinds:
-            decision.update(status="eligible", evidence_kind="agent_verified_source")
-            admitted.append(candidate)
         elif "hospital_doctor_roster" in source_kinds:
             if key in reviewed_exclusions:
                 decision.update(status="excluded", reason=reviewed_exclusions[key])
