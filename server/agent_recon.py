@@ -37,7 +37,7 @@ from urllib.parse import unquote, urlsplit
 import yaml
 
 __all__ = ["ReconError", "ReconPlanError", "PlanHygieneError", "ReconPhaseLimitExceeded",
-           "ReconResult", "reconnoiter"]
+           "ReconGateStopped", "ReconResult", "reconnoiter"]
 
 
 class ReconError(RuntimeError):
@@ -183,6 +183,57 @@ class ReconBudget:
 
 class ReconPlanError(ReconError):
     """Model completed but returned no usable structure plan; safe to repair."""
+
+
+class ReconGateStopped(ReconPlanError):
+    """The submission gate ended a session that resubmitting could not pass:
+    every failure was a page fact, or the scout kept resubmitting unchanged."""
+
+    def __init__(self, code: str, issues: list[dict[str, Any]]):
+        super().__init__(f"提交门禁停止侦察：{code}")
+        self.code = code
+        by_url: dict[Any, list[dict[str, Any]]] = {}
+        for item in issues:
+            by_url.setdefault(item.get("url"), []).append(item)
+        self.safe_feedback = {"issues": [{"status": code, "url": url, "gate_issues": items}
+                                         for url, items in by_url.items()]}
+
+
+def _watch_gate(event: dict[str, Any], submit_calls: set, rejections: dict | None,
+                session_id: str) -> ReconGateStopped | None:
+    """Follow submit_plan replies: keep the latest rejection, and stop when the gate says so."""
+    data = event.get("data") or {}
+    if event.get("type") == "tool/call" and data.get("name") == "mcp__playwright__submit_plan":
+        submit_calls.add(data.get("callId"))
+        return None
+    if event.get("type") != "tool/result":
+        return None
+    for block in (data.get("message") or {}).get("content", []):
+        if block.get("toolCallId") not in submit_calls:
+            continue
+        for content in block.get("content", []):
+            try:
+                reply = json.loads(content.get("text", "")) if content.get("type") == "text" else None
+            except (TypeError, ValueError):
+                reply = None
+            if not isinstance(reply, dict):
+                continue
+            if reply.get("accepted") is True:
+                if rejections is not None:
+                    rejections.pop(session_id, None)
+            elif isinstance(reply.get("issues"), list):
+                issues = [item for item in reply["issues"] if isinstance(item, dict)]
+                if rejections is not None:
+                    rejections[session_id] = issues
+                if reply.get("stop") in {"recon_page_unverifiable", "recon_gate_stalled"}:
+                    return ReconGateStopped(reply["stop"], issues)
+    return None
+
+
+def last_gate_rejections(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """The latest rejection of each session still unaccepted, for a failure that has no plan."""
+    rejections = cfg.get("gate_rejections") or {}
+    return [{"session_id": sid, "issues": issues} for sid, issues in list(rejections.items())]
 
 
 class PlanHygieneError(ReconError):
@@ -568,6 +619,10 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
     issues = []
     aliases = browser_url_aliases(events)
     resolve = lambda url: resolved_browser_url(url, aliases)
+
+    def tried(url, found):
+        return {"proofs_on_url": sum(resolve(result.get("url")) == resolve(url) for _, result, _ in found)}
+
     for branch in plan["branches"]:
         if branch.get("kind") == "image_table":
             verified = any(
@@ -582,7 +637,10 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 for args, result, _ in observations)
             if not verified:
                 issues.append({"status": "table_image_selector_unverified", "url": branch["url"],
-                               "selector": branch["card_selector"]})
+                               "selector": branch["card_selector"],
+                               **_gate_detail("table_image_proof_missing", tried(branch["url"], observations),
+                                              "browser_verify this card_selector on this url: every match must be a "
+                                              "valid table image, with pagination total 0.")})
             continue
         if branch.get("kind") == "segmented":
             verified = any(
@@ -597,7 +655,11 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 for args, result, _ in segment_observations)
             if not verified:
                 issues.append({"status": "segments_not_verified", "url": branch["url"],
-                               "selector": branch.get("record_start_selector")})
+                               "selector": branch.get("record_start_selector"),
+                               **_gate_detail("segment_proof_missing", tried(branch["url"], segment_observations),
+                                              "browser_verify_segments on this url with the submitted container and "
+                                              "record start selectors must report structure_ok, segments > 0 and "
+                                              "pagination total 0.")})
             continue
         selector = branch.get("card_selector") or branch.get("child_link_selector")
         if branch.get("empty_state_selector") or branch.get("roster_container_selector"):
@@ -611,7 +673,11 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                                             url=result.get("url"))
                 for args, result, _ in observations)
             if not verified:
-                issues.append({"status": "empty_roster_not_verified", "url": branch["url"], "selector": selector})
+                issues.append({"status": "empty_roster_not_verified", "url": branch["url"], "selector": selector,
+                               **_gate_detail("empty_roster_proof_missing", tried(branch["url"], observations),
+                                              "browser_verify on this url with exactly the submitted empty-state "
+                                              "selectors must show 0 cards, pagination total 0 and a valid "
+                                              "empty-roster proof.")})
             continue
         matching = [(args, result, index) for args, result, index in observations if (
             args.get("card_selector") == selector and resolve(result.get("url")) == resolve(branch["url"])
@@ -619,10 +685,15 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
             and (not branch.get("next_selector") or (
                 args.get("next_selector") == branch["next_selector"] and result.get("nextCount") == 1)))]
         if not matching:
-            issues.append({"status": "selector_not_verified", "url": branch["url"], "selector": selector})
+            issues.append({"status": "selector_not_verified", "url": branch["url"], "selector": selector,
+                           **_card_detail(branch, selector, observations, resolve)})
         elif branch.get("single_page") and not any((result.get("pagination") or {}).get("total") == 0
                                                   for _, result, _ in matching):
-            issues.append({"status": "single_page_pagination_unverified", "url": branch["url"], "selector": selector})
+            issues.append({"status": "single_page_pagination_unverified", "url": branch["url"], "selector": selector,
+                           **_gate_detail("pagination_candidates_present", {"pagination_total": (
+                               matching[-1][1].get("pagination") or {}).get("total")},
+                               "This page shows pagination candidates. Verify a unique next_selector and its next "
+                               "page, or verify a card_selector whose pagination total is 0.")})
         elif branch.get("next_selector") and not any(result.get("nextDisabled") is True for _, result, _ in matching):
             next_urls = {resolve(result.get("nextUrl")) for _, result, _ in matching
                          if result.get("nextUrl") and resolve(result["nextUrl"]) != resolve(branch["url"])}
@@ -637,7 +708,11 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                        and type(result.get("cardCount")) is int and result["cardCount"] > 0
                        for args, result, _ in observations):
                 issues.append({"status": "pagination_not_verified", "url": branch["url"],
-                               "selector": branch["next_selector"]})
+                               "selector": branch["next_selector"],
+                               **_gate_detail("next_page_not_verified", {"next_urls": len(next_urls)},
+                                              "Open the next page (its nextUrl, or browser_click the next_selector) "
+                                              "and browser_verify the same card_selector there with cards > 0; on "
+                                              "the last page, nextDisabled true also proves the end.")})
         samples = list(dict.fromkeys(url for _, result, _ in matching
                        for url in result.get("linkedSamples", result.get("profileSamples", []))
                        if _is_structure_url(url) and resolve(url) != resolve(branch["url"])))[:2]
@@ -653,19 +728,23 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
             linked.extend(url for url in result.get("linkedSamples", result.get("profileSamples", []))
                           if _is_structure_url(url) and resolve(url) not in chain and url not in linked)
         if branch.get("kind") == "navigation":
-            if not samples:
-                issues.append({"status": "child_roster_not_verified", "url": branch["url"]})
-                continue
-            child = branch.get("child_branch")
-            if not isinstance(child, dict):
-                issues.append({"status": "child_roster_not_verified", "url": branch["url"]})
+            if not samples or not isinstance(child := branch.get("child_branch"), dict):
+                issues.append({"status": "child_roster_not_verified", "url": branch["url"],
+                               **_gate_detail("child_roster_missing" if samples else "child_links_not_verified",
+                                              {"linked_samples": len(samples)},
+                                              "browser_verify the child_link_selector on this url so it links child "
+                                              "rosters, and submit the child_branch verified on those rosters.")})
                 continue
             for child_url in samples:
                 child_plan = {**plan, "branches": [{**child, "url": child_url}]}
                 issues.extend(selector_evidence_issues(child_plan, events))
             continue
         if samples and not branch.get("profile_content_selector"):
-            issues.append({"status": "profile_content_selector_missing", "url": branch["url"]})
+            issues.append({"status": "profile_content_selector_missing", "url": branch["url"],
+                           "sample_urls": linked[:4],
+                           **_gate_detail("profile_selector_missing", {"linked_profiles": len(linked)},
+                                          "Cards link to profile pages: verify a profile_content_selector with "
+                                          "browser_verify_profile on two of sample_urls and submit it.")})
         if branch.get("profile_content_selector"):
             # Any two distinct profiles linked from verified cards prove the
             # scope; a scout that sampled page 2 rather than page 1 has not
@@ -684,16 +763,94 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                             for key in ("html_sha256", "selected_html_sha256"))
                     for args, result, _ in profile_observations)
             required = min(2, len(linked))
+            pair = (branch["profile_content_selector"], branch.get("profile_content_start_selector"))
             if not linked or sum(proved(url) for url in linked) < required:
+                blocked = sum(_profile_page_blocked(url, profile_observations, resolve) for url in linked)
                 issues.append({"status": "profile_content_not_verified", "url": branch["url"],
                                "selector": branch["profile_content_selector"],
-                               "sample_urls": linked[:4]})
+                               "sample_urls": linked[:4],
+                               **_profile_detail(linked[:4], pair, profile_observations, resolve,
+                                                 page_only=bool(linked) and len(linked) - blocked < required,
+                                                 need=f"Prove this selector pair with browser_verify_profile on "
+                                                      f"{required} of the profile pages linked from this roster.")})
             elif unproved := [url for key, pages in (repair_profiles or {}).items()
                               if resolve(key) == resolve(branch["url"]) for url in pages if not proved(url)]:
                 issues.append({"status": "profile_content_not_verified", "url": branch["url"],
                                "selector": branch["profile_content_selector"],
-                               "sample_urls": unproved[:4]})
+                               "sample_urls": unproved[:4],
+                               **_profile_detail(unproved[:4], pair, profile_observations, resolve,
+                                                 page_only=any(_profile_page_blocked(url, profile_observations, resolve)
+                                                               for url in unproved),
+                                                 need="The harvest found the previous profile selector wrong on "
+                                                      "sample_urls: prove this selector pair on every one of them.")})
     return issues
+
+
+def _gate_detail(condition: str, closest: dict[str, Any], need: str, *,
+                 page_only: bool = False) -> dict[str, Any]:
+    """Why a gate check failed, as controlled codes, counts and the next proof.
+
+    ``page_only`` means no plan can pass this check on this page: the scout
+    cannot fix it, so the session should end instead of resubmitting.
+    """
+    return {"failed_condition": condition, "closest": closest, "need": need,
+            **({"page_only": True} if page_only else {})}
+
+
+def _card_detail(branch: dict[str, Any], selector: str | None, observations: list,
+                 resolve: Any) -> dict[str, Any]:
+    here = [result for _, result, _ in observations if resolve(result.get("url")) == resolve(branch["url"])]
+    same = [result for args, result, _ in observations if args.get("card_selector") == selector
+            and resolve(result.get("url")) == resolve(branch["url"])]
+    cards = [result for result in same if type(result.get("cardCount")) is int and result["cardCount"] > 0]
+    if not here:
+        return _gate_detail("url_never_verified", {"proofs_on_url": 0},
+                            "Open this url and browser_verify the submitted card_selector there.")
+    if not same:
+        return _gate_detail("selector_differs_from_verified", {"proofs_on_url": len(here)},
+                            "browser_verify ran on this url only with other card selectors: verify the "
+                            "submitted card_selector here, or submit the selector you verified.")
+    if not cards:
+        return _gate_detail("card_count_zero", {"cardCount": same[-1].get("cardCount")},
+                            "The submitted card_selector matched no cards on this url: verify a selector that "
+                            "matches the roster cards.")
+    return _gate_detail("next_control_not_verified", {"nextCount": cards[-1].get("nextCount")},
+                        "Cards matched, but no browser_verify on this url used the submitted next_selector "
+                        "with exactly one match (nextCount 1).")
+
+
+def _latest_profile(url: str, observations: list, resolve: Any) -> dict[str, Any] | None:
+    found = [result for _, result, _ in observations if resolve(result.get("url")) == resolve(url)]
+    return found[-1] if found else None
+
+
+def _profile_page_blocked(url: str, observations: list, resolve: Any) -> bool:
+    """The latest open of this page failed requests that block every container, on both opens."""
+    latest = _latest_profile(url, observations, resolve)
+    return bool(latest and latest.get("page_blocking_requests"))
+
+
+def _profile_detail(urls: list[str], pair: tuple[str, str | None], observations: list, resolve: Any,
+                    *, page_only: bool, need: str) -> dict[str, Any]:
+    samples = []
+    for url in urls:
+        latest = _latest_profile(url, observations, resolve)
+        same = [result for args, result, _ in observations
+                if (args.get("profile_content_selector"), args.get("profile_content_start_selector")) == pair
+                and resolve(result.get("url")) == resolve(url)]
+        if latest is None:
+            sample = {"url": url, "condition": "not_opened"}
+        elif not same:
+            sample = {"url": url, "condition": "selector_pair_not_tried"}
+        else:
+            last = same[-1]
+            sample = {"url": url, "condition": last.get("reason") or last.get("error_type") or "proof_incomplete",
+                      **{key: last[key] for key in ("container_count", "dom_stable", "network_idle",
+                                                    "blocking_requests") if key in last}}
+        if latest and latest.get("page_blocking_requests"):
+            sample["page_blocking_requests"] = latest["page_blocking_requests"]
+        samples.append(sample)
+    return _gate_detail("profile_proof_missing", {"samples": samples}, need, page_only=page_only)
 
 
 def restore_verified_profile_selector(branch: dict[str, Any], plan: dict[str, Any],
@@ -914,6 +1071,14 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
         except (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled) as exc:
             exc.phase = phase
             exc.phase_session_id = sid
+            raise
+        except ReconGateStopped as exc:
+            # The stop is about this session's branch; the gate issues keep their own pages.
+            exc.safe_feedback = {"issues": [{"status": exc.code, "url": url, "gate_issues": [
+                gate for item in exc.safe_feedback["issues"] for gate in item["gate_issues"]]}]}
+            exc.phase_metric = {"phase": phase, "session_id": sid, "effort": phase_cfg.get("effort"),
+                                "evidence_root": str(recon_evidence_root() / sid), "gate_stop": exc.code,
+                                **run_metrics(exc.phase_events)}
             raise
         current = getattr(result, "events", []) or []
         metric = {"phase": phase, "session_id": sid, "effort": phase_cfg.get("effort"),
@@ -1189,6 +1354,8 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
     phase_limit = int(cfg.get("phase_call_limit") or 0)
     phase_usage = ReconBudget()  # this session only; the budget above spans the college
     cancel_event = cfg.get("cancel_event")
+    seen_events: list[dict[str, Any]] = []
+    submit_calls: set = set()
     with DeepSeekHarness(
         dsh_home=cfg["dsh_home"],
         cwd=cfg["workspace"],
@@ -1205,25 +1372,34 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
     ) as harness:
         try:
             run_kwargs: dict[str, Any] = {"session_id": session_id}
-            if budget is not None or phase_limit or cancel_event is not None:
-                def on_notification(notification: Any) -> None:
-                    if (notification.method == "session.event"
-                            and notification.payload.get("sessionId") == session_id):
-                        event = notification.payload.get("event")
-                        if isinstance(event, dict):
-                            phase_usage.observe(event)
-                            if budget is not None:
-                                budget.observe(event)
-                            if phase_limit and phase_usage.calls > phase_limit:
-                                raise ReconPhaseLimitExceeded(
-                                    f"{_PHASE_NAMES.get(cfg.get('phase'), '侦察')}阶段已用 {phase_usage.calls} 次模型请求仍未完成"
-                                    f"（显式设置上限 {phase_limit}），已停止；复杂正常网站也可能需要更多步骤")
-                    # A completed request can arrive after a sibling stops.
-                    # Count its actual usage before honoring cancellation.
-                    if cancel_event is not None and cancel_event.is_set():
-                        raise ReconCancelled("侦察已被调用方停止（超时）")
-                run_kwargs["on_notification"] = on_notification
+            def on_notification(notification: Any) -> None:
+                if (notification.method == "session.event"
+                        and notification.payload.get("sessionId") == session_id):
+                    event = notification.payload.get("event")
+                    if isinstance(event, dict):
+                        seen_events.append(event)
+                        if stop := _watch_gate(event, submit_calls, cfg.get("gate_rejections"), session_id):
+                            raise stop
+                        phase_usage.observe(event)
+                        if budget is not None:
+                            budget.observe(event)
+                        if phase_limit and phase_usage.calls > phase_limit:
+                            raise ReconPhaseLimitExceeded(
+                                f"{_PHASE_NAMES.get(cfg.get('phase'), '侦察')}阶段已用 {phase_usage.calls} 次模型请求仍未完成"
+                                f"（显式设置上限 {phase_limit}），已停止；复杂正常网站也可能需要更多步骤")
+                # A completed request can arrive after a sibling stops.
+                # Count its actual usage before honoring cancellation.
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ReconCancelled("侦察已被调用方停止（超时）")
+            run_kwargs["on_notification"] = on_notification
             return harness.run(prompt, **run_kwargs)
+        except ReconGateStopped as exc:
+            # The stopping reply came after every model request of this session,
+            # all of which the budget above already counted.
+            exc.phase_events = seen_events
+            exc.diagnostics = {"session_id": session_id, **run_metrics(seen_events)}
+            exc.usage_unknown = False
+            raise
         except (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled) as exc:
             if isinstance(exc, ReconCancelled) and budget is not None:
                 budget.mark_usage_unknown()
@@ -1326,6 +1502,7 @@ async def reconnoiter(
     cfg["provided_urls"] = list(provided_urls or [])
     cancel_event = threading.Event()
     cfg["cancel_event"] = cancel_event
+    cfg["gate_rejections"] = {}  # shared by every phase session of this call
     budget_before = budget.snapshot() if budget else None
     Path(cfg["workspace"]).mkdir(parents=True, exist_ok=True)
 
@@ -1358,10 +1535,13 @@ async def reconnoiter(
         # the next Harness event end the session instead of spending until its own deadline.
         cancel_event.set()
         error = ReconError(f"侦察超时（{timeout_seconds:.0f}s）")
+        error.diagnostics = {"session_id": sid}
         if budget is not None:
             budget.mark_usage_unknown()
-            error.diagnostics = {"session_id": sid, **budget.delta(budget_before)}
+            error.diagnostics.update(budget.delta(budget_before))
             error.usage_unknown = True
+        if rejected := last_gate_rejections(cfg):
+            error.diagnostics["last_gate_rejections"] = rejected
         raise error from exc
     except asyncio.CancelledError:
         cancel_event.set()  # the whole task timed out or the worker is stopping
@@ -1376,6 +1556,9 @@ async def reconnoiter(
             if getattr(error, "usage_unknown", False):
                 budget.mark_usage_unknown()
             error.diagnostics = {**getattr(error, "diagnostics", {}), **budget.delta(budget_before)}
+        if not isinstance(error, ReconPlanError) and (rejected := last_gate_rejections(cfg)):
+            # A session that ran out of time or budget still says what the gate last refused.
+            error.diagnostics = {**getattr(error, "diagnostics", {}), "last_gate_rejections": rejected}
         raise
     except Exception as exc:  # dsh / SDK 层异常
         raise ReconError(f"dsh 调用失败：{type(exc).__name__}: {exc}") from exc

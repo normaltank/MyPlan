@@ -138,8 +138,10 @@ def test_navigation_branch_requires_child_roster_browser_proof():
     parent_proof = pair({"card_selector": "main a.roster"},
                         {"url": parent, "cardCount": 1, "profileSamples": [child],
                          "pagination": {"total": 0}}, "parent")
-    assert agent_recon.selector_evidence_issues(plan, parent_proof) == [
-        {"status": "selector_not_verified", "url": child, "selector": "article p > img"}]
+    [issue] = agent_recon.selector_evidence_issues(plan, parent_proof)
+    assert {key: issue[key] for key in ("status", "url", "selector", "failed_condition")} == {
+        "status": "selector_not_verified", "url": child, "selector": "article p > img",
+        "failed_condition": "url_never_verified"}
     child_proof = pair({"card_selector": "article p > img"},
                        {"url": child, "cardCount": 5, "profileSamples": [],
                         "pagination": {"total": 0}}, "child")

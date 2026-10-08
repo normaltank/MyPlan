@@ -17,10 +17,15 @@ def verification(selector="main ul > li", url="https://example.edu/list", count=
 
 
 def test_guessed_or_empty_selector_evidence_is_rejected():
-    for events in ([], verification(selector="aside li"), verification(count=0),
-                   verification(url="https://example.edu/other")):
-        assert agent_recon.selector_evidence_issues(PLAN, events) == [
-            {"status": "selector_not_verified", "url": "https://example.edu/list", "selector": "main ul > li"}]
+    for events, condition in (([], "url_never_verified"),
+                              (verification(selector="aside li"), "selector_differs_from_verified"),
+                              (verification(count=0), "card_count_zero"),
+                              (verification(url="https://example.edu/other"), "url_never_verified")):
+        [issue] = agent_recon.selector_evidence_issues(PLAN, events)
+        assert {key: issue[key] for key in ("status", "url", "selector", "failed_condition")} == {
+            "status": "selector_not_verified", "url": "https://example.edu/list", "selector": "main ul > li",
+            "failed_condition": condition}
+        assert issue["need"] and "page_only" not in issue
     assert agent_recon.selector_evidence_issues(PLAN, verification()) == []
 
 

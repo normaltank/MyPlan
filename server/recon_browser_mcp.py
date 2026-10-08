@@ -36,6 +36,8 @@ SURVEY_PREVIEW_CHARS = 300
 SURVEY_MAX_NEW_LINKS = 20
 PROFILE_MAX_URLS = 3
 PROFILE_TRANSIENT_REASONS = frozenset({"network_not_idle", "dom_unstable"})
+# The second identical resubmission ends the session: the scout is not using the feedback.
+UNCHANGED_RESUBMISSIONS_STOP = 2
 PROFILE_RETRY_SECONDS = 1.5
 PROFILE_CANDIDATES = 4
 PROFILE_CANDIDATES_PER_SAMPLE = 3
@@ -121,6 +123,9 @@ class BrowserScout:
         self._seen_lines: set[str] = set()
         self._dom_modified = False
         self._image_reads: dict[str, dict] = {}
+        # Rejected submissions by everything the gate reads: plan, evidence, DOM state.
+        self._rejections: dict[tuple, tuple[int, list[dict]]] = {}
+        self._unchanged_resubmissions = 0
         from server.empty_roster import install_empty_roster_tracking
         install_empty_roster_tracking(page)
 
@@ -211,9 +216,28 @@ class BrowserScout:
             if self._dom_modified:
                 return {**self.text_result({"accepted": False, "issues": [
                     {"path": "$", "status": "browser_dom_modified"}]}), "isError": True}
+            # The gate is a function of the plan and this session's evidence, so an
+            # identical resubmission with no new browser call cannot pass.
+            key = (plan_digest(plan), len(self.events))
+            if key in self._rejections:
+                self._unchanged_resubmissions += 1
+                number, issues = self._rejections[key]
+                reply = {"accepted": False, "unchanged_resubmission": number, "issues": issues,
+                         "retry": "Same plan and no new browser evidence since this submission was rejected. "
+                                  "Collect the proof each issue's need names before submitting again."}
+                if self._unchanged_resubmissions >= UNCHANGED_RESUBMISSIONS_STOP:
+                    reply["stop"] = "recon_gate_stalled"
+                return {**self.text_result(reply), "isError": True}
             issues = validate_submission(plan, self.phase, self.target, self.events)
             if issues:
-                return {**self.text_result({"accepted": False, "issues": issues}), "isError": True}
+                self._rejections[key] = (len(self._rejections) + 1, issues)
+                reply = {"accepted": False, "submission": len(self._rejections), "issues": issues,
+                         "retry": "Each issue names its url, failed_condition, closest observation and the "
+                                  "proof it still needs: collect that proof in the browser, then resubmit."}
+                if all(item.get("page_only") for item in issues):
+                    # Every failure is a page fact seen on two opens; no plan passes it.
+                    reply["stop"] = "recon_page_unverifiable"
+                return {**self.text_result(reply), "isError": True}
             self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
             return self.text_result({"accepted": True, "digest": plan_digest(plan)})
         reply = await self._browser_call(name, arguments)

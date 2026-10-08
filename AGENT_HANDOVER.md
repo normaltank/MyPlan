@@ -32,11 +32,11 @@
 | `server/identity_review.py`（学院内同名多主页） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
 | `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个） | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
 | `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`，且 `kind == "image"` | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
-| `server/image_table_review.py`（整图表格逐格纠字、整图人数） | 13 个 `table_*`，由 `server/image_table_roster.py` 产生；`task_image_review.py` 里另手抄了一份 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
+| `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生；`task_image_review.py` 直接引用，`tests/test_review_status_registry.py` 核对与 recovery_policy 一致） | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
 
 大学级复核另走一套：`server/university_identity_review.py`（跨学院同名），决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，不用 JSON，也不经过 `task_image_review.py`。
 
-已知问题（见 `docs/review-backlog.md` 的 2026-10-08 代码对齐条目）：每加一种复核要改 `task_image_review.py` 的状态集合、`review_complete` 和 `carry_review_decisions` 三处；`table_*` 状态码有两份。
+已知问题（见 `docs/review-backlog.md` 的 2026-10-08 代码对齐条目）：每加一种复核要改 `task_image_review.py` 的状态集合、`review_complete` 和 `carry_review_decisions` 三处（`table_*` 状态码已在 PR #29 收成一份）。
 
 ### 3. 失败去向只在一处定义
 
@@ -45,7 +45,17 @@
 ### 4. 姓名规则和邮箱归属规则现在在哪
 
 - 姓名：唯一的判定是 `server/name_list.py` 的 `_person_name`，常量 `NAME_PRIOR_FLOOR`、`_HAN_NAME`、`_MINORITY_NAME` 也只在那里定义；`server/segmented_roster.py` 以 `_name_like` 的名字引用它，`pdf_roster`、`image_table_roster` 再从分段名录引用。少数民族点号两边最少字数是 `MINORITY_SIDE_MIN = 1`（badr 10-08 选定）。姓名先验 `name_prob` 和生僻姓判断 `rare_surname_name` 在 `Opus/iso_mining.py`，生僻姓表是 `Opus/rare_surnames.txt`。
-- 邮箱归属：主规则是 `server/detail_mecc.py` 的 `is_personal_email_for_scholar`、`is_institutional_email`（拼音模型在 `Opus/email_matching.py`）。`server/faculty_extractor.py` 在 `detail_mecc` 可用时直接导入这两个函数；不可用时用文件内的降级版（只按纯数字地址认人，和主规则口径不同），L2 算法层导入失败时 `strip_invisible` 也有降级版。`find_emails` 在 `faculty_extractor.py` 和 `detail_mecc.py` 各有一份，两处的 `FREE_MAIL_DOMAINS` 都没有被使用。去重方案见对齐执行方案 D 包。
+- 邮箱归属：主规则是 `server/detail_mecc.py` 的 `is_personal_email_for_scholar`、`is_institutional_email`（拼音模型在 `Opus/email_matching.py`）。`find_emails` 也只在 `detail_mecc.py` 定义。`server/faculty_extractor.py` 直接导入这三个函数并照旧导出；算法层或 `detail_mecc` 导不进来时 `faculty_extractor` 导入即报错，没有降级版（对齐执行方案 D 包，PR #28）。
+
+### 5. 侦察提交门禁怎么打回、什么时候停（PR #33）
+
+- 证据判定在 `server/agent_recon.py` 的 `selector_evidence_issues`：每条问题带 `failed_condition`、`closest`、`need`；个人页证明在可用页不够证明数（或补缺点名的页被挡）时标 `page_only`。“挡住任何容器”的请求由 `server/profile_structure.py` 的 `verify_profile_container` 在重开后记为 `page_blocking_requests`。
+- `server/recon_contract.py` 的 `validate_submission` 原样转给模型（只削 schema 报错的输入值）；`server/recon_browser_mcp.py` 的 `submit_plan` 记住被打回的提交：同一计划无新浏览器调用时不重判，第二次给出 stop `recon_gate_stalled`；全部 `page_only` 时给出 stop `recon_page_unverifiable`。
+- `agent_recon._execute_harness` 用 `_watch_gate` 跟踪回复，遇到 stop 抛 `ReconGateStopped`（属于 `ReconPlanError`），并记下每个会话最后一次打回；超时/预算错误带 `last_gate_rejections`。两个码在 `recovery_policy._GROUPS`：页面类 access，worker 不再派补缺侦察；stalled 归 structure。
+
+### 6. 改了代码，可交付学院是多了还是少了（案例库离线回放）
+
+- `server/case_replay.py`（`python -m server.case_replay <案例目录>`）用当前 `browser_batch_tool.run_plan` 重跑共享目录 `case-library/evidence/` 里保存的实网案例，请求只由保存的页面和原件应答，其余 404，不联网、不调模型。输出每个学院保存时与回放时的就绪、人数、未解决项，首行是就绪学院数。改采集代码的 PR 可以用它对比前后；用法和限制见 `docs/operations.md` 第 10 节。
 
 ---
 
