@@ -4,6 +4,10 @@
 
 - 表格 OCR 的 13 个复核状态码改由 `server/image_table_review.py` 的 `STATUSES` 导出，`task_image_review.py` 直接引用，不再手抄；新增一致性测试 `tests/test_review_status_registry.py`，各复核模块声明的状态码必须在 recovery_policy 的 review 组里，表格名单实际产出的状态码必须已登记。
 
+## 2026-10-08 · 交接文档补上 10-02 之后合并的模块索引，待办追加代码对齐 E、F、G（只改文档）
+
+- AGENT_HANDOVER.md 顶部新增一节：PR #17 到 #25 各加了什么和入口文件，7 个人工复核模块的状态码与决策文件，失败去向的唯一定义处，姓名和邮箱归属规则的位置；docs/review-backlog.md 追加代码对齐 E、F、G 三项。
+
 ## 2026-10-08 · 本机 Chrome 兜底不再因冷启动慢而放弃（未部署）
 
 - 本机 Chrome 兜底读取原来只给新开的 Chrome 15 秒写出调试端口，超时就当失败返回空。机器忙或核数少时，几个 Chrome 同时冷启动初始化新配置要更久（CI 2 核 runner 上三个并发冷启动实测 1 到 15 秒以上，进程一直活着、没有卡死）。现在只要 Chrome 进程还活着就等它就绪，90 秒上限只用来挡住永远起不来的浏览器；进程退出时立即放弃，和原来一样。
