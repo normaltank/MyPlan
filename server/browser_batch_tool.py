@@ -1261,6 +1261,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     from server.harvest_coverage import build_coverage_ledger
     coverage = build_coverage_ledger(plan, source_capture, roster_observations, candidates,
                                      profile_html, eligibility, snapshots)
+    # The roster pages that linked each profile: a profile-page failure belongs
+    # to those branches, whichever selector they happen to share.
+    coverage["profile_sources"] = {url: sorted({source["roster_url"] for source in sources})
+                                   for url, sources in roster_reconciliation.profile_content_sources.items()}
     unresolved.extend(coverage["issues"])
     coverage["issues"] = list(unresolved)
     coverage["complete"] = coverage["complete"] and not unresolved

@@ -251,3 +251,34 @@ def test_siblings_wait_for_their_template_scout_instead_of_repeating_a_failure(m
     assert calls == [URLS[0]]
     assert sorted(checked) == URLS[1:]
     assert [b["url"] for b in json.loads(value.final_response)["branches"]] == URLS
+
+
+def test_branch_repair_must_prove_its_profile_selector_on_the_failed_profiles(monkeypatch):
+    samples = [f"https://example.edu/p/{i}" for i in (1, 2)]
+    failed = "https://example.edu/p/9"
+
+    def execute(prompt, sid, cfg, patches):
+        if cfg["phase"] == "discovery":
+            return discovery()
+        url = next(u for u in URLS if u in prompt)
+        value = {"url": url, "card_selector": "main li", "single_page": True,
+                 "profile_content_selector": "#vsb_content"}
+        events = pair("browser_verify", {"card_selector": "main li"},
+                      {"url": url, "cardCount": 3, "pagination": {"total": 0}, "linkedSamples": samples}, url)
+        for index, sample in enumerate(samples):
+            events += pair("browser_verify_profile", {"profile_content_selector": "#vsb_content"},
+                           {"url": sample, "profile_content_selector": "#vsb_content",
+                            "profile_content_start_selector": None, "confirmed": True, "container_count": 1,
+                            "container_visible": True, "dom_stable": True, "network_idle": True,
+                            "html_sha256": "a" * 64, "selected_html_sha256": "b" * 64}, f"{url}-{index}")
+        return result(value, events)
+    monkeypatch.setattr(agent_recon, "_execute_harness", execute)
+    feedback = {"previous_plan": {"branches": [{"url": u} for u in URLS]},
+                "issues": [{"status": "profile_content_selector_missing", "url": failed,
+                            "selector": "#vsb_content", "branch_url": URLS[0]}]}
+    cfg = {"target": TARGET, "timeout_seconds": 10, "feedback": feedback}
+    with pytest.raises(agent_recon.ReconPlanError) as caught:
+        agent_recon._run_staged_harness("repair-proof", cfg, ())
+    issue = caught.value.safe_feedback["issues"][0]
+    assert issue["status"] == "profile_content_not_verified" and issue["url"] == URLS[0]
+    assert issue["sample_urls"] == [failed]
