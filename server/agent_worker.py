@@ -123,6 +123,14 @@ def available_memory_mb() -> float | None:
 NOT_STRUCTURAL = NON_STRUCTURAL  # Compatibility for existing integrations.
 
 
+def gate_rejection_summary(exc: BaseException) -> str:
+    """What the submission gate last refused, as codes only, for a recon failure message."""
+    rejected = (getattr(exc, "diagnostics", None) or {}).get("last_gate_rejections") or []
+    codes = list(dict.fromkeys(f"{item.get('status')}/{item.get('failed_condition', '-')}"
+                               for entry in rejected for item in entry.get("issues", [])))
+    return f"；最后一次门禁打回：{', '.join(codes[:3])}" if codes else ""
+
+
 class SleepGuard:
     """Keep Windows from sleeping while colleges are being harvested.
 
@@ -323,7 +331,7 @@ class AgentWorker:
                 task, f"超过最大运行时长 {self.max_task_seconds:.0f}s，判定卡死")
             return
         except (ReconError, PlanHygieneError) as exc:
-            await self._mark_failed(task, f"侦察失败：{exc}")
+            await self._mark_failed(task, f"侦察失败：{exc}{gate_rejection_summary(exc)}")
             return
 
         elapsed = time.monotonic() - started
@@ -468,6 +476,10 @@ class AgentWorker:
                 self._save_recon_audit(output_dir, attempts, "plan_contract_rejected")
                 report = {"delivery_ready": False, "unresolved": feedback["issues"],
                           "recon_attempts": attempts.copy()}
+                if not classify_issues(feedback["issues"]).structure:
+                    # A page fact the gate proved on two opens: another scout meets the same page.
+                    print("[worker]   结构计划被页面本身挡住，换个时间再试", flush=True)
+                    break
                 failure_state = (
                     tuple(sorted(json.dumps(issue, sort_keys=True, ensure_ascii=False)
                                  for issue in feedback["issues"])),
@@ -491,7 +503,9 @@ class AgentWorker:
                                  "status": status})
                 self._save_recon_audit(output_dir, attempts, status,
                                       usage_unknown=getattr(exc, "usage_unknown", True))
-                save_runtime({"unresolved": [{"status": status}]})
+                rejected = getattr(exc, "diagnostics", {}).get("last_gate_rejections")
+                save_runtime({"unresolved": [{"status": status,
+                                              **({"last_gate_rejections": rejected} if rejected else {})}]})
                 raise
             if harvested_plan is not None and recon.plan == harvested_plan:
                 # Capture is deterministic for a plan: the same plan would

@@ -157,7 +157,7 @@ python -m server.browser_batch_tool --plan <已核实计划.json> --output-dir s
 
 名录分支默认并行运行，运行补丁和证据目录分别独立。设置 `FACULTY_RECON_PARALLEL=0` 可回到串行排障；`FACULTY_RECON_TEMPLATE_REUSE=0` 关闭模板复用。结构指纹相同只提供复用候选，目标名录仍重新用真实 Playwright 核验选择器、实际下一页与个人正文；失败回退独立侦察，不跳过页面。交互、分段、空页和无个人详情页的名录不作模板捷径。官网详情页限流及低内存保护不变。
 
-`submit_plan` 在工具调用时校验严格 Schema、当前目标和本轮浏览器证据；错误只返回受控状态码与字段路径，不能回显不合法的教师字段。默认服务器配置必须有成功的提交收据；无需在最终文本重复计划。
+`submit_plan` 在工具调用时校验严格 Schema、当前目标和本轮浏览器证据；Schema 错误只返回受控状态码与字段路径，不能回显不合法的教师字段。证据错误另给分支 URL、选择器、没通过的条件 `failed_condition`、最接近的观察 `closest` 与还缺的证据 `need`。全部是只由页面决定的失败（`page_only`）时结束会话（`recon_page_unverifiable`，按 access 分流）；同一计划无新浏览器证据时重交不重判，第二次结束会话（`recon_gate_stalled`）。超时或预算停止的侦察会在审计和失败信息中记下每个会话最后一次被打回的条件。默认服务器配置必须有成功的提交收据；无需在最终文本重复计划。
 
 每个任务目录的 `runtime-report.json` 汇总全部侦察尝试（包括格式拒绝）、缓存/模板复用、访问重试、阶段耗时、人工问题和费用；最后一次采集 audit 及工单统计也带 `runtime_report`。字段阶段耗时保留在 `stage_seconds`。新报告不会改变快照原捕获时间，不可把恢复或本地页面回放当成本轮实网覆盖。
 

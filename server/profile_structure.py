@@ -363,6 +363,10 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                 server_rendered = False
             if server_rendered:
                 ignored += len(failed_content_requests)
+        # Failures no container choice can ignore, seen on both opens: the
+        # page itself blocks every profile proof, whatever the plan says.
+        page_blocking = [item for item, resource in zip(other_blocking, failed_resources(other_blocking))
+                         if recurring_failures is not None and resource in recurring]
         pending_requests = [
             (getattr(request, 'url', ''), getattr(request, 'resource_type', ''))
             for request in tracker.pending
@@ -392,6 +396,10 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                       hidden_content_count=facts['hidden_content_count'], start_valid=facts['start_valid'],
                       active_animation_count=facts['active_animation_count'])
         result['settle_samples'] = settle_samples
+        if page_blocking:
+            result['page_blocking_requests'] = [
+                {"type": kind, "status": status, "path": urlsplit(url).path[-80:]}
+                for url, kind, status in page_blocking[:3]]
         if evidence:
             result['selected_html_sha256'] = evidence['selected_html_sha256']
         if issue:
