@@ -35,12 +35,17 @@ from server.titles import TITLE_KEYWORDS
 
 from iso_mining import first_href, name_prob, rare_surname_name  # noqa: E402  (Opus on sys.path)
 
+# The person-name rule below is the only copy; segmented_roster (and the PDF
+# and image table readers through it) import it, so a name reads the same on
+# every roster shape.
 NAME_PRIOR_FLOOR = 0.5
 # Clause boundaries: a list of names never runs across these.
 _BOUNDARY = re.compile(r"[（）()\[\]【】<>《》：:；;。！？!?|/\n\r\t]+")
 _PADDED_TWO = re.compile(r"^([一-鿿])[\s　]+([一-鿿])$")
 _HAN_NAME = re.compile(r"^[一-鿿]{2,4}$")
-_MINORITY_NAME = re.compile(r"^[一-鿿]{2,6}[·•][一-鿿]{2,8}$")
+# Fewest characters on each side of the dot in a minority name.
+MINORITY_SIDE_MIN = 1
+_MINORITY_NAME = re.compile(rf"^[一-鿿]{{{MINORITY_SIDE_MIN},6}}[·•][一-鿿]{{{MINORITY_SIDE_MIN},8}}$")
 # '主  任：李 炜'、'系主任：文汝红'、'党政办公室主任：陈刚'
 _ROLE_LABEL = re.compile(r"(主任|组长|负责人|带头人|书记|院长|所长|秘书)$")
 ROLE_LINE_REASON = "name_list_role_line"
@@ -57,6 +62,7 @@ def _item(raw: str) -> str:
 
 def _person_name(item: str) -> str | None:
     cleaned, _title = FacultyDirectoryExtractor._clean_name(item)
+    cleaned = cleaned.strip(".。")
     words = item.split()
     if (len(words) > 1 and not _PADDED_TWO.match(item)
             and cleaned == "".join(words)):
