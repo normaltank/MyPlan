@@ -70,9 +70,11 @@ def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[d
     regenerate = html_email_review.evidence_missing(audit)
     if audit.get("image_table_evidence"):
         from server.image_table_review import review_complete as tables_complete
-        return tables_complete(audit_path) and not any(
-            not str(item.get("status", "")).startswith("table_")
-            for item in audit.get("unresolved", []))
+        if not tables_complete(audit_path):
+            return False
+        # Other review kinds on the same college still need their own decisions.
+        if all(str(item.get("status", "")).startswith("table_") for item in audit.get("unresolved", [])):
+            return True
     if not ocr_items and not email_items and not names and not identities and not html_emails and not regenerate:
         return False
     issues = {item.get('status') for item in audit.get('unresolved', [])}

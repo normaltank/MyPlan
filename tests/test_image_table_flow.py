@@ -99,9 +99,27 @@ def test_table_poster_mixing_and_non_http_plan_are_rejected():
               "single_page": True, "card_selector": "article img"}
     plan = {"school": "U", "college": "C", "branches": [branch],
             "poster_reviews": [{"source_url": branch["url"], "reviewed_full_image": True, "expected_count": 1}]}
-    with pytest.raises(ValueError, match="cannot share"):
+    with pytest.raises(ValueError, match="no longer accepted"):
         _validate_plan(plan)
     plan.pop("poster_reviews")
     branch["url"] = "file:///C:/local.html"
     with pytest.raises(ValueError, match="official URL"):
         _validate_plan(plan)
+
+
+def test_table_review_does_not_hide_other_review_kinds(tmp_path, monkeypatch):
+    from server import image_table_review, task_image_review
+    audit = tmp_path / "a_audit.json"
+    audit.write_text(json.dumps({"image_table_evidence": [{"url": "u"}], "unresolved": [
+        {"status": "table_full_image_review_missing"},
+        {"status": task_image_review.name_review.STATUS}]}), encoding="utf-8")
+    monkeypatch.setattr(image_table_review, "review_complete", lambda path: True)
+    pending = [{"id": "name-1"}]
+    assert not task_image_review.review_complete(audit, [], [], names=pending)
+    monkeypatch.setattr(task_image_review.name_review, "review_complete", lambda path, items: True)
+    assert task_image_review.review_complete(audit, [], [], names=pending)
+    audit.write_text(json.dumps({"image_table_evidence": [{"url": "u"}],
+                                 "unresolved": [{"status": "table_cell_low_confidence"}]}), encoding="utf-8")
+    assert task_image_review.review_complete(audit, [], [])
+    monkeypatch.setattr(image_table_review, "review_complete", lambda path: False)
+    assert not task_image_review.review_complete(audit, [], [])
