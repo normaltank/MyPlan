@@ -190,6 +190,55 @@ _LATIN = re.compile(r"^[A-Z][a-zA-Z'\-]+(?:[ .][A-Z][a-zA-Z'\-.]*){1,3}$")
 _TOKEN_SPLIT = re.compile(r"[\s\u3000,，、;；:：|/()（）\[\]【】<>《》\"'“”]+")
 
 
+def latin_name_shape(s: str) -> bool:
+    """Unicode Latin words, retaining accents, particles and joined surnames.
+
+    This is a field shape prior, just like the Han surname prior; it does not
+    remove content or establish faculty eligibility outside a roster.
+    """
+    words = s.split()
+    if not 2 <= len(words) <= 8:
+        return False
+    for word in words:
+        if not word or not word[0].isalpha() or not word[-1].isalpha():
+            return False
+        if not all((ch.isalpha() and 'LATIN' in unicodedata.name(ch, ''))
+                   or ch in "-'’" for ch in word):
+            return False
+    return words[0][0].isupper() and words[-1][0].isupper()
+
+
+_LEADING_LABEL = re.compile(r"^[\s\u3000]*(?:(?:姓\s*名|name)\s*[:：]\s*)?", re.I)
+
+
+def _latin_tokens(text: str) -> list[str]:
+    # Only a run that opens the text (optionally after a 姓名 label) is a
+    # name slot; Latin words later in a Chinese biography are institutions.
+    text = unicodedata.normalize('NFC', text)
+    text = text[_LEADING_LABEL.match(text).end():]
+    if not text or not (text[0].isalpha() and 'LATIN' in unicodedata.name(text[0], '')):
+        return []
+    return _latin_runs(text)[:1]
+
+
+def _latin_runs(text: str) -> list[str]:
+    # The maximal Latin run ends at a different script (degree/title metadata
+    # on the Malaga cards), punctuation or a number; spaces remain in the name.
+    runs, current = [], []
+    for ch in unicodedata.normalize('NFC', text):
+        if (ch.isalpha() and 'LATIN' in unicodedata.name(ch, '')) or ch.isspace() or ch in "-'’.":
+            current.append(ch)
+        else:
+            run = ''.join(current).strip()
+            if _LATIN.fullmatch(run) or latin_name_shape(run):
+                runs.append(run)
+            current = []
+    run = ''.join(current).strip()
+    if _LATIN.fullmatch(run) or latin_name_shape(run):
+        runs.append(run)
+    return runs
+
+
 _INVISIBLE = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff\u00ad]")
 
 
@@ -220,7 +269,7 @@ def name_prob(s: str) -> float:
         return p * (0.85 if len(s) == 4 else 1.0)
     if _MINORITY.match(s):
         return 0.8
-    if _LATIN.match(s):
+    if _LATIN.match(s) or latin_name_shape(unicodedata.normalize('NFC', s)):
         return 0.6
     return 0.03
 
@@ -316,10 +365,12 @@ def primary_tokens(nodes: list[Tag], k: int = 3) -> list[str]:
         for a in n.find_all("a") if n.name != "a" else [n]:
             t = _collapse_han(a.get_text(" ", strip=True))
             if t:
+                toks.extend(_latin_tokens(t))
                 toks.extend(c for c in (_name_token(x) for x in _TOKEN_SPLIT.split(t)) if c)
     for n in nodes:                           # then every text leaf, han-collapsed
         leaves = [n.core] if isinstance(n, VirtualNode) else list(n.stripped_strings)
         for t in leaves:
+            toks.extend(_latin_tokens(t))
             toks.extend(c for c in (_name_token(x) for x in _TOKEN_SPLIT.split(_collapse_han(t))) if c)
     seen, out = set(), []
     for t in toks:
