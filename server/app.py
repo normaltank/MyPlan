@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 if __package__:
-    from .agent_queue import agent_queue, LeaseConflictError
+    from .agent_queue import agent_queue, LeaseConflictError, failure_disposition
     from .access_control import AccountStore, Account
     from .image_table_routes import router as image_table_router
     from .task_image_review import (task_review_audit, has_image_review, review_items,
@@ -35,7 +35,7 @@ if __package__:
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
-    from agent_queue import agent_queue, LeaseConflictError
+    from agent_queue import agent_queue, LeaseConflictError, failure_disposition
     from access_control import AccountStore, Account
     from image_table_routes import router as image_table_router
     from task_image_review import (task_review_audit, has_image_review, review_items,
@@ -432,6 +432,7 @@ def present_task(data, scope):
             and str(data.get("download_url", "")).startswith("/download/versions/")):
         data["download_url"] = ""
     if data.get('status') == 'failed':
+        data['failure_disposition'] = failure_disposition(data.get('error'), data.get('stats'))
         task = agent_queue.get_task(data['task_id'])
         audit = task_review_audit(OUTPUT_DIR, task) if task else None
         if audit is not None:

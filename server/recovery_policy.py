@@ -83,3 +83,21 @@ def classify_issues(issues: list[dict]) -> Recovery:
                 action = "access"
         getattr(result, action).append(item)
     return result
+
+
+Disposition = Literal["review", "access", "structure", "recon", "failed"]
+# A scout that ended without a plan can be scouted again; budget and cost stops cannot.
+RECON_RETRY = frozenset({"recon_failed", "recon_timeout", "recon_failure", "recon_plan_invalid"})
+
+
+def failure_disposition(codes: list[str]) -> Disposition:
+    """Where a failed college goes next. The most demanding action wins: a review
+    cannot settle a structure problem, and nothing settles a stop."""
+    if RECON_RETRY & set(codes):
+        return "recon"
+    actions = {recovery_action(code) for code in codes}
+    for action, disposition in (("stop", "failed"), ("structure", "structure"),
+                                ("access", "access"), ("review", "review")):
+        if action in actions:
+            return disposition
+    return "failed"
