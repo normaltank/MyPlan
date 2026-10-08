@@ -7,12 +7,12 @@ from pathlib import Path
 import shutil
 import time
 
-from . import html_email_review, name_review, identity_review
+from . import html_email_review, name_review, identity_review, media_kind_review
 from .image_bio_review import (collect_email_conflict_items, collect_review_items,
                                resolve_email_conflict)
 
 
-IMAGE_REVIEW_STATUSES = {'image_bio_low_confidence', 'image_bio_email_conflict',
+IMAGE_REVIEW_STATUSES = {'image_bio_low_confidence', 'image_bio_email_conflict', 'image_bio_owner_unresolved',
                          'segment_name_needs_review', name_review.STATUS, identity_review.STATUS,
                          *html_email_review.STATUSES, "table_grid_ambiguous", "table_header_unresolved",
                          "table_cell_low_confidence", "table_cell_unreadable", "table_text_unassigned",
@@ -48,6 +48,7 @@ def task_review_audit(output_dir: str | Path, task) -> Path | None:
 def has_image_review(audit_path: Path) -> bool:
     audit = json.loads(audit_path.read_text(encoding='utf-8'))
     return any(item.get('status') in IMAGE_REVIEW_STATUSES
+               or (item.get('status') == media_kind_review.STATUS and item.get('kind') == 'image')
                for item in audit.get('unresolved', []))
 
 
@@ -66,6 +67,9 @@ def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[d
     identities = identities or []
     html_emails = html_emails or []
     audit = json.loads(audit_path.read_text(encoding='utf-8'))
+    media_items = media_kind_review.collect_items(audit_path)
+    if not media_kind_review.review_complete(audit_path, media_items):
+        return False
     # An old audit has the HTML e-mail block but not its evidence; only a rerun can produce it.
     regenerate = html_email_review.evidence_missing(audit)
     if audit.get("image_table_evidence"):
@@ -75,12 +79,13 @@ def review_complete(audit_path: Path, ocr_items: list[dict], email_items: list[d
         # Other review kinds on the same college still need their own decisions.
         if all(str(item.get("status", "")).startswith("table_") for item in audit.get("unresolved", [])):
             return True
-    if not ocr_items and not email_items and not names and not identities and not html_emails and not regenerate:
+    if not ocr_items and not email_items and not names and not identities and not html_emails and not media_items and not regenerate:
         return False
     issues = {item.get('status') for item in audit.get('unresolved', [])}
     if not regenerate and not html_email_review.review_complete(audit_path, audit, html_emails):
         return False
     if ((issues & {'image_bio_low_confidence', 'segment_name_needs_review'} and not ocr_items)
+            or ('image_bio_owner_unresolved' in issues and not ocr_items)
             or ('image_bio_email_conflict' in issues and not email_items)
             or (name_review.STATUS in issues and not names)
             or (identity_review.STATUS in issues and not identities)):
@@ -135,7 +140,8 @@ def carry_review_decisions(task_root: str | Path, target_attempt: str | Path) ->
     source = source_audit.parent
     target.mkdir(parents=True, exist_ok=True)
     for filename in ('image_bio_reviews.json', 'image_bio_email_reviews.json', name_review.DECISIONS_FILE,
-                     identity_review.DECISIONS_FILE, html_email_review.DECISIONS_FILE, 'image_table_reviews.json'):
+                     identity_review.DECISIONS_FILE, html_email_review.DECISIONS_FILE, 'image_table_reviews.json',
+                     media_kind_review.DECISIONS_FILE):
         path = source / filename
         if path.is_file() and path.resolve().is_relative_to(root) and path.resolve() != (target / filename).resolve():
             shutil.copyfile(path, target / filename)

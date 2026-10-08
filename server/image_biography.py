@@ -50,6 +50,39 @@ def page_appearance(data: bytes) -> dict:
     return {"document_like": light >= 0.4 and coloured <= 0.10,
             "light_share": round(light, 3), "coloured_share": round(coloured, 3)}
 
+# A biography page has several lines of text; a portrait has none. Below this
+# many unread lines a page-shaped image is a picture, as with read lines.
+UNREAD_PAGE_LINES = 3
+
+
+def unread_text_lines(data: bytes, read_lines: list[dict], ocr_engine) -> int | None:
+    """Text lines the OCR detector outlines on an image but recognition did not read.
+
+    The detector finds printed lines even where the page is too blurred or too
+    small to transcribe, while a portrait's face, clothing and backdrop give no
+    line-shaped regions: one side at least three times the other, for
+    horizontal or vertical writing. None when the image cannot be measured.
+    """
+    def span(box):
+        xs, ys = [point[0] for point in box], [point[1] for point in box]
+        return min(xs), min(ys), max(xs), max(ys)
+    try:
+        boxes, _ = ocr_engine(data, use_det=True, use_cls=False, use_rec=False)
+        boxes = boxes.tolist() if hasattr(boxes, "tolist") else boxes or []
+        read = [span(line["box"]) for line in read_lines]
+        count = 0
+        for box in boxes:
+            left, top, right, bottom = span(box)
+            width, height = right - left, bottom - top
+            if max(width, height) < 3 * min(width, height):
+                continue
+            x, y = (left + right) / 2, (top + bottom) / 2
+            count += not any(a <= x <= c and b <= y <= d for a, b, c, d in read)
+        return count
+    except Exception:
+        return None
+
+
 @dataclass(frozen=True)
 class MediaReference:
     kind: str
@@ -227,6 +260,7 @@ async def audit_profile_media(
     *, fetch_asset: Callable[[str], Awaitable[bytes]], ocr_engine=None,
     scoped_urls: set[str] | None = None, known_names: set[str] | None = None,
     review_decisions_path: str | Path | None = None,
+    media_kind_decisions_path: str | Path | None = None,
     cache_dir: str | Path | None = None,
 ) -> dict:
     """Retain original assets, transcribe locally, and resolve only unique owners.
@@ -348,11 +382,21 @@ async def audit_profile_media(
                 if min(size) >= 700 and 0.58 <= ratio <= 0.78:
                     # A page-shaped image with almost no text may be a scanned
                     # resume OCR could not read, or simply a 2:3 portrait photo.
-                    appearance = page_appearance(original)
-                    record["page_appearance"] = appearance
-                    if appearance["document_like"]:
-                        unresolved.append({**source, "status": "image_bio_ocr_incomplete",
-                                           "ocr_path": str(ocr_path), "page_appearance": appearance})
+                    # Only the first still shows text lines to the detector.
+                    if shared_ocr_engine is None:
+                        from rapidocr_onnxruntime import RapidOCR
+                        shared_ocr_engine = RapidOCR()
+                    unread = await asyncio.to_thread(unread_text_lines, original, lines,
+                                                     shared_ocr_engine)
+                    record["unread_text_lines"] = unread
+                    if unread is None or unread >= UNREAD_PAGE_LINES:
+                        from server.media_kind_review import photo_confirmed
+                        if photo_confirmed(Path(media_kind_decisions_path) if media_kind_decisions_path else None,
+                                           profile_url, ref.url, digest):
+                            record["media_kind_review"] = "photo"
+                        else:
+                            unresolved.append({**source, "status": "image_bio_ocr_incomplete",
+                                               "ocr_path": str(ocr_path), "unread_text_lines": unread})
                 continue
             if not text:
                 continue

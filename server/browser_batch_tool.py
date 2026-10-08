@@ -178,6 +178,53 @@ def _is_banner_arrow(control: Tag, roster_nodes: list[Tag]) -> bool:
     return not touches_roster and len(slider.find_all("img")) >= 2
 
 
+def _in_pager(control: Tag) -> bool:
+    ancestor = control
+    while ancestor is not None and getattr(ancestor, "name", None):
+        if ancestor.name in {"body", "html", "main"}:
+            return False
+        tokens = " ".join(ancestor.get("class", [])) + " " + str(ancestor.get("id", ""))
+        label = str(ancestor.get("aria-label", ""))
+        if re.search(r"(?:^|[-_\s])(?:pagination|pager|pages)(?:$|[-_\s])", tokens, re.I) or "pagination" in label.lower():
+            return True
+        ancestor = ancestor.parent
+    return False
+
+
+def _banner_arrow_outside_roster(control: Tag, roster_nodes: list[Tag]) -> bool:
+    href = control.get("href", "").strip()
+    return bool(roster_nodes and (not href or href.startswith(("#", "javascript:")))
+                and _is_banner_arrow(control, roster_nodes))
+
+
+def without_banner_arrows(html: str, card_selector: str, pagination: dict) -> dict:
+    """Recon's pagination candidates under this module's banner rule.
+
+    The recon gate and the harvest must agree on what a pager is; otherwise a
+    scout is asked to prove pagination the harvest would never follow.
+    """
+    items = pagination.get("items")
+    if not isinstance(items, list) or not items:
+        return pagination
+    soup = BeautifulSoup(html, "html.parser")
+    try:
+        roster_nodes = soup.select(card_selector)
+    except Exception:
+        return pagination
+    kept = []
+    for item in items:
+        try:
+            nodes = soup.select(item.get("selector") or "")
+        except Exception:
+            nodes = []
+        if not (len(nodes) == 1 and not _in_pager(nodes[0])
+                and _banner_arrow_outside_roster(nodes[0], roster_nodes)):
+            kept.append(item)
+    dropped = len(items) - len(kept)
+    return {**pagination, "items": kept, "total": pagination["total"] - dropped,
+            **({"banner_arrows_ignored": dropped} if dropped else {})}
+
+
 def _pagination_candidates(html: str, current_url: str,
                            card_selector: str | None = None) -> list[str | None]:
     """Find bounded pagination leads from browser-rendered structure, not names."""
@@ -207,22 +254,11 @@ def _pagination_candidates(html: str, current_url: str,
         control_classes = " ".join(control.get("class", []))
         is_next = is_next or bool(re.search(r"(?:^|[-_\s])(?:next|nextpage)(?:$|[-_\s])",
                                              control_classes, re.I))
-        ancestor = control
-        in_pager = False
-        while ancestor is not None and getattr(ancestor, "name", None):
-            if ancestor.name in {"body", "html", "main"}:
-                break
-            tokens = " ".join(ancestor.get("class", [])) + " " + str(ancestor.get("id", ""))
-            label = str(ancestor.get("aria-label", ""))
-            if re.search(r"(?:^|[-_\s])(?:pagination|pager|pages)(?:$|[-_\s])", tokens, re.I) or "pagination" in label.lower():
-                in_pager = True
-                break
-            ancestor = ancestor.parent
+        in_pager = _in_pager(control)
         if not (is_next or in_pager):
             continue
         href = control.get("href", "").strip()
-        if (roster_nodes and not in_pager and (not href or href.startswith(("#", "javascript:")))
-                and _is_banner_arrow(control, roster_nodes)):
+        if not in_pager and _banner_arrow_outside_roster(control, roster_nodes):
             continue
         target = urljoin(current_url, href) if href and not href.startswith(("#", "javascript:")) else None
         if target == current_url:
@@ -298,6 +334,10 @@ async def _wait_for_change(page: Any, before: str, url: str, seconds: float = 3.
     With a verified card (or segment start) selector the cards decide: the
     name miner cannot read every page (rare surnames await review), and an
     empty reading must not stop pagination as 'unchanged'.
+
+    A control that is a link opens a new document. Its load time is the
+    site's, not the roster's: the wait starts once that document has loaded,
+    as a direct visit to the page would.
     """
     if unit_selector:
         def signature(html: str, current_url: str) -> tuple:
@@ -307,8 +347,18 @@ async def _wait_for_change(page: Any, before: str, url: str, seconds: float = 3.
     previous = signature(before, url)
     deadline = asyncio.get_running_loop().time() + seconds
     pending, stable_since = None, None
+    navigated = False
     while asyncio.get_running_loop().time() < deadline:
-        current = await page.content()
+        if not navigated and page.url != url:
+            navigated = True
+            with contextlib.suppress(Exception):
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
+            deadline = asyncio.get_running_loop().time() + seconds
+        try:
+            current = await page.content()
+        except Exception:  # the new document is still replacing the old one
+            await asyncio.sleep(0.1)
+            continue
         sig = signature(current, page.url)
         if current != before and sig and sig != previous:
             if not unit_selector:
@@ -1142,6 +1192,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         fetch_asset=fetch_original_media, scoped_urls=set(profile_scope_evidence) | segment_media_urls,
         known_names={candidate.name for candidate in candidates},
         review_decisions_path=out / "image_bio_reviews.json",
+        media_kind_decisions_path=out / "media_kind_reviews.json",
         cache_dir=ocr_cache_dir)
     unresolved.extend(media_audit["unresolved"])
     for url, scope_evidence in profile_scope_evidence.items():
@@ -1230,6 +1281,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     from server.harvest_coverage import build_coverage_ledger
     coverage = build_coverage_ledger(plan, source_capture, roster_observations, candidates,
                                      profile_html, eligibility, snapshots)
+    # The roster pages that linked each profile: a profile-page failure belongs
+    # to those branches, whichever selector they happen to share.
+    coverage["profile_sources"] = {url: sorted({source["roster_url"] for source in sources})
+                                   for url, sources in roster_reconciliation.profile_content_sources.items()}
     unresolved.extend(coverage["issues"])
     coverage["issues"] = list(unresolved)
     coverage["complete"] = coverage["complete"] and not unresolved

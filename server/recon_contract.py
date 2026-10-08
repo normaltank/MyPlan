@@ -121,7 +121,7 @@ def validate_submission(plan: Any, phase: str, target: dict | None,
         return [{"path": "$", "status": "structure_contract_rejected"}]
     # Evidence issues already use controlled status codes. Strip URLs/selectors as well.
     return [{"path": "$.branches" if phase == "full" else "$", "status": item["status"]}
-            for item in selector_evidence_issues(complete, events)]
+            for item in selector_evidence_issues(complete, events, target.get("repair_profiles"))]
 
 
 def submitted_plan(events: list[dict]) -> dict | None:

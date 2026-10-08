@@ -130,7 +130,7 @@ async def test_profile_samples_include_anchor_cards_and_deduplicate_before_budge
 
 @pytest.mark.asyncio
 @pytest.mark.browser
-async def test_missing_stylesheet_cannot_confirm_a_visible_profile(tmp_path):
+async def test_missing_stylesheet_is_judged_only_after_reopening_the_profile(tmp_path):
     from server.browser_context import new_browser_context
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -138,16 +138,20 @@ async def test_missing_stylesheet_cannot_confirm_a_visible_profile(tmp_path):
             context = await new_browser_context(browser)
             page = await context.new_page()
             scout = BrowserScout(page, tmp_path)
+            opens = []
             async def route(request):
                 if request.request.url.endswith('.css'):
                     await request.abort()
                 else:
+                    opens.append(request.request.url)
                     await request.fulfill(body='<link rel="stylesheet" href="/profile.css"><article><p>完整正文。</p></article>',
                                           content_type='text/html')
             await page.route('**/*', route)
             await page.goto(PROFILES[0])
             reply = await scout.call('browser_verify_profile', {'profile_content_selector':'article'})
-            assert json.loads(reply['content'][0]['text'])['confirmed'] is False
+            # One failed load proves nothing; the same failure on a fresh open is the published page.
+            assert json.loads(reply['content'][0]['text'])['confirmed'] is True
+            assert len(opens) == 2
         finally:
             await browser.close()
 
@@ -167,3 +171,26 @@ def test_any_two_profiles_linked_from_verified_pages_prove_the_scope():
     assert one[0]["sample_urls"] == PROFILES + later
     assert selector_evidence_issues(plan, events + scope_events(later[0], cid="2")
                                     + scope_events(later[1], cid="3")) == []
+
+
+def test_repaired_profile_selector_must_hold_on_the_pages_where_the_last_one_failed():
+    # Sibling CMS pages number their body container (#vsb_content_2, _4); a
+    # selector re-proved only on the two roster samples would fail again.
+    failed = {URL: ["https://scope.example.edu/p/9"]}
+    samples = roster_events() + scope_events(PROFILES[0]) + scope_events(PROFILES[1], cid="2")
+    assert selector_evidence_issues(PLAN, samples) == []
+    issue = selector_evidence_issues(PLAN, samples, failed)[0]
+    assert issue["status"] == "profile_content_not_verified" and issue["sample_urls"] == failed[URL]
+    assert selector_evidence_issues(PLAN, samples + scope_events(failed[URL][0], cid="3"), failed) == []
+    assert selector_evidence_issues(PLAN, samples, {"https://scope.example.edu/other": failed[URL]}) == []
+
+
+def test_submit_gate_reads_the_failed_profile_pages_from_its_target():
+    from server.recon_contract import validate_submission
+    target = {"school": PLAN["school"], "college": PLAN["college"], "url": URL}
+    samples = roster_events() + scope_events(PROFILES[0]) + scope_events(PROFILES[1], cid="2")
+    branch = PLAN["branches"][0]
+    assert validate_submission(branch, "branch", target, samples) == []
+    repair = {**target, "repair_profiles": {URL: ["https://scope.example.edu/p/9"]}}
+    assert [item["status"] for item in validate_submission(branch, "branch", repair, samples)] == [
+        "profile_content_not_verified"]

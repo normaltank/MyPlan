@@ -160,6 +160,61 @@ async def test_unreadable_document_page_blocks_image_biography(tmp_path):
     assert any(item["status"] == "image_bio_ocr_incomplete" for item in result["unresolved"])
 
 
+def _page_ocr(read, detected):
+    """A RapidOCR stand-in: recognised lines, or detector boxes alone."""
+    def engine(_data, use_det=True, use_cls=True, use_rec=True):
+        if not use_rec:
+            return [[[x, y], [x + w, y], [x + w, y + h], [x, y + h]] for x, y, w, h in detected], None
+        return [([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], text, 0.99)
+                for (x, y, w, h), text in read], None
+    return engine
+
+
+async def _page_audit(tmp_path, engine):
+    url = "https://faculty.example.edu/p/1"
+    buffer = BytesIO()
+    Image.new("RGB", (800, 1130), "white").save(buffer, format="PNG")
+
+    async def fetch(_url):
+        return buffer.getvalue()
+    return await audit_profile_media({url: '<article><h1>张富有</h1><img src="/a.png"></article>'},
+                                     {url: {"张富有"}}, tmp_path, fetch_asset=fetch, ocr_engine=engine)
+
+
+@pytest.mark.asyncio
+async def test_page_shaped_portrait_on_a_plain_backdrop_is_not_an_unread_document(tmp_path):
+    # The detector outlines a face, a jacket and a caption, none of them text lines left unread.
+    caption = (300, 1050, 200, 40)
+    engine = _page_ocr([(caption, "张富有")], [(320, 200, 160, 190), (250, 500, 300, 400), caption,
+                                              (40, 40, 12, 14), (60, 70, 9, 11)])
+    result = await _page_audit(tmp_path, engine)
+    assert result["unresolved"] == [] and result["biographies"] == {}
+    assert result["evidence"][0]["unread_text_lines"] == 0
+
+
+@pytest.mark.asyncio
+async def test_page_whose_text_lines_ocr_cannot_read_blocks_image_biography(tmp_path):
+    engine = _page_ocr([], [(80, 80 + 36 * i, 640, 26) for i in range(5)])
+    result = await _page_audit(tmp_path, engine)
+    assert [item["status"] for item in result["unresolved"]] == ["image_bio_ocr_incomplete"]
+    assert result["unresolved"][0]["unread_text_lines"] == 5
+    # vertical writing is read the same way
+    engine = _page_ocr([], [(700 - 40 * i, 80, 26, 640) for i in range(3)])
+    result = await _page_audit(tmp_path / "vertical", engine)
+    assert result["unresolved"][0]["status"] == "image_bio_ocr_incomplete"
+
+
+@pytest.mark.asyncio
+async def test_page_that_cannot_be_measured_stays_on_the_review_path(tmp_path):
+    def engine(_data, use_det=True, use_cls=True, use_rec=True):
+        if not use_rec:
+            raise RuntimeError("detector failed")
+        return [], None
+    result = await _page_audit(tmp_path, engine)
+    assert result["unresolved"][0]["status"] == "image_bio_ocr_incomplete"
+    assert result["unresolved"][0]["unread_text_lines"] is None
+
+
 @pytest.mark.asyncio
 async def test_pdf_link_returning_captcha_html_is_a_blocking_asset_failure(tmp_path):
     url = "https://faculty.example.edu/p/1"

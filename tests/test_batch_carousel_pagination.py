@@ -1,8 +1,9 @@
 """A banner's slide controls cannot stand in for a faculty roster pager."""
 
 import pytest
+from bs4 import BeautifulSoup
 
-from server.browser_batch_tool import _pagination_candidates
+from server.browser_batch_tool import _pagination_candidates, without_banner_arrows
 
 SLIDES = '<div class="slick-slide"><img></div>' * 2
 CAROUSEL = ('<div class="slick-slider slick-initialized"><div class="slick-list">'
@@ -59,3 +60,21 @@ def test_script_only_banner_arrows_are_not_roster_pagination_leads(banner):
 ])
 def test_script_only_controls_without_banner_proof_still_require_pagination_proof(html):
     assert _pagination_candidates(html, URL, '.roster > li')
+
+
+@pytest.mark.parametrize('html, kept', [
+    (SLIDE_BOX + ROSTER, 0),
+    (SLIDE_BOX + ROSTER + '<div class="pagination"><a class="next" href="javascript:void(0)">下一页</a></div>', 1),
+    (('<div class="slideBox"><ul class="roster"><li><img src="/a.png"><a href="/person/1">张三</a></li>'
+      '<li><img src="/b.png"><a href="/person/2">李四</a></li></ul>'
+      '<a class="next" href="javascript:void(0)"></a></div>'), 1),
+])
+def test_recon_gate_and_harvest_agree_on_banner_arrows(html, kept):
+    # Selectors as the recon probe reports them: one per candidate control.
+    selectors = ['#slideBox > a.next', 'div.pagination > a.next', 'div.slideBox > a.next']
+    soup = BeautifulSoup(html, 'html.parser')
+    found = [s for s in selectors if len(soup.select(s)) == 1]
+    pagination = {'total': len(found), 'items': [{'selector': s, 'url': 'javascript:void(0)', 'label': ''}
+                                                  for s in found]}
+    assert without_banner_arrows(html, '.roster > li', pagination)['total'] == kept
+    assert len(_pagination_candidates(html, URL, '.roster > li')) == kept

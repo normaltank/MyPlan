@@ -751,14 +751,30 @@ class AgentWorker:
 
     @staticmethod
     def _with_branch_urls(issues: list[dict], coverage_path: str | None) -> list[dict]:
-        """A later roster page ('.../fjs/1.htm') names the branch it was captured for."""
+        """Name the branch each issue was captured for.
+
+        A later roster page ('.../fjs/1.htm') names its own branch; a profile
+        page names every branch whose roster pages linked it, one issue each.
+        """
         try:
-            pages = json.loads(Path(coverage_path).read_text(encoding="utf-8")).get("pages", [])
+            coverage = json.loads(Path(coverage_path).read_text(encoding="utf-8"))
         except (TypeError, OSError, ValueError):
             return issues
-        owner = {page.get("url"): page.get("branch_url") for page in pages if page.get("branch_url")}
-        return [{**item, "branch_url": owner[item["url"]]}
-                if not item.get("branch_url") and item.get("url") in owner else item for item in issues]
+        owner = {page.get("url"): page.get("branch_url") for page in coverage.get("pages", [])
+                 if page.get("branch_url")}
+        linked = {url: sorted({owner[roster] for roster in rosters if roster in owner})
+                  for url, rosters in (coverage.get("profile_sources") or {}).items()}
+        mapped = []
+        for item in issues:
+            if item.get("branch_url"):
+                mapped.append(item)
+            elif item.get("url") in owner:
+                mapped.append({**item, "branch_url": owner[item["url"]]})
+            elif linked.get(item.get("url")):
+                mapped.extend({**item, "branch_url": branch} for branch in linked[item["url"]])
+            else:
+                mapped.append(item)
+        return mapped
 
     @staticmethod
     def _damaged_branches(plan: dict, feedback: dict) -> set | None:

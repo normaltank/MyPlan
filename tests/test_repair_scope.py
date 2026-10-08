@@ -137,3 +137,22 @@ def test_issue_on_a_later_roster_page_names_its_branch(tmp_path):
     feedback = build_repair_feedback(PLAN, {"unresolved": mapped[:1]})
     assert AgentWorker._damaged_branches(PLAN, feedback) == {A}
     assert AgentWorker._with_branch_urls(issues, None) == issues
+
+
+def test_profile_issue_names_every_branch_that_linked_the_profile(tmp_path):
+    # Sibling rosters share one profile selector; the harvest knows which
+    # roster pages linked the failing profile, so the repair is not left blind.
+    import json
+    shared = {**PLAN, "branches": [{**branch, "profile_content_selector": "#vsb_content"}
+                                   for branch in PLAN["branches"]]}
+    profile, both = "https://scope.example.edu/p/7.htm", "https://scope.example.edu/p/8.htm"
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(json.dumps({
+        "pages": [{"url": A, "branch_url": A}, {"url": A + "/2.htm", "branch_url": A}, {"url": B, "branch_url": B}],
+        "profile_sources": {profile: [A + "/2.htm"], both: [A, B]}}), encoding="utf-8")
+    issues = [{"status": "profile_content_selector_missing", "url": profile, "selector": "#vsb_content"},
+              {"status": "profile_content_browser_unverified", "url": both, "selector": "#vsb_content"}]
+    feedback = build_repair_feedback(shared, {"unresolved": AgentWorker._with_branch_urls(issues, str(coverage))})
+    assert [(item["url"], item["branch_url"]) for item in feedback["issues"]] == [
+        (profile, A), (both, A), (both, B)]
+    assert AgentWorker._damaged_branches(shared, feedback) == {A, B}

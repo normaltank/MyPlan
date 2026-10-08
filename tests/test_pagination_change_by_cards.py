@@ -72,3 +72,25 @@ def test_page_turn_waits_for_busy_and_empty_cards_to_settle():
     result = asyncio.run(_wait_for_change(page, before, URL, seconds=1, unit_selector='main li.card'))
     assert result == after
     assert page.calls >= 5
+
+
+def test_a_link_to_the_next_page_is_judged_after_that_page_has_loaded():
+    # A slow CMS: the click commits the new URL at once, but its document takes
+    # longer than the change window to load (传媒学院 副教授, 2026-10-08).
+    after = roster([(4, '禤海燕')])
+
+    class SlowNavigation:
+        url = URL + "/1.htm"
+        loaded = False
+
+        async def wait_for_load_state(self, state, timeout):
+            assert state == "domcontentloaded"
+            await asyncio.sleep(0.5)
+            self.loaded = True
+
+        async def content(self):
+            return after if self.loaded else roster(FIRST)
+
+    result = asyncio.run(_wait_for_change(SlowNavigation(), roster(FIRST), URL, seconds=0.3,
+                                          unit_selector='main li.card'))
+    assert result == after

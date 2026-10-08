@@ -200,3 +200,85 @@ async def test_profile_waits_for_finite_animation_but_blocks_continuing_animatio
                 assert proof['settle_samples'] > 1
         finally:
             await browser.close()
+
+
+def roster_page(cards, highlighted, pager=False):
+    menu = ''.join(f'<li><div class="nav-link{" hover" if i == highlighted else ""}"><a href="/m{i}">栏目</a></div></li>'
+                   for i in range(4))
+    items = ''.join(f'<li><a href="/p{i}">某</a><span>2020</span></li><span></span>' for i in range(cards))
+    nav = '<div class="pb_sys_common"><a href="/2.htm">下页</a></div>' if pager else ''
+    return f'<body><ul class="menu">{menu}</ul><div class="list"><ul>{items}</ul>{nav}</div></body>'
+
+
+def test_sibling_roster_pages_share_one_template_fingerprint():
+    # 教授／副教授／讲师 pages: different card counts and menu highlight, one template.
+    pages = [roster_page(7, 0), roster_page(12, 1), roster_page(3, 2)]
+    assert len({structural_fingerprint(html) for html in pages}) == 1
+    # A paged roster is a different shape and keeps its own scout.
+    assert structural_fingerprint(roster_page(7, 0, pager=True)) != structural_fingerprint(pages[0])
+
+
+def test_siblings_wait_for_their_template_scout_instead_of_repeating_a_failure(monkeypatch):
+    calls, checked = [], []
+    def execute(prompt, sid, cfg, patches):
+        if cfg["phase"] == "discovery":
+            return discovery()
+        url = next(u for u in URLS if u in prompt)
+        calls.append(url)
+        value, proof = branch(url)
+        return result(value, [] if "本阶段结构反馈" not in prompt else proof)  # first scout fails its gate
+    def verify(value, target, root, timeout, expected):
+        checked.append(value["url"])
+        _, proof = branch(value["url"])
+        return {"valid": True, "events": proof, "evidence_root": str(root)}
+    monkeypatch.setattr(agent_recon, "_execute_harness", execute)
+    monkeypatch.setattr("server.recon_templates.inspect_templates", lambda *_: dict.fromkeys(URLS, "same"))
+    monkeypatch.setattr("server.recon_templates.verify_template", verify)
+    cfg = {"target": TARGET, "timeout_seconds": 10, "parallel_branches": True, "template_reuse": True}
+    with pytest.raises(agent_recon.ReconPlanError) as caught:
+        agent_recon._run_staged_harness("one-scout", cfg, ())
+    error = caught.value
+    assert calls == [URLS[0]] and checked == []
+    assert error.diagnostics["model_calls"] == 2  # discovery and the one template scout
+    assert error.safe_feedback["known_urls"] == URLS
+    assert [item["url"] for item in error.safe_feedback["issues"]] == [URLS[0]]
+
+    # The repair round re-scouts the failed page; its siblings still follow it.
+    calls.clear()
+    value = agent_recon._run_staged_harness("one-scout-repair", {**cfg,
+        "feedback": error.safe_feedback, "resume_discovery": error.discovery_checkpoint,
+        "verified_branches": error.verified_branches}, ())
+    assert calls == [URLS[0]]
+    assert sorted(checked) == URLS[1:]
+    assert [b["url"] for b in json.loads(value.final_response)["branches"]] == URLS
+
+
+def test_branch_repair_must_prove_its_profile_selector_on_the_failed_profiles(monkeypatch):
+    samples = [f"https://example.edu/p/{i}" for i in (1, 2)]
+    failed = "https://example.edu/p/9"
+
+    def execute(prompt, sid, cfg, patches):
+        if cfg["phase"] == "discovery":
+            return discovery()
+        url = next(u for u in URLS if u in prompt)
+        value = {"url": url, "card_selector": "main li", "single_page": True,
+                 "profile_content_selector": "#vsb_content"}
+        events = pair("browser_verify", {"card_selector": "main li"},
+                      {"url": url, "cardCount": 3, "pagination": {"total": 0}, "linkedSamples": samples}, url)
+        for index, sample in enumerate(samples):
+            events += pair("browser_verify_profile", {"profile_content_selector": "#vsb_content"},
+                           {"url": sample, "profile_content_selector": "#vsb_content",
+                            "profile_content_start_selector": None, "confirmed": True, "container_count": 1,
+                            "container_visible": True, "dom_stable": True, "network_idle": True,
+                            "html_sha256": "a" * 64, "selected_html_sha256": "b" * 64}, f"{url}-{index}")
+        return result(value, events)
+    monkeypatch.setattr(agent_recon, "_execute_harness", execute)
+    feedback = {"previous_plan": {"branches": [{"url": u} for u in URLS]},
+                "issues": [{"status": "profile_content_selector_missing", "url": failed,
+                            "selector": "#vsb_content", "branch_url": URLS[0]}]}
+    cfg = {"target": TARGET, "timeout_seconds": 10, "feedback": feedback}
+    with pytest.raises(agent_recon.ReconPlanError) as caught:
+        agent_recon._run_staged_harness("repair-proof", cfg, ())
+    issue = caught.value.safe_feedback["issues"][0]
+    assert issue["status"] == "profile_content_not_verified" and issue["url"] == URLS[0]
+    assert issue["sample_urls"] == [failed]

@@ -518,8 +518,13 @@ def resolved_browser_url(url: str, aliases: dict[str, str]) -> str:
     return url
 
 
-def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Accept selectors only when this session's browser verified their matches."""
+def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
+                             repair_profiles: dict[str, list[str]] | None = None) -> list[dict[str, Any]]:
+    """Accept selectors only when this session's browser verified their matches.
+
+    repair_profiles maps a branch to the profile pages where the harvest found
+    its previous profile selector wrong; a repaired selector must hold there too.
+    """
     calls = {}
     observations = []
     profile_observations = []
@@ -665,8 +670,8 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
             # Any two distinct profiles linked from verified cards prove the
             # scope; a scout that sampled page 2 rather than page 1 has not
             # verified less. The harvest re-verifies every profile anyway.
-            required = min(2, len(linked))
-            if not linked or sum(any(
+            def proved(url):
+                return any(
                     args.get("profile_content_selector") == branch["profile_content_selector"]
                     and args.get("profile_content_start_selector") == branch.get("profile_content_start_selector")
                     and result.get("profile_content_selector") == branch["profile_content_selector"]
@@ -677,10 +682,17 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]])
                     and result.get("dom_stable") is True and result.get("network_idle") is True
                     and all(isinstance(result.get(key), str) and re.fullmatch(r"[a-f0-9]{64}", result[key])
                             for key in ("html_sha256", "selected_html_sha256"))
-                    for args, result, _ in profile_observations) for url in linked) < required:
+                    for args, result, _ in profile_observations)
+            required = min(2, len(linked))
+            if not linked or sum(proved(url) for url in linked) < required:
                 issues.append({"status": "profile_content_not_verified", "url": branch["url"],
                                "selector": branch["profile_content_selector"],
                                "sample_urls": linked[:4]})
+            elif unproved := [url for key, pages in (repair_profiles or {}).items()
+                              if resolve(key) == resolve(branch["url"]) for url in pages if not proved(url)]:
+                issues.append({"status": "profile_content_not_verified", "url": branch["url"],
+                               "selector": branch["profile_content_selector"],
+                               "sample_urls": unproved[:4]})
     return issues
 
 
@@ -848,6 +860,14 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                 if isinstance(item, dict) and url in
                 (item.get("url"), item.get("directory_url"), item.get("branch_url"))]
 
+    def repair_profiles(url: str) -> dict[str, list[str]]:
+        """Profile pages where the harvest found this branch's profile selector wrong."""
+        pages = list(dict.fromkeys(
+            item["url"] for item in scoped_issues(url)
+            if item.get("branch_url") == url and isinstance(item.get("url"), str) and item["url"] != url
+            and str(item.get("status", "")).startswith("profile_content_")))
+        return {url: pages} if pages else {}
+
     def run(phase: str, url: str, suffix: str) -> tuple[dict, list, dict]:
         remaining = deadline - time.monotonic()
         if cfg.get("cancel_event") is not None and cfg["cancel_event"].is_set():
@@ -885,7 +905,9 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             original = Path(cfg["runtime_patch"])
             patch = original.with_name(f"{original.stem}-{suffix}{original.suffix}") if parallel else original
             write_runtime_patch(patch, phase=phase, session_id=sid,
-                                target={**target, "url": url, "required_urls": required_urls})
+                                target={**target, "url": url, "required_urls": required_urls,
+                                        **({"repair_profiles": repair_profiles(url)}
+                                           if phase == "branch" and repair_profiles(url) else {})})
             phase_patches = tuple(str(patch) if value == str(original) else value for value in patches)
         try:
             result = _execute_harness(prompt, sid, phase_cfg, phase_patches)
@@ -996,7 +1018,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                 aliases = browser_url_aliases(proof_events)
                 if resolved_browser_url(branch.get("url"), aliases) != resolved_browser_url(url, aliases):
                     raise ReconPlanError("分支阶段改变了目标入口")
-                issues = selector_evidence_issues(one, proof_events)
+                issues = selector_evidence_issues(one, proof_events, repair_profiles(url))
                 if issues:
                     error = ReconPlanError("分支缺少选择器或翻页证据")
                     error.safe_feedback = {"previous_plan": {**plan, "branches": [branch]},
@@ -1040,18 +1062,19 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             fingerprint = fingerprints.get(url)
             # A branch the harvest found wrong gets its own scout with its issues;
             # copying a sibling's selectors would reproduce the same failure.
-            if scoped_issues(url):
+            # It still leads its template, so its siblings wait for that scout.
+            if scoped_issues(url) or not fingerprint or fingerprint not in leaders or url in verified_branches:
                 first.append((index, url))
-            elif fingerprint and fingerprint in leaders and url not in verified_branches:
-                followers.append((index, url, leaders[fingerprint]))
-            else:
-                first.append((index, url))
-                if fingerprint:
+                if fingerprint and (fingerprint not in leaders or url in verified_branches):
                     leaders[fingerprint] = index
+            else:
+                followers.append((index, url, leaders[fingerprint]))
         batch(first)
         if not any(isinstance(error, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled))
                    for error in errors):
-            batch([(index, url, accepted.get(leader)) for index, url, leader in followers])
+            # One scout per template: siblings of a template whose scout failed
+            # wait for the repair round instead of each repeating that scout.
+            batch([(index, url, accepted[leader]) for index, url, leader in followers if leader in accepted])
         plan["branches"] = [accepted[index] for index in sorted(accepted)]
         if errors:
             fatal = next((error for error in errors if isinstance(error, (
