@@ -15,6 +15,10 @@
 名单串以外的说明文字（系所名称、机构名称、括号里单独出现的名字）不是名单
 成员，不从这类页面收集；这些人通常也在主名录里。整张卡片只有一个名字时
 （导师名录里只列一位导师的单元格）按一个人收录。
+
+“主任：王 玮”这类角色行里的人不一定在任何成员串里（教研室主任常常只在角色
+行出现）。角色行不是名单串，不自动收录；本页成员串里没有的角色行姓名送人工
+复核（``reason=name_list_role_line``），复核前阻断交付，不静默丢弃。
 """
 
 from __future__ import annotations
@@ -37,6 +41,9 @@ _BOUNDARY = re.compile(r"[（）()\[\]【】<>《》：:；;。！？!?|/\n\r\t]
 _PADDED_TWO = re.compile(r"^([一-鿿])[\s　]+([一-鿿])$")
 _HAN_NAME = re.compile(r"^[一-鿿]{2,4}$")
 _MINORITY_NAME = re.compile(r"^[一-鿿]{2,6}[·•][一-鿿]{2,8}$")
+# '主  任：李 炜'、'系主任：文汝红'、'党政办公室主任：陈刚'
+_ROLE_LABEL = re.compile(r"(主任|组长|负责人|带头人|书记|院长|所长|秘书)$")
+ROLE_LINE_REASON = "name_list_role_line"
 
 
 def _item(raw: str) -> str:
@@ -138,6 +145,24 @@ def people_chains(text: str) -> list[NameChain]:
     return [chain for chain in chains(text) if chain.is_people]
 
 
+def role_line_names(text: str) -> list[str]:
+    """Names written after a role label ('主  任：李 炜'), in order."""
+    names = []
+    parts = re.split(r"[：:]", text or "")
+    for label, value in zip(parts, parts[1:]):
+        label = re.sub(r"[\s　]+", "", _BOUNDARY.split(label)[-1])
+        # 'X 主任：…' within one clause: only the label's own words matter.
+        if not _ROLE_LABEL.search(label):
+            continue
+        clause = _BOUNDARY.split(value)[0]
+        for part in clause.split("、"):
+            for item in _list_items(part):
+                name = _person_name(item) or _rare_name(item)
+                if name and name not in names:
+                    names.append(name)
+    return names
+
+
 def _single_name(text: str) -> str | None:
     """The card is exactly one name (a one-person cell of a name-list table)."""
     if _BOUNDARY.search(text):
@@ -217,6 +242,7 @@ def reconcile_name_list(html: str, url: str, card_selector: str) -> NameListResu
     review: dict[str, FacultyCandidate] = {}
     unresolved: list[dict[str, Any]] = []
     list_cards = single_cards = 0
+    role_lines: list[tuple[str, str]] = []
     for index, card in enumerate(cards, 1):
         conflicts = mailto_address_conflicts(card)
         if conflicts:
@@ -224,7 +250,9 @@ def reconcile_name_list(html: str, url: str, card_selector: str) -> NameListResu
                                'matches': list(dict.fromkeys(address for conflict in conflicts
                                                            for address in conflict))})
         text = card.get_text(" ", strip=True)
-        runs = people_chains(_chain_text(card))
+        source = _chain_text(card)
+        role_lines.extend((name, source) for name in role_line_names(source))
+        runs = people_chains(source)
         if runs:
             list_cards += 1
         else:
@@ -245,9 +273,16 @@ def reconcile_name_list(html: str, url: str, card_selector: str) -> NameListResu
             for item in chain.unrecognized:
                 unresolved.append({"url": url, "status": "name_list_item_unrecognized",
                                    "card": index, "item": item})
+    # A role-holder missing from every member chain is still a person on the
+    # roster page: a person decides, and delivery waits for that decision.
+    for name, source in role_lines:
+        if name not in found and name not in review:
+            review[name] = FacultyCandidate(name=name, url=url, title="教师", card_context=source,
+                                            name_review_reason=ROLE_LINE_REASON)
     observation = {"url": url, "card_selector": card_selector, "kind": "name_list",
                    "visible_cards": len(cards), "list_cards": list_cards,
                    "single_name_cards": single_cards,
+                   "role_line_names": len({name for name, _source in role_lines}),
                    "extracted_candidates": len(found) + len(review),
                    "unaccounted_cards": []}
     return NameListResult(list(found.values()), list(review.values()), unresolved, observation)
