@@ -268,9 +268,9 @@ def _is_structure_url(value: Any) -> bool:
 def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> None:
     """Accept only the structure-only plan that the server recon agent may emit.
 
-    Manually reviewed poster and appointment evidence belongs to the IDE path,
-    not to a model result. This validator runs in addition to the shared batch
-    schema because that schema intentionally supports those manual fields.
+    Manually reviewed appointment evidence belongs to the IDE path, not to a
+    model result. This validator runs in addition to the shared batch schema
+    because that schema intentionally supports that manual field.
     """
     if plan.get("school") != school or plan.get("college") != college:
         raise PlanHygieneError("model plan school/college differs from queued target")

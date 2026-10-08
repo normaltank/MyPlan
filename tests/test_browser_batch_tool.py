@@ -10,7 +10,7 @@ import openpyxl
 import pytest
 
 import server.browser_batch_tool as batch_tool
-from server.browser_batch_tool import _capture_branch, _roster_signature, run_plan
+from server.browser_batch_tool import _capture_branch, _roster_signature, _validate_plan, run_plan
 from server.faculty_extractor import FacultyCandidate, FacultyHarvestPipeline
 from server.harvest_workflow import CapturedRosterPage, reconcile_rosters
 
@@ -560,77 +560,6 @@ async def test_complete_shared_prose_and_genuine_extractor_conflicts(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_agent_verified_poster_names_can_be_added_with_image_evidence(tmp_path, monkeypatch):
-    import server.image_biography as media
-    url = "https://faculty.example.edu/poster"
-    screenshot = tmp_path / "poster.png"
-    screenshot.write_bytes(b"reviewed image")
-    plan = {"school": "样本大学", "college": "样本学院", "branches": [
-        {"url": url, "single_page": True}
-    ], "poster_reviews": [{"source_url": url, "reviewed_full_image": True, "expected_count": 2}],
-    "verified_candidates": [
-        {"name": "张富有", "title": "教授", "source_url": url, "evidence_path": str(screenshot)},
-        {"name": "刘圣洁", "title": "副教授", "source_url": url, "evidence_path": str(screenshot)},
-    ]}
-
-    monkeypatch.setattr(media, "scan_media", lambda *_args, **_kwargs: {
-        "page_count": 1, "pages_ocrd": 1, "text": "张富有 刘圣洁",
-        "pages": [{"page": 1, "text": "张富有 刘圣洁", "source": "local_ocr",
-                   "lines": [{"text": "张富有 刘圣洁", "confidence": 0.99}]}],
-        "image_size": [400, 600]})
-    result = await run_plan(plan, FakeContext(
-        {url: "<html><body><img src='poster.png'></body></html>"},
-        assets={"https://faculty.example.edu/poster.png": b"original poster"}), tmp_path)
-
-    assert result["delivery_ready"] is True
-    assert result["total"] == 2
-    assert result["no_email"] == 2
-    assert result["verified_candidate_count"] == 2
-    assert result["unresolved"] == []
-
-
-@pytest.mark.asyncio
-async def test_verified_roster_images_add_separate_biographies(tmp_path, monkeypatch):
-    import server.image_biography as media
-
-    url = "https://faculty.example.edu/poster"
-    image_a = "https://faculty.example.edu/a.png"
-    image_b = "https://faculty.example.edu/b.png"
-    screenshot = tmp_path / "reviewed.png"
-    screenshot.write_bytes(b"reviewed")
-    plan = {"school": "样本大学", "college": "样本学院", "branches": [
-        {"url": url, "single_page": True}],
-        "poster_reviews": [{"source_url": url, "reviewed_full_image": True, "expected_count": 2}],
-        "verified_candidates": [
-            {"name": name, "source_url": url, "evidence_path": str(screenshot)}
-            for name in ("张富有", "刘圣洁")]}
-    html = '<html><body><article><img src="/a.png"><img src="/b.png"></article></body></html>'
-    browser = FakeContext({url: html}, assets={image_a: b"a", image_b: b"b"})
-
-    def scan(data, _kind, *, ocr_engine=None):
-        name = "张富有" if data == b"a" else "刘圣洁"
-        lines = (f"{name} 教授", "完整学习经历与任职信息", "研究项目与学术成果详述")
-        text = "\n".join(lines)
-        return {"page_count": 1, "pages_ocrd": 1, "text": text,
-                "pages": [{"page": 1, "text": text, "source": "local_ocr",
-                           "lines": [{"text": line, "confidence": 0.99} for line in lines]}],
-                "image_size": [1200, 1800]}
-
-    monkeypatch.setattr(media, "scan_media", scan)
-    result = await run_plan(plan, browser, tmp_path)
-
-    assert result["delivery_ready"] is True
-    records = json.loads(Path(result["records_path"]).read_text(encoding="utf-8"))
-    assert len(records) == 2
-    assert all(row["姓名"] in row["简介"] for row in records)
-    assert all(other not in row["简介"] for row in records
-               for other in ("张富有", "刘圣洁") if other != row["姓名"])
-    for row, source in zip(records, result["coverage"]["field_sources"]):
-        assert len(source["image_biography_evidence"]) == 1
-        assert source["image_biography_evidence"][0]["assigned_name"] == row["姓名"]
-
-
-@pytest.mark.asyncio
 async def test_human_selected_image_email_clears_only_matching_conflict(tmp_path, monkeypatch):
     from io import BytesIO
     from PIL import Image
@@ -724,23 +653,32 @@ async def test_shared_scan_pdf_link_on_roster_blocks_unassigned_biographies(tmp_
     assert len(result["image_biography_evidence"]) == 1
 
 
-@pytest.mark.asyncio
-async def test_partial_poster_review_blocks_export(tmp_path):
-    url = "https://faculty.example.edu/poster"
-    screenshot = tmp_path / "poster.png"
-    screenshot.write_bytes(b"reviewed image")
-    plan = {"school": "样本大学", "college": "样本学院", "branches": [
-        {"url": url, "single_page": True}
-    ], "poster_reviews": [{"source_url": url, "reviewed_full_image": True, "expected_count": 2}],
-    "verified_candidates": [
-        {"name": "张富有", "title": "教授", "source_url": url, "evidence_path": str(screenshot)},
-    ]}
+@pytest.mark.parametrize("field, value", [
+    ("verified_candidates", [{"name": "张富有", "title": "教授",
+                              "source_url": "https://faculty.example.edu/poster", "evidence_path": __file__}]),
+    ("poster_reviews", [{"source_url": "https://faculty.example.edu/poster",
+                         "reviewed_full_image": True, "expected_count": 1}]),
+])
+def test_plan_with_agent_entered_roster_names_is_rejected(field, value):
+    # The IDE path follows the server recon rule: a plan carries structure
+    # only, and names come from the captured page by DOM, PDF or local OCR.
+    plan = {"school": "样本大学", "college": "样本学院",
+            "branches": [{"url": "https://faculty.example.edu/poster", "single_page": True}], field: value}
+    with pytest.raises(ValueError, match=field):
+        _validate_plan(plan)
 
-    result = await run_plan(plan, FakeContext({url: "<html><body><img src='poster.png'></body></html>"}), tmp_path)
+
+@pytest.mark.asyncio
+async def test_unread_image_roster_stays_unresolved_without_agent_names(tmp_path):
+    url = "https://faculty.example.edu/poster"
+    result = await run_plan({"school": "样本大学", "college": "样本学院", "branches": [
+        {"url": url, "single_page": True}]},
+        FakeContext({url: "<html><body><img src='poster.png'></body></html>"}), tmp_path)
 
     assert result["delivery_ready"] is False
     assert result["excel_path"] is None
-    assert any(item["status"] == "poster_coverage_mismatch" for item in result["unresolved"])
+    assert result["total"] == 0
+    assert result["unresolved"]
 
 
 def test_profileless_candidate_on_second_branch_does_not_trigger_profile_fetch():

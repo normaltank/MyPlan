@@ -9,8 +9,6 @@ def build_coverage_ledger(plan, capture, observations, candidates, profiles, eli
     issues = []
     completed = {branch["url"]: branch for branch in capture.branches}
     branches = []
-    reviewed = {item["source_url"] for item in plan.get("poster_reviews", [])
-                if item.get("reviewed_full_image") is True}
     for branch in plan["branches"]:
         evidence = completed.get(branch["url"])
         if evidence is None:
@@ -35,10 +33,9 @@ def build_coverage_ledger(plan, capture, observations, candidates, profiles, eli
                 end_proven = (empty_roster_proof_valid(evidence.get("empty_roster"), branch, page.html, url=page.url)
                               and empty_roster_proof_valid(page.empty_roster_evidence, branch, page.html, url=page.url)
                               and not BeautifulSoup(page.html, "html.parser").select(branch["card_selector"]))
-        poster_covered = branch["url"] in reviewed and not empty_declared
-        if not end_proven and not poster_covered:
+        if not end_proven:
             issues.append({"url": branch["url"], "status": "branch_termination_unverified"})
-        branches.append({**evidence, "termination_verified": end_proven or poster_covered})
+        branches.append({**evidence, "termination_verified": end_proven})
     pages = [{"url": page.url, "branch_url": page.branch["url"], "sequence": index,
               "state_id": hashlib.sha256((page.url + "\n" + page.html).encode()).hexdigest()}
              for index, page in enumerate(capture.roster_pages, 1)]

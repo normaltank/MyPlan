@@ -799,56 +799,5 @@
         }
       ]
     }
-  },
-  {
-    "id": "unreviewed_poster",
-    "evidence_kind": "synthetic",
-    "plan": {
-      "school": "验收样本大学",
-      "college": "验收样本学院",
-      "branches": [
-        {
-          "url": "https://acceptance.example.edu/roster",
-          "single_page": true
-        }
-      ],
-      "verified_candidates": [
-        {
-          "name": "张富有",
-          "source_url": "https://acceptance.example.edu/roster",
-          "evidence_path": "poster-unreviewed-evidence.txt"
-        }
-      ]
-    },
-    "expected": {
-      "total": 1,
-      "with_email": 0,
-      "no_email": 1,
-      "delivery_ready": false,
-      "directory_pages": 1,
-      "identities": [
-        [
-          "张富有",
-          "https://acceptance.example.edu/roster"
-        ]
-      ],
-      "unresolved_status": "poster_full_image_review_missing",
-      "email_assignments": [
-        [
-          "张富有",
-          "https://acceptance.example.edu/roster",
-          ""
-        ]
-      ],
-      "candidate_count": 1
-    },
-    "pages": {
-      "https://acceptance.example.edu/roster": [
-        {
-          "url": "https://acceptance.example.edu/roster",
-          "file": "unreviewed_poster/01_01.html"
-        }
-      ]
-    }
   }
 ]
