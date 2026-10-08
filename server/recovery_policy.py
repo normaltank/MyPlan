@@ -20,7 +20,7 @@ _GROUPS = {
         title_field_conflict excel_cell_too_long excel_invalid_xml_character mailto_address_conflict
         pdf_roster_not_pdf pdf_roster_unreadable pdf_roster_page_unreadable pdf_roster_raster_unread
         pdf_roster_records_not_found pdf_roster_heading_unrecognized pdf_roster_multiple_names
-        pdf_roster_shared_email""",
+        pdf_roster_shared_email pdf_roster_table_row_unassigned pdf_roster_table_index_gap""",
     "structure": """card_selector_empty card_selector_missing roster_selector_empty candidate_outside_cards child_limit_reached
         child_link_missing_href child_outside_verified_host child_roster_not_verified child_selector_empty
         empty_roster_conflict empty_roster_not_verified initial_control_not_unique initial_control_unchanged

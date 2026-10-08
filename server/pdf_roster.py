@@ -16,6 +16,16 @@ with the same rules as a segmented article (server/segmented_roster.py):
   name followed by gender or title) and runs, across page breaks, until the
   next start.  Lines before the first start belong to nobody.
 
+A PDF whose text layer is a table (表格式名单: a header row with a ``姓名``
+cell, one row per person) is read by columns instead: each row is a record,
+its name and title are the cells under the ``姓名`` and ``职称`` headers, and a
+cell wrapped onto two lines stays in its row.  A table row is not a biography,
+so the record's biography stays empty.  Section headings above a header row
+(``一、专任教师``, ``二、实验技术人员``) are kept as each row's evidence and
+every section is read: no row is dropped by its heading.  The same header
+repeated at the top of a continuation page, with no new heading before it,
+continues its section.
+
 Nothing is guessed.  A record whose own text holds another heading, a heading
 the reader could not name, an OCR name that is not confident and not
 cross-checked, an OCR line under the review floor, two records with one name,
@@ -38,8 +48,8 @@ import statistics
 from typing import Any, Awaitable, Callable
 import uuid
 
-from server.segmented_roster import (_LABELS, _SPLIT, OcrName, Segment, SegmentRecord, _unique, admit_ocr_name,
-                                     choose_email, heading_shape, text_name)
+from server.segmented_roster import (_LABELS, _SPLIT, OcrName, Segment, SegmentRecord, _name_like, _unique,
+                                     admit_ocr_name, choose_email, heading_shape, text_name)
 from server.faculty_extractor import find_emails
 
 KIND = "pdf_roster"
@@ -83,10 +93,11 @@ class PdfRecord(SegmentRecord):
     media_url: str = ""
     sha256: str = ""
     pages: list[int] = field(default_factory=list)
+    table_row: dict | None = None
 
     def provenance(self) -> dict:
         return {**super().provenance(), "media_url": self.media_url, "pdf_sha256": self.sha256,
-                "pdf_pages": self.pages}
+                "pdf_pages": self.pages, **({"table_row": self.table_row} if self.table_row else {})}
 
 
 def layout_lines(original: bytes, scanned: dict, reviewed: set[tuple[int, int]]) -> tuple[list[LayoutLine], list[dict]]:
@@ -234,10 +245,226 @@ def _record_text(lines: list[LayoutLine]) -> str:
     return "\n".join(line.text for line in lines)
 
 
+# ── Table-form PDF rosters ───────────────────────────────────────────────────
+NAME_HEADER = "姓名"
+TITLE_HEADER = "职称"
+_HEADER_CELL = re.compile(r"^[\u4e00-\u9fff]{2,6}$")
+_DIGITS = re.compile(r"^\d{1,4}$")
+
+
+def _visual_rows(lines: list[LayoutLine]) -> list[list[LayoutLine]]:
+    """Lines of one page grouped into rows: boxes that overlap vertically.
+
+    A cell wrapped onto two lines overlaps its row's other cells, so it stays
+    in that row; neighbouring rows do not overlap.
+    """
+    rows: list[list[LayoutLine]] = []
+    for line in sorted(lines, key=lambda item: (item.bbox[1], item.bbox[0])):
+        top, bottom = line.bbox[1], line.bbox[3]
+        joined = [row for row in rows
+                  if any(min(bottom, other.bbox[3]) - max(top, other.bbox[1]) > 1.0 for other in row)]
+        if not joined:
+            rows.append([line])
+            continue
+        merged = [line] + [member for row in joined for member in row]
+        rows = [row for row in rows if not any(row is other for other in joined)] + [merged]
+    for row in rows:
+        row.sort(key=lambda item: item.bbox[0])
+    return sorted(rows, key=lambda row: min(item.bbox[1] for item in row))
+
+
+def _is_header(row: list[LayoutLine]) -> bool:
+    cells = [line.compact for line in row]
+    return (len(cells) >= 2 and cells.count(NAME_HEADER) == 1
+            and all(_HEADER_CELL.match(cell) for cell in cells))
+
+
+def _center(line: LayoutLine) -> float:
+    return (line.bbox[0] + line.bbox[2]) / 2
+
+
+@dataclass
+class TableRow:
+    number: int
+    page: int
+    cells: dict[str, str]
+    section: int                # index into TableLayout.sections
+    lines: list[LayoutLine]
+
+
+@dataclass
+class TableLayout:
+    rows: list[TableRow]
+    sections: list[dict]
+    issues: list[dict]
+    skipped: Counter
+
+
+def table_layout(lines: list[LayoutLine]) -> TableLayout | None:
+    """Rows of a table-form roster, or None when the PDF has no name header row."""
+    usable = [line for line in lines if not line.rotated and line.source == "pdf_text_layer"
+              and line.excluded in (None, "page_number")]
+    pages = sorted({line.page for line in usable})
+    page_rows = [(page, _visual_rows([line for line in usable if line.page == page])) for page in pages]
+    if not any(_is_header(row) for _, rows in page_rows for row in rows):
+        return None
+    result = TableLayout([], [], [], Counter())
+    columns: list[tuple[str, float]] | None = None
+    pending_heading: str | None = None
+    for page, rows in page_rows:
+        for row in rows:
+            texts = [line.compact for line in row]
+            if _is_header(row):
+                if (columns is not None and pending_heading is None
+                        and texts == [name for name, _ in columns]):
+                    # The header repeated on a continuation page: the same table goes on.
+                    columns = [(line.compact, _center(line)) for line in row]
+                    result.skipped["repeated_header"] += 1
+                    continue
+                columns = [(line.compact, _center(line)) for line in row]
+                result.sections.append({"heading": pending_heading, "header": texts, "page": page, "rows": 0})
+                pending_heading = None
+                continue
+            if len(row) == 1 and (_DIGITS.match(texts[0]) or _PAGE_NUMBER.match(row[0].text)):
+                # A page number, or an index cell left alone on its line.
+                result.skipped["lone_number"] += 1
+                continue
+            if columns is None:
+                if len(row) == 1:
+                    pending_heading = row[0].text.strip()
+                else:
+                    result.skipped["before_table"] += 1
+                continue
+            cells: dict[str, list[tuple[float, str]]] = {}
+            unaligned = []
+            for line in row:
+                center = _center(line)
+                name, column_center = min(columns, key=lambda column: abs(column[1] - center))
+                width = line.bbox[2] - line.bbox[0]
+                if abs(column_center - center) > max(width, 24.0):
+                    unaligned.append(line)
+                    continue
+                cells.setdefault(name, []).append((line.bbox[1], line.text.strip()))
+            if NAME_HEADER not in cells:
+                if len(row) == 1:
+                    # Possibly the heading of the next table; decided by what follows.
+                    pending_heading = row[0].text.strip()
+                    continue
+                result.issues.append({"status": "pdf_roster_table_row_unassigned", "page": page,
+                                      "cells": len(row)})
+                continue
+            if unaligned:
+                result.issues.append({"status": "pdf_roster_table_row_unassigned", "page": page,
+                                      "cells": len(row), "unaligned_cells": len(unaligned)})
+                continue
+            if pending_heading is not None:
+                # A one-cell line inside a table that no header followed.
+                result.issues.append({"status": "pdf_roster_table_row_unassigned", "page": page, "cells": 1})
+                pending_heading = None
+            result.sections[-1]["rows"] += 1
+            result.rows.append(TableRow(len(result.rows) + 1, page,
+                                        {name: " ".join(text for _, text in sorted(parts))
+                                         for name, parts in cells.items()},
+                                        len(result.sections) - 1, row))
+    if pending_heading is not None:
+        result.issues.append({"status": "pdf_roster_table_row_unassigned", "page": pages[-1], "cells": 1})
+    return result
+
+
+def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256: str,
+                    title_default: str, name_decisions: dict[str, dict]) -> dict:
+    from server.faculty_extractor import FacultyCandidate
+    from server import name_review
+
+    source = {"url": page_url, "media_url": media_url}
+    unresolved = [{**source, **issue} for issue in table.issues]
+    # Every section is read; its heading stays with each row as evidence.
+    rows = table.rows
+    for section, item in enumerate(table.sections):
+        # An index column numbers its section 1..N: a gap is a row the reader missed.
+        numbers = [row.cells.get("序号", "") for row in rows if row.section == section]
+        if "序号" in item["header"] and sorted(numbers, key=lambda value: (len(value), value)) != [
+                str(index) for index in range(1, len(numbers) + 1)]:
+            unresolved.append({**source, "status": "pdf_roster_table_index_gap", "section_rows": len(numbers),
+                               "page": item["page"]})
+    emails_by_row = {row.number: _unique(find_emails(" ".join(row.cells.values()))) for row in rows}
+    seen = Counter(email.lower() for emails in emails_by_row.values() for email in {e.lower() for e in emails})
+    shared = {email for email, count in seen.items() if count > 1}
+    records: list[PdfRecord] = []
+    accounted: dict[int, str] = {}
+    for row in rows:
+        cell = row.cells[NAME_HEADER]
+        title = row.cells.get(TITLE_HEADER, "").strip() or title_default
+        evidence = {"section": table.sections[row.section]["heading"], "cells": row.cells, "page": row.page,
+                    "bboxes": [[round(value, 2) for value in line.bbox] for line in row.lines]}
+        item = {**source, "segment": row.number, "pages": [row.page]}
+        name = _name_like(re.sub(r"\s+", "", cell)) if re.fullmatch(r"[\u4e00-\u9fff·•\s]+", cell) else None
+        basis = "pdf_table_name_column"
+        if name is None:
+            # The column says this is a name; a person confirms what it reads.
+            candidate = FacultyCandidate(name=cell, url=page_url, title=title,
+                                         card_context=" | ".join(f"{key}：{value}" for key, value in row.cells.items()),
+                                         name_review_reason="pdf_table_name_cell")
+            review = name_review.pending_item(page_url, candidate)
+            decision = name_decisions.get(review["id"])
+            if decision is None:
+                unresolved.append({**review, "media_url": media_url, "segment": row.number, "page": row.page})
+                accounted[row.number] = "unresolved"
+                continue
+            if decision["verdict"] != "person":
+                accounted[row.number] = "not_person"
+                continue
+            name, basis = decision["verified_name"], "human_reviewed_name"
+        segment = Segment(index=row.number, html="", text="", emails=emails_by_row[row.number])
+        record = PdfRecord(page_url, segment, name, title, name_source="pdf_table", name_basis=basis,
+                           media_url=media_url, sha256=sha256, pages=[row.page], table_row=evidence)
+        email, email_basis, issue = choose_email(segment, name, shared)
+        if issue:
+            unresolved.append({**item, **issue})
+        record.email, record.email_basis = email, email_basis
+        records.append(record)
+        accounted[row.number] = "admitted"
+    names = Counter(record.name for record in records)
+    for duplicate in sorted(name for name, count in names.items() if count > 1):
+        unresolved.append({**source, "status": "segment_duplicate_name", "occurrences": names[duplicate],
+                           "segments": [record.segment.index for record in records if record.name == duplicate]})
+        for record in records:
+            if record.name == duplicate:
+                accounted[record.segment.index] = "unresolved"
+    records = [record for record in records if names[record.name] == 1]
+    if not records and not unresolved:
+        unresolved.append({**source, "status": "pdf_roster_records_not_found"})
+    return {"records": records, "unresolved": unresolved, "accounted": accounted, "sections": table.sections}
+
+
 def reconcile_pdf(original: bytes, scanned: dict, reviewed: set[tuple[int, int]], *, page_url: str,
-                  media_url: str, sha256: str, title_default: str = "教师") -> dict:
+                  media_url: str, sha256: str, title_default: str = "教师",
+                  name_decisions: dict[str, dict] | None = None) -> dict:
     """Records, review items and structure-only observation for one PDF original."""
     lines, page_issues = layout_lines(original, scanned, reviewed)
+    table = table_layout(lines)
+    if table is not None:
+        found = reconcile_table(table, page_url=page_url, media_url=media_url, sha256=sha256,
+                                title_default=title_default, name_decisions=name_decisions or {})
+        unresolved = [{"url": page_url, "media_url": media_url, **issue} for issue in page_issues]
+        unresolved += found["unresolved"]
+        observation = {"url": page_url, "kind": KIND, "layout": "table", "media_url": media_url,
+                       "sha256": sha256, "page_count": scanned["page_count"],
+                       "pages_with_text_layer": scanned.get("pages_with_text_layer", 0),
+                       "pages_ocrd": scanned.get("pages_ocrd", 0),
+                       "records_detected": len(table.rows), "records_admitted": len(found["records"]),
+                       "unaccounted_records": sorted(index for index, state in found["accounted"].items()
+                                                     if state == "unresolved"),
+                       "not_person_rows": sorted(index for index, state in found["accounted"].items()
+                                                 if state == "not_person"),
+                       "sections": found["sections"], "skipped_lines": dict(table.skipped)}
+        row_of = {id(line): row.number for row in table.rows for line in row.lines}
+        layout = [{"page": line.page, "bbox": [round(value, 2) for value in line.bbox],
+                   "size": round(line.size, 2), "bold": line.bold, "source": line.source,
+                   "line_index": line.line_index, "confidence": line.confidence, "excluded": line.excluded,
+                   "text": line.text, "record": row_of.get(id(line))} for line in lines]
+        return {"records": found["records"], "unresolved": unresolved, "observation": observation,
+                "layout": layout, "name_reviews": []}
     split = segment_lines(lines)
     source = {"url": page_url, "media_url": media_url}
     unresolved = [{**source, **issue} for issue in page_issues]
@@ -347,6 +574,7 @@ async def read_pdf_rosters(
     evidence_dir: str | Path,
     cache_dir: str | Path | None = None,
     review_decisions_path: str | Path | None = None,
+    name_decisions_path: str | Path | None = None,
     ocr_engine: Any = None,
 ) -> dict:
     """Fetch each DOM-observed PDF in the browser session and reconcile its people.
@@ -357,6 +585,9 @@ async def read_pdf_rosters(
     """
     from server.image_bio_review import apply_review_decisions
     from server.image_biography import _OCR_CACHE_VERSION, scan_media
+    from server.name_review import load_decisions
+
+    name_decisions = load_decisions(name_decisions_path)
 
     out = Path(evidence_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -441,7 +672,7 @@ async def read_pdf_rosters(
                 adjusted, reviewed = apply_review_decisions(scanned, media_url, digest, review_decisions_path)
                 result = await asyncio.to_thread(
                     reconcile_pdf, original, adjusted, reviewed, page_url=page_url,
-                    media_url=media_url, sha256=digest)
+                    media_url=media_url, sha256=digest, name_decisions=name_decisions)
             except Exception as exc:
                 unresolved.append({**item, "status": "pdf_roster_unreadable",
                                    "error": f"{type(exc).__name__}: {exc}"})
