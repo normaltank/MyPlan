@@ -9,22 +9,25 @@ from bs4 import BeautifulSoup
 
 
 def structural_fingerprint(html: str) -> str | None:
+    """One digest for every page built from the same template.
+
+    A node is its tag, classes, id and role plus the set of distinct child
+    shapes. Sibling pages of one roster (教授／副教授／讲师) differ in how many
+    cards they list and which menu item is highlighted; neither the count nor
+    the order of repeated children changes the template.
+    """
     soup = BeautifulSoup(html, "html.parser")
     if soup.body is None or not soup.body.find("a", href=True):
         return None
 
     def shape(node):
-        children = []
-        for child in node.find_all(recursive=False):
-            if child.name in {"script", "style", "noscript"}:
-                continue
-            value = shape(child)
-            if not children or children[-1] != value:
-                children.append(value)
-        return (node.name, tuple(sorted(node.get("class", []))), node.get("id", ""),
-                node.get("role", ""), tuple(children))
+        children = sorted({shape(child) for child in node.find_all(recursive=False)
+                           if child.name not in {"script", "style", "noscript"}})
+        value = (node.name, tuple(sorted(node.get("class", []))), node.get("id", ""),
+                 node.get("role", ""), tuple(children))
+        return hashlib.sha256(repr(value).encode()).hexdigest()
 
-    return hashlib.sha256(repr(shape(soup.body)).encode()).hexdigest()
+    return shape(soup.body)
 
 
 async def _inspect(urls: list[str], evidence_root: Path) -> dict[str, str]:

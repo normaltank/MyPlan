@@ -1040,18 +1040,19 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             fingerprint = fingerprints.get(url)
             # A branch the harvest found wrong gets its own scout with its issues;
             # copying a sibling's selectors would reproduce the same failure.
-            if scoped_issues(url):
+            # It still leads its template, so its siblings wait for that scout.
+            if scoped_issues(url) or not fingerprint or fingerprint not in leaders or url in verified_branches:
                 first.append((index, url))
-            elif fingerprint and fingerprint in leaders and url not in verified_branches:
-                followers.append((index, url, leaders[fingerprint]))
-            else:
-                first.append((index, url))
-                if fingerprint:
+                if fingerprint and (fingerprint not in leaders or url in verified_branches):
                     leaders[fingerprint] = index
+            else:
+                followers.append((index, url, leaders[fingerprint]))
         batch(first)
         if not any(isinstance(error, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled))
                    for error in errors):
-            batch([(index, url, accepted.get(leader)) for index, url, leader in followers])
+            # One scout per template: siblings of a template whose scout failed
+            # wait for the repair round instead of each repeating that scout.
+            batch([(index, url, accepted[leader]) for index, url, leader in followers if leader in accepted])
         plan["branches"] = [accepted[index] for index in sorted(accepted)]
         if errors:
             fatal = next((error for error in errors if isinstance(error, (
