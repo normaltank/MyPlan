@@ -1193,7 +1193,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         known_names={candidate.name for candidate in candidates},
         review_decisions_path=out / "image_bio_reviews.json",
         media_kind_decisions_path=out / "media_kind_reviews.json",
-        cache_dir=ocr_cache_dir)
+        cache_dir=ocr_cache_dir,
+        unpublished_media={url: set((evidence.get("profile_content_browser_evidence") or {})
+                                    .get("unpublished_images") or ())
+                           for url, evidence in profile_scope_evidence.items()})
     unresolved.extend(media_audit["unresolved"])
     for url, scope_evidence in profile_scope_evidence.items():
         if not scope_evidence["image_only_candidate"]:
@@ -1371,6 +1374,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "identity_review_path": str(decision_path), "identity_observations_path": str(observations_path),
         "html_email_review_items": html_email_items, "html_email_reviews": html_email_reviews,
         "image_biography_evidence": media_audit["evidence"] + pdf_reading["evidence"],
+        "unpublished_media": media_audit["unpublished_media"],
         "segment_name_evidence": segment_naming["evidence"] + pdf_reading["name_evidence"],
         "pdf_roster_evidence": pdf_reading["evidence"],
         "image_table_evidence": table_reading["evidence"],

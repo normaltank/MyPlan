@@ -2,7 +2,8 @@
 
 Real CMS pages seen in production: a Word-pasted <style style="display:none"> inside the
 body, an editor's hidden 'invisible' placeholder, a theme stylesheet or script that the
-server answers 404, or that fails the same way again when the page is opened anew.
+server answers 404, or that fails the same way again when the page is opened anew,
+and a leftover editor image answered 404 on both opens that the page gives no room.
 Content requests, script-built bodies and hidden text that could be content still block.
 """
 import json
@@ -111,7 +112,8 @@ async def test_script_built_content_and_profile_media_still_block(tmp_path):
     rewritten = await verify(tmp_path, '<script src="/gone.js"></script><article><p>加载中</p></article>'
                                        f'<script>document.querySelector("article").innerHTML={json.dumps(BODY)}</script>')
     assert rewritten["confirmed"] is False and rewritten["server_rendered_content"] is False
-    missing_portrait = await verify(tmp_path, f'<article><img src="/photo.jpg">{BODY}</article>')
+    # a portrait the page gives room to; an unsized one gone on both opens showed nothing
+    missing_portrait = await verify(tmp_path, f'<article><img src="/photo.jpg" width="120" height="160">{BODY}</article>')
     assert missing_portrait["confirmed"] is False
     assert missing_portrait["blocking_requests"][0]["type"] == "image"
 
