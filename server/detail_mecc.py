@@ -71,12 +71,6 @@ def clean_email(email_str: str) -> str:
     return email_str
 
 
-FREE_MAIL_DOMAINS = {
-    "163.com", "126.com", "yeah.net", "qq.com", "foxmail.com", "gmail.com",
-    "sina.com", "sina.cn", "sohu.com", "hotmail.com", "outlook.com",
-    "live.com", "yahoo.com", "aliyun.com", "139.com", "189.cn", "icloud.com"
-}
-
 def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
     """
     Determines if an email belongs to a scholar using information-theoretic
