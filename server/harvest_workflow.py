@@ -548,10 +548,16 @@ def reconcile_rosters(
     # already carries the evidence, so nobody has to confirm the name again.
     page_urls = {page.url for page in captured_pages}
     with_page = {candidate.name for candidate in candidates if candidate.url not in page_urls}
+    # A role-holder ('主任：王玮') collected as a member anywhere in this college
+    # is that member (学院内同名合并); only role-line-only people need a person.
+    from server.name_list import ROLE_LINE_REASON
+    collected = {candidate.name for candidate in candidates}
     unresolved = [item for item in unresolved
                   if not (item.get("status") == "rare_surname_needs_review"
                           and item.get("profile_url") == item.get("url")
-                          and item.get("name") in with_page)]
+                          and (item.get("name") in with_page
+                               or (item.get("reason") == ROLE_LINE_REASON
+                                   and item.get("name") in collected)))]
     unresolved.extend({"url": url, "status": "profile_content_selector_conflict",
                        "selectors": [{"profile_content_selector": scope,
                                       "profile_content_start_selector": start}
