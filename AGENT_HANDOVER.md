@@ -47,6 +47,12 @@
 - 姓名：唯一的判定是 `server/name_list.py` 的 `_person_name`，常量 `NAME_PRIOR_FLOOR`、`_HAN_NAME`、`_MINORITY_NAME` 也只在那里定义；`server/segmented_roster.py` 以 `_name_like` 的名字引用它，`pdf_roster`、`image_table_roster` 再从分段名录引用。少数民族点号两边最少字数是 `MINORITY_SIDE_MIN = 1`（badr 10-08 选定）。姓名先验 `name_prob` 和生僻姓判断 `rare_surname_name` 在 `Opus/iso_mining.py`，生僻姓表是 `Opus/rare_surnames.txt`。
 - 邮箱归属：主规则是 `server/detail_mecc.py` 的 `is_personal_email_for_scholar`、`is_institutional_email`（拼音模型在 `Opus/email_matching.py`）。`find_emails` 也只在 `detail_mecc.py` 定义。`server/faculty_extractor.py` 直接导入这三个函数并照旧导出；算法层或 `detail_mecc` 导不进来时 `faculty_extractor` 导入即报错，没有降级版（对齐执行方案 D 包，PR #28）。
 
+### 5. 侦察提交门禁怎么打回、什么时候停（PR #33）
+
+- 证据判定在 `server/agent_recon.py` 的 `selector_evidence_issues`：每条问题带 `failed_condition`、`closest`、`need`；个人页证明在可用页不够证明数（或补缺点名的页被挡）时标 `page_only`。“挡住任何容器”的请求由 `server/profile_structure.py` 的 `verify_profile_container` 在重开后记为 `page_blocking_requests`。
+- `server/recon_contract.py` 的 `validate_submission` 原样转给模型（只削 schema 报错的输入值）；`server/recon_browser_mcp.py` 的 `submit_plan` 记住被打回的提交：同一计划无新浏览器调用时不重判，第二次给出 stop `recon_gate_stalled`；全部 `page_only` 时给出 stop `recon_page_unverifiable`。
+- `agent_recon._execute_harness` 用 `_watch_gate` 跟踪回复，遇到 stop 抛 `ReconGateStopped`（属于 `ReconPlanError`），并记下每个会话最后一次打回；超时/预算错误带 `last_gate_rejections`。两个码在 `recovery_policy._GROUPS`：页面类 access，worker 不再派补缺侦察；stalled 归 structure。
+
 ---
 
 > **2026-10-02 文档治理与 Claude 派工**：根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，`CLAUDE.md` 为读取入口。OCR 修复及宪法已提交并同步 main（`4fe72c2`、`10370eb`）；服务是否加载仍按下方部署记录判断。用户指定在 [Claude Projects → MyPlan 主对话](https://claude.ai/code/project/chan_012KwoNrMicyn2LoBSKGmCan) 派工，现有两个项目内实现线程：多人 PDF 名录采集、HTML 邮箱歧义复核恢复；具体范围见 [任务规格](docs/implementation/2026-10-02-claude-assignment.md)，要求独立 PR，不自动合并／部署。此前误开的两个独立 Code 会话已显示 Idle，不再继续。PR #4 仅改项目说明，实际与 main 的 AGENTS.md 存在合并冲突，且有过期状态和额外确认要求；本轮只审阅，未修改或合并该 PR。
