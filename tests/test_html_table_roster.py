@@ -73,6 +73,18 @@ def test_rowspan_remark_and_split_name_stay_with_each_person():
         "行政工作人员", "行政工作人员", "特聘教师"]
 
 
+def test_two_people_per_row_keep_both_names_and_links():
+    plan, page = case_page("ahstu_dk", """
+        <table><tbody>
+        <tr class="firstRow"><td>姓名</td><td>职称</td><td>姓名</td><td>职称</td></tr>
+        <tr><td><a href="/p/1.htm">张伟</a></td><td>教授</td><td><a href="/p/2.htm">李娜</a></td><td>讲师</td></tr>
+        <tr><td><a href="/p/3.htm">王芳</a></td><td>教授</td><td><a href="/p/4.htm">刘洋</a></td><td>讲师</td></tr>
+        </tbody></table>""")
+    result = reconcile_rosters([page], plan)
+    assert [(person.name, person.url.rsplit("/", 1)[-1]) for person in result.candidates] == [
+        ("张伟", "1.htm"), ("李娜", "2.htm"), ("王芳", "3.htm"), ("刘洋", "4.htm")]
+
+
 def test_sections_reset_at_table_boundary_and_do_not_change_titles():
     plan, page = case_page("ahstu_dk", """
         <table><tbody><tr><th colspan="3">实验技术人员</th></tr>

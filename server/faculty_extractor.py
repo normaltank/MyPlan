@@ -229,7 +229,9 @@ def html_table_rows(soup: BeautifulSoup) -> dict[int, dict]:
                 label = header[column] if column < len(header) else ""
                 key = label if label and label not in fields else f"column_{column + 1}"
                 fields[key] = LayoutAwareTokenizer.get_clean_text(cell, preserve_content=True)
-            result[id(row)] = {"kind": "person", "name_cell": grid.get(header.index("姓名")),
+            # Several 姓名 columns mean several people per row: no single name cell.
+            name_cell = grid.get(header.index("姓名")) if header.count("姓名") == 1 else None
+            result[id(row)] = {"kind": "person", "name_cell": name_cell,
                                "evidence": {"table_index": table_index, "row_index": row_index,
                                             "section": section, "cells": fields}}
     return result
