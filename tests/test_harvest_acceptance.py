@@ -88,8 +88,6 @@ async def test_fixed_harvest_acceptance_contract(case, tmp_path, monkeypatch):
     monkeypatch.setattr(batch_tool, "_batch_fetch_profiles_via_native_chrome", lambda _urls: {})
     monkeypatch.setattr(batch_tool, "_fetch_page_via_native_chrome", lambda _url: None)
     plan = copy.deepcopy(case["plan"])
-    for candidate in plan.get("verified_candidates", []):
-        candidate["evidence_path"] = str(FIXTURES / candidate["evidence_path"])
     browser = ReplayContext(case["pages"])
     expected = case["expected"]
 

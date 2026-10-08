@@ -24,6 +24,9 @@ def test_role_lines_are_not_lists_and_title_annotations_are_not_members():
     assert {c.name for c in result.found} == {"张伟", "李明", "王奔"}
     assert result.observation["list_cards"] == 1
     assert result.unresolved == []
+    # Role-holders are not list members, and are not silently dropped either.
+    assert [(c.name, c.name_review_reason) for c in result.review] == [
+        ("陈刚", "name_list_role_line"), ("赵强", "name_list_role_line")]
 
 
 def test_four_separate_han_characters_are_ambiguous_and_not_invented_one_person():

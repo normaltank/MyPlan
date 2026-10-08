@@ -40,12 +40,12 @@ def classify_candidates(
     for candidate in candidates:
         key = (candidate.name, candidate.url)
         source_kinds = sources.get(key, set())
-        decision = {"name": candidate.name, "profile_url": candidate.url}
+        # The cleaned name is an identity field, not a replacement for the
+        # original roster evidence (e.g. an annotation outside the name link).
+        decision = {"name": candidate.name, "profile_url": candidate.url,
+                    "roster_context": candidate.card_context}
         if "university_faculty_roster" in source_kinds:
             decision.update(status="eligible", evidence_kind="university_faculty_roster")
-            admitted.append(candidate)
-        elif "agent_verified" in source_kinds:
-            decision.update(status="eligible", evidence_kind="agent_verified_source")
             admitted.append(candidate)
         elif "hospital_doctor_roster" in source_kinds:
             if key in reviewed_exclusions:

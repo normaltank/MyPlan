@@ -97,35 +97,13 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         raise ValueError("profile_concurrency must be an integer from 1 to 8")
     if "profile_ready_selector" in plan and not str(plan["profile_ready_selector"]).strip():
         raise ValueError("profile_ready_selector must be non-empty")
-    source_urls = {branch["url"] for branch in branches}
-    verified = plan.get("verified_candidates", [])
-    if not isinstance(verified, list):
-        raise ValueError("verified_candidates must be a list")
-    for item in verified:
-        if not isinstance(item, dict) or not str(item.get("name", "")).strip():
-            raise ValueError("each verified candidate needs a name")
-        if item.get("source_url") not in source_urls:
-            raise ValueError("verified candidate source_url must be a supplied branch")
-        if not Path(str(item.get("evidence_path", ""))).is_file():
-            raise ValueError("verified candidate needs an existing evidence_path")
-        profile_url = item.get("profile_url")
-        if profile_url:
-            parsed = urlparse(str(profile_url))
-            if parsed.scheme not in ("http", "https") or not parsed.netloc:
-                raise ValueError("verified candidate profile_url must be an absolute HTTP(S) URL")
-    reviews = plan.get("poster_reviews", [])
-    if not isinstance(reviews, list):
-        raise ValueError("poster_reviews must be a list")
-    seen_reviews = set()
-    for review in reviews:
-        if not isinstance(review, dict) or review.get("source_url") not in source_urls:
-            raise ValueError("poster review source_url must be a supplied branch")
-        if review["source_url"] in seen_reviews:
-            raise ValueError("poster review source_url must be unique")
-        seen_reviews.add(review["source_url"])
-        count = review.get("expected_count")
-        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
-            raise ValueError("poster expected_count must be a positive integer")
+    # Same rule as the server recon plan: names come from captured pages by
+    # deterministic code (DOM, PDF text layer or local OCR), never from a plan.
+    manual = sorted(key for key in ("verified_candidates", "poster_reviews") if key in plan)
+    if manual:
+        raise ValueError(f"plan fields {manual} are no longer accepted: roster names must be read "
+                         "from the captured page by DOM, PDF or local OCR; an image roster that "
+                         "cannot be read stays unresolved")
     appointments = plan.get("verified_appointments", [])
     if not isinstance(appointments, list):
         raise ValueError("verified_appointments must be a list")
@@ -932,18 +910,6 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
 
     candidates = []
     candidate_sources: dict[tuple[str, str], set[str]] = {}
-    verified = plan.get("verified_candidates", [])
-    manually_covered_urls = {item["source_url"] for item in verified}
-    reviews = {item["source_url"]: item for item in plan.get("poster_reviews", [])}
-    for source_url in manually_covered_urls:
-        review = reviews.get(source_url)
-        if not review or review.get("reviewed_full_image") is not True:
-            unresolved.append({"url": source_url, "status": "poster_full_image_review_missing"})
-            continue
-        count = len({item["name"].strip() for item in verified if item["source_url"] == source_url})
-        if count != review["expected_count"]:
-            unresolved.append({"url": source_url, "status": "poster_coverage_mismatch",
-                               "expected_count": review["expected_count"], "verified_count": count})
     roster_reconciliation = reconcile_rosters(
         source_capture.roster_pages, plan,
         name_decisions=name_review.load_decisions(out / name_review.DECISIONS_FILE))
@@ -1012,23 +978,15 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     roster_observations = roster_reconciliation.observations
     unresolved.extend(
         item for item in roster_reconciliation.unresolved
-        if (item.get("status") not in {"no_candidates_on_roster_page", "card_selector_missing"}
-            or item.get("url") not in manually_covered_urls)
         # Every PDF on the page was read: its records and their own issues
         # now account for the roster instead of the page-level stop.
-        and not (item.get("status") == "embedded_pdf_roster_requires_review"
-                 and item.get("url") in pdf_reading["read_pages"])
+        if not (item.get("status") == "embedded_pdf_roster_requires_review"
+                and item.get("url") in pdf_reading["read_pages"])
     )
     if (not candidates and roster_observations and not unresolved
             and all(item.get("status") == "confirmed_empty" for item in roster_observations)):
         unresolved.append({"url": plan["branches"][0]["url"],
                            "status": "zero_person_delivery_requires_review"})
-    for item in verified:
-        person = FacultyCandidate(name=item["name"].strip(),
-                                  url=item.get("profile_url") or item["source_url"],
-                                  title=item.get("title", "教师"))
-        candidates.append(person)
-        candidate_sources.setdefault((person.name, person.url), set()).add("agent_verified")
     unique = {(cand.name, cand.url): cand for cand in candidates}
     candidates = list(unique.values())
     roster_urls = {url for url, _ in all_pages}
@@ -1116,8 +1074,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             pdf_roster_urls.add(url)
     media_pages = dict(scoped_profile_html)
     media_pages.update((url, html) for url, html in all_pages
-                       if url in manually_covered_urls or url in image_roster_cards
-                       or url in pdf_roster_urls)
+                       if url in image_roster_cards or url in pdf_roster_urls)
     # Only admitted records of a segmented article carry media into the audit;
     # a record still waiting for its name has no owner yet.
     segment_media: dict[str, list[str]] = {}
@@ -1230,6 +1187,20 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     coverage["complete"] = coverage["complete"] and not unresolved
     coverage["unresolved_count"] = len(unresolved)
     pdf_record_keys = {(record.page_url, record.name) for record in pdf_reading["records"]}
+    table_sources = [{**source, "roster_snapshot": next((snap["path"] for snap in snapshots
+                      if snap["kind"] == "directory" and snap["url"] == source["roster_url"]), None)}
+                     for observation in roster_observations
+                     for source in observation.get("html_table_rows", [])]
+
+    def table_row_sources(row):
+        urls = {row["主页"]}
+        urls.update(dead for dead, live in aliases.items() if live == row["主页"])
+        for merge in identity_merges:
+            if merge["name"] == row["姓名"] and merge["kept_url"] == row["主页"]:
+                urls.update(merge["merged_list_urls"])
+        return [source for source in table_sources
+                if source["name"] == row["姓名"] and source["profile_url"] in urls]
+
     coverage["field_sources"] = [{"record_index": index, "profile_url": row["主页"],
         "profile_snapshot": next((snap["path"] for snap in snapshots
                                   if snap["kind"] == "profile" and snap["url"] == row["主页"]), None),
@@ -1244,6 +1215,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                               if (row["主页"], row["姓名"]) in segment_records else "candidate_and_profile"),
         **({"segment_record": segment_records[(row["主页"], row["姓名"])].provenance()}
            if (row["主页"], row["姓名"]) in segment_records else {}),
+        **({"html_table_rows": table_row_sources(row)} if table_row_sources(row) else {}),
         "image_biography_evidence": [item for item in media_audit["evidence"]
                                       if item["profile_url"] == row["主页"]
                                       and item.get("assigned_name") == row["姓名"]],
@@ -1275,10 +1247,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "directory_pages": len(all_pages), "navigation_pages": len(navigation_pages),
         "profile_pages": sum(bool(html) for html in profile_html.values()),
         "profile_attempts": len(profile_urls), "elapsed_seconds": round(time.perf_counter() - started, 3),
-        "candidate_count": len(candidates), "verified_candidate_count": len(verified),
+        "candidate_count": len(candidates),
         "excluded_count": sum(item["status"] == "excluded" for item in eligibility),
         "eligibility": eligibility,
-        "verified_candidates": verified, "poster_reviews": list(reviews.values()), "total": len(records),
+        "total": len(records),
         "with_email": sum(bool(str(row.get("邮箱", "")).strip()) for row in records),
         "branches": branches, "roster_observations": roster_observations,
         "profile_aliases": profile_aliases,

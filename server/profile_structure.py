@@ -133,6 +133,18 @@ def _profile_text(html: str, selector: str, start_selector: str | None, url: str
     return " ".join(BeautifulSoup(scoped, "html.parser").get_text(" ", strip=True).split())
 
 
+def _profile_media(html: str, selector: str, start_selector: str | None, url: str) -> list:
+    from bs4 import BeautifulSoup
+    from server.profile_content import scope_profile_html
+    scoped, _, issue = scope_profile_html(html, selector, url, start_selector=start_selector)
+    if issue:
+        return []
+    return [(node.name, tuple((key, str(node.get(key, ''))) for key in
+                             ('src', 'srcset', 'data', 'href', 'poster')))
+            for node in BeautifulSoup(scoped, 'html.parser').find_all(
+                ['img', 'picture', 'source', 'svg', 'canvas', 'iframe', 'object', 'embed', 'video', 'audio'])]
+
+
 PROFILE_CANDIDATE_LIMIT = 4
 
 # The live counterpart of profile_content.hidden_blockers for computed styles.
@@ -270,25 +282,29 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             inside = await page.evaluate(_CONTENT_IMAGES,
                                          {'selector': selector, 'urls': [url for url, _, _ in failed_images]})
             ignored += sum(not value for value in inside)
-        # A failed script can only matter when the page builds the profile in the
-        # browser. When the container reads the same in the server's HTML as on
-        # screen, the profile is server-rendered and script failures do not block.
-        failed_scripts = [item for item in failed if item[1] == 'script' and item[2] in _GONE]
-        other_blocking = [item for item in failed if item not in presentation and item not in failed_scripts
+        # A permanently missing script or fetch/XHR (e.g. a visit counter) does
+        # not block an intact server-rendered profile. Compare both text and
+        # media references; browser-built content and transient errors still block.
+        failed_content_requests = [item for item in failed
+                                   if item[1] in {'script', 'xhr', 'fetch'} and item[2] in _GONE]
+        other_blocking = [item for item in failed if item not in presentation and item not in failed_content_requests
                           and item[1] != 'image']
         server_rendered = False
-        if failed_scripts and not other_blocking and evidence and tracker.document_response is not None:
+        if failed_content_requests and not other_blocking and evidence and tracker.document_response is not None:
             try:
                 raw = await tracker.document_response.text()
                 _, raw_evidence, raw_issue = scope_profile_html(raw, selector, page.url,
                                                                 start_selector=start_selector)
                 server_rendered = bool(not raw_issue and raw_evidence
                                        and _profile_text(raw, selector, start_selector, page.url)
-                                       == _profile_text(html, selector, start_selector, page.url))
+                                       and _profile_text(raw, selector, start_selector, page.url)
+                                       == _profile_text(html, selector, start_selector, page.url)
+                                       and _profile_media(raw, selector, start_selector, page.url)
+                                       == _profile_media(html, selector, start_selector, page.url))
             except Exception:
                 server_rendered = False
             if server_rendered:
-                ignored += len(failed_scripts)
+                ignored += len(failed_content_requests)
         pending_requests = [
             (getattr(request, 'url', ''), getattr(request, 'resource_type', ''))
             for request in tracker.pending
@@ -334,7 +350,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                                 else "network_not_idle")
             if result["reason"] == "network_not_idle":
                 blocking = [item for item in failed if item not in presentation
-                            and not (item in failed_scripts and server_rendered)]
+                            and not (item in failed_content_requests and server_rendered)]
                 result["blocking_requests"] = [
                     {"type": kind, "status": status, "path": urlsplit(url).path[-80:]}
                     for url, kind, status in blocking[:3]]
