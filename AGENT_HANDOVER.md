@@ -1,5 +1,54 @@
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
+## 〇、2026-10-08 增补：10-02 之后合并的模块索引（main `ad2d7f3`，均未部署）
+
+> 本节只做索引，告诉接手者这些能力已经存在、入口在哪，避免重写。行为细节以代码和 [CHANGELOG.md](CHANGELOG.md) 对应条目为准；下面旧章节的内容未改动，凡与本节冲突的“当前状态”以本节和代码为准。来源：[代码对齐检查](/mnt/project-files/reviews/code-alignment/2026-10-08-代码对齐检查.md) 的第 1 项（项目共享目录，不在仓库内）。
+
+### 1. PR #17 到 #25 各加了什么
+
+| PR | 内容 | 入口文件 |
+| --- | --- | --- |
+| #17 | A2 修复（#10）之前已交付学院的只读回查：对照覆盖账本与侦察浏览器证据，找分页提前停、卡片或导航子链接少于侦察所见的分支。只读，不写库 | `server/a2_lookback.py`（`python -m server.a2_lookback [--json]`）；结果记在 `docs/audits/2026-10-01-production-chain-audit.md` |
+| #18 | HTML 表格名录：带标签的姓名列不按岗位过滤，备注格与分节标题随候选人和覆盖证据保留；一行多个“姓名”列时每人都收 | `server/faculty_extractor.py`、`server/harvest_workflow.py`、`server/browser_batch_tool.py` |
+| #19 | 零散修复：卡片原文写入审计 `eligibility[].roster_context`；完整拉丁字母姓名；个人页 404/410 的 fetch/XHR 按结构核验放行；“邮 箱”字间空白 | `server/harvest_eligibility.py`、`Opus/iso_mining.py`、`server/profile_structure.py`、`server/detail_mecc.py`；说明见 `docs/implementation/2026-10-08-misc-case-fixes.md` |
+| #20 | IDE 批量工具拒绝计划里的 `verified_candidates`、`poster_reviews`（模型录入的人名），与服务器侦察一致 | `server/browser_batch_tool.py`、`server/harvest_coverage.py`、`server/harvest_eligibility.py` |
+| #21 | 跨学院同名的大学级复核入口（L1）：大学汇总先阻断，管理员判“不同教师”或“证据不足” | `server/university_identity_review.py`、`server/university_delivery.py`、`server/app.py`（`/review/university/{batch_id}`） |
+| #22 | 整图表格名录（`kind=image_table`）：按格线切格、逐格本地 OCR，复用 PDF 表格规则；逐格复核页 | `server/image_table_roster.py`（读取）、`server/image_table_browser.py`（浏览器核验）、`server/image_table_review.py`（复核）、`server/image_table_routes.py`（路由）、`server/templates/image_table_review.html` |
+| #23 | 失败学院按“失败去向”显示和计数，数据库状态仍是 `failed`，不新增状态 | `server/recovery_policy.py` 的 `failure_disposition`；`server/agent_queue.py` 同名包装、`server/app.py`、`server/templates/index.html` |
+| #24 | 同模板名录页只侦察一次（模板指纹看子结构集合）；侦察门禁复用采集端横幅箭头规则；个人页失效模板资源重开再验；补缺反馈按 `profile_sources` 交给所有链接该个人页的分支，补缺须在报错页上证明；证件照按 OCR 检测行数判断；原图类型复核；翻页跳新页先等加载 | `server/recon_templates.py`、`server/agent_recon.py`、`server/browser_batch_tool.py`（`without_banner_arrows`、`profile_sources`）、`server/profile_structure.py`、`server/image_biography.py`、`server/media_kind_review.py` |
+| #25 | 本机 Chrome 兜底读取：进程活着就等调试端口就绪，上限 90 秒 | `server/browser_batch_tool.py` |
+
+#15（名单串页角色行教师进复核，`server/name_list.py` 的 `name_list_role_line`）与 #16（查询串里写 `.pdf` 的附件识别为 PDF，`server/image_biography.py` 的 `media_references`）也在 10-02 之后合并。
+
+### 2. 人工复核：7 个模块
+
+单个学院的复核由 `server/task_image_review.py` 汇总：`IMAGE_REVIEW_STATUSES` 决定哪些审计项算待复核，`review_complete` 逐种判断是否复核完，`carry_review_decisions` 把各决策文件带到恢复后的新 attempt 目录。复核页是 `server/app.py` 的 `/review/task/{task_id}`，各类提交走 `/api/task/{task_id}/review/<种类>`。决策文件都在该 attempt 的审计文件旁边。
+
+| 模块 | 处理的状态码（定义处） | 决策文件 |
+| --- | --- | --- |
+| `server/image_bio_review.py`（简介图 OCR 纠字） | `image_bio_low_confidence`、`image_bio_owner_unresolved`、`segment_name_needs_review`（目前只写在 `task_image_review.py`） | `image_bio_reviews.json` |
+| `server/image_bio_review.py`（简介图邮箱冲突） | `image_bio_email_conflict`（同上） | `image_bio_email_reviews.json` |
+| `server/name_review.py`（生僻姓、角色行姓名） | `name_review.STATUS` = `rare_surname_needs_review` | `name_review.DECISIONS_FILE` = `name_reviews.json` |
+| `server/identity_review.py`（学院内同名多主页） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
+| `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个） | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
+| `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`，且 `kind == "image"` | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
+| `server/image_table_review.py`（整图表格逐格纠字、整图人数） | 13 个 `table_*`，由 `server/image_table_roster.py` 产生；`task_image_review.py` 里另手抄了一份 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
+
+大学级复核另走一套：`server/university_identity_review.py`（跨学院同名），决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，不用 JSON，也不经过 `task_image_review.py`。
+
+已知问题（见 `docs/review-backlog.md` 的 2026-10-08 代码对齐条目）：每加一种复核要改 `task_image_review.py` 的状态集合、`review_complete` 和 `carry_review_decisions` 三处；`table_*` 状态码有两份。
+
+### 3. 失败去向只在一处定义
+
+审计状态码分到 access / structure / review / stop 四组，只在 `server/recovery_policy.py` 的 `_GROUPS` 里写；新状态码必须加在这里，否则按 stop 处理。失败学院的去向（review / access / structure / recon / failed）只由 `recovery_policy.failure_disposition` 计算；`agent_queue.failure_disposition` 只是先用 `site_type_registry.classify_failure` 取出状态码再调用它，`app.py` 和前台计数都走这个包装。不要在别处再写一份分组或去向判断。
+
+### 4. 姓名规则和邮箱归属规则现在在哪
+
+- 姓名：名录页判定是 `server/name_list.py` 的 `_person_name`，分段名录是 `server/segmented_roster.py` 的 `_name_like`，两份逻辑相同，常量 `NAME_PRIOR_FLOOR`、`_HAN_NAME`、`_MINORITY_NAME` 各定义一次，少数民族姓名正则已不一致（`{2,6}·{2,8}` 与 `{1,6}·{1,8}`）。姓名先验 `name_prob` 和生僻姓判断 `rare_surname_name` 在 `Opus/iso_mining.py`，生僻姓表是 `Opus/rare_surnames.txt`。合并方案见对齐执行方案 B 包，等 badr 定点号规则。
+- 邮箱归属：主规则是 `server/detail_mecc.py` 的 `is_personal_email_for_scholar`、`is_institutional_email`（拼音模型在 `Opus/email_matching.py`）。`find_emails` 也只在 `detail_mecc.py` 定义。`server/faculty_extractor.py` 直接导入这三个函数并照旧导出；算法层或 `detail_mecc` 导不进来时 `faculty_extractor` 导入即报错，没有降级版（对齐执行方案 D 包，PR #28）。
+
+---
+
 > **2026-10-02 文档治理与 Claude 派工**：根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，`CLAUDE.md` 为读取入口。OCR 修复及宪法已提交并同步 main（`4fe72c2`、`10370eb`）；服务是否加载仍按下方部署记录判断。用户指定在 [Claude Projects → MyPlan 主对话](https://claude.ai/code/project/chan_012KwoNrMicyn2LoBSKGmCan) 派工，现有两个项目内实现线程：多人 PDF 名录采集、HTML 邮箱歧义复核恢复；具体范围见 [任务规格](docs/implementation/2026-10-02-claude-assignment.md)，要求独立 PR，不自动合并／部署。此前误开的两个独立 Code 会话已显示 Idle，不再继续。PR #4 仅改项目说明，实际与 main 的 AGENTS.md 存在合并冲突，且有过期状态和额外确认要求；本轮只审阅，未修改或合并该 PR。
 
 > **最新交接：2026-10-02 侦察图片 OCR 入口修复，待重启 worker 生效**。`server/recon_browser_mcp.py` 新增按需 `browser_read_image`，复用现有原图读取与本地 OCR，侦察说明已同步；普通 DOM 不触发 OCR，模型计划及教师来源审计边界不变。淮阴师范学院马克思主义学院给定“系部设置”页实为 600×805 PNG，真实浏览器实测已读出 40 行，原件与完整结果在 `server/outputs/tasks/8ee2181b7a0741a1a2b45c7862ed2942/ocr-diagnosis/`。该图混合教研部负责人和办公人员，不能据此认定完整教师名录；原工单转入导师 PDF 后的来源范围门禁仍保留，未重排任何工单。相关回归 129 passed，最后补充的越界读取验证 2 passed，Ruff 与 diff 检查通过。重启前已确认队列空闲，但自动审批拒绝了 worker 停止/重启（仅返回 blocked by policy）；服务仍加载更新前的侦察说明，需通过“重启本地服务.bat”加载更新。
