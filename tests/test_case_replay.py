@@ -7,7 +7,7 @@ import pytest
 from server import case_replay
 
 ROOT = 'https://fixture.edu/'
-ROSTER = ('<html><body><div class="list"><ul class="t">'
+ROSTER = ('<html><head><script src="/unsaved.js"></script></head><body><div class="list"><ul class="t">'
           '<li><a href="/p/1.htm">王建国</a> 教授</li><li><a href="/p/2.htm">李晓明</a> 副教授</li>'
           '</ul></div></body></html>')
 

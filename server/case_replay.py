@@ -15,8 +15,10 @@ replay cannot show is limited by what was saved:
 * a page the original run never opened is not in the case, so a change that
   makes the harvest open new pages shows up as ``missing`` requests, not as a
   regression of the site;
-* sub-resources (scripts, styles, counters) were not saved and answer 404, which
-  the profile checks treat as permanently missing on the site.
+* scripts, styles, images and fonts were not saved. A snapshot is the page after
+  its scripts ran, so they are answered with an empty 200: the saved DOM stays as
+  captured and no load failure is invented. Replay therefore cannot tell whether
+  such a resource failed on the site (e.g. a visit counter answering 404).
 
 Usage::
 
@@ -39,7 +41,8 @@ from urllib.parse import urlsplit
 
 # (URL key, path key) pairs in an audit that name a captured original.
 _CAPTURED = (("url", "path"), ("media_url", "original_path"))
-# Requests whose absence changes what the harvest sees (pages, data, media).
+# Requests whose absence changes what the harvest sees (pages, data). Any other
+# unsaved request is a sub-resource whose effect is already in the snapshot.
 _CONTENT_TYPES = {"document", "xhr", "fetch"}
 
 
@@ -168,7 +171,9 @@ class ReplayContext:
         if path is None:
             if request.resource_type in _CONTENT_TYPES:
                 self.missing.append(request.url)
-            await route.fulfill(status=404, body="")
+                await route.fulfill(status=404, body="")
+            else:
+                await route.fulfill(status=200, body="")
             return
         await route.fulfill(status=200, body=path.read_bytes(), content_type=_content_type(path))
 
