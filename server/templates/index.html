@@ -878,7 +878,8 @@
                 text = st.source_review_required ? '来源范围待核验' : '失败';
             }
             const download = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download title="下载该学院的双 Sheet Excel">${icon('download')}表格</a>` : '';
-            const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>` : '';
+            const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>`
+                : st.university_review_url ? `<a href="${escapeHtml(st.university_review_url)}">${icon('review')}同名复核</a>` : '';
             return `
                 <div class="subtask">
                     <div class="subtask-name"><span class="subtask-college">${escapeHtml(st.college)}</span><span class="subtask-school">${escapeHtml(st.school)}</span></div>
@@ -922,7 +923,7 @@
                     const batch = await resp.json();
                     if (epoch !== requestEpoch) return;
                     if (['completed', 'failed', 'partially_failed'].includes(batch.status) && !viewingHistory
-                            && !(batch.subtasks || []).some(st => st.review_url)) forgetRequest('batch', targetId);
+                            && !(batch.subtasks || []).some(st => st.review_url || st.university_review_url)) forgetRequest('batch', targetId);
                     if (batch.status === 'queued' || batch.status === 'running') {
                         setBadge(batch.status === 'queued' ? '排队待接单' : '自动采集中', 'info', batch.status === 'running');
                     }
@@ -948,7 +949,9 @@
                         setBadge('大学交付待复核', 'warn');
                         document.getElementById('statSummary').innerText = '原始页面观察已保留，身份与人数待核算';
                         document.getElementById('downloadBtn').classList.add('hidden');
-                        document.getElementById('univDownloadBox').innerHTML = '<p class="hint">请先核实身份与来源，再生成大学交付。</p>';
+                        const reviewLinks = (batch.delivery_scopes || []).filter(s => s.review_url)
+                            .map(s => `<a href="${escapeHtml(s.review_url)}">${icon('review')}${escapeHtml(s.school)}：跨学院同名复核</a>`).join(' ');
+                        document.getElementById('univDownloadBox').innerHTML = '<p class="hint">请先核实身份与来源，再生成大学交付。</p>' + reviewLinks;
                         document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();
                     } else if (batch.status === 'completed' && batch.delivery_state === 'ready') {
