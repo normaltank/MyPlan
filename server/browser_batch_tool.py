@@ -334,6 +334,10 @@ async def _wait_for_change(page: Any, before: str, url: str, seconds: float = 3.
     With a verified card (or segment start) selector the cards decide: the
     name miner cannot read every page (rare surnames await review), and an
     empty reading must not stop pagination as 'unchanged'.
+
+    A control that is a link opens a new document. Its load time is the
+    site's, not the roster's: the wait starts once that document has loaded,
+    as a direct visit to the page would.
     """
     if unit_selector:
         def signature(html: str, current_url: str) -> tuple:
@@ -343,8 +347,18 @@ async def _wait_for_change(page: Any, before: str, url: str, seconds: float = 3.
     previous = signature(before, url)
     deadline = asyncio.get_running_loop().time() + seconds
     pending, stable_since = None, None
+    navigated = False
     while asyncio.get_running_loop().time() < deadline:
-        current = await page.content()
+        if not navigated and page.url != url:
+            navigated = True
+            with contextlib.suppress(Exception):
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
+            deadline = asyncio.get_running_loop().time() + seconds
+        try:
+            current = await page.content()
+        except Exception:  # the new document is still replacing the old one
+            await asyncio.sleep(0.1)
+            continue
         sig = signature(current, page.url)
         if current != before and sig and sig != previous:
             if not unit_selector:
