@@ -39,11 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          path: diag
+          ref: 81d973bd522a13a1d96aedca20c03aacb96a8542
       - uses: actions/checkout@v5
         with:
-          ref: 81d973bd522a13a1d96aedca20c03aacb96a8542
-          clean: false
+          path: diag
       - run: cp diag/.github/diag_plugin.py .github/ && rm -rf diag
       - uses: astral-sh/setup-uv@v6
       - run: uv venv --python 3.12 && uv pip sync requirements-dev.lock
