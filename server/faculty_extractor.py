@@ -29,25 +29,13 @@ if _OPUS_DIR not in sys.path:
     sys.path.insert(0, _OPUS_DIR)
 from name_labels import without_degree_annotation  # noqa: E402 (Opus is on sys.path)
 
-try:
-    from iso_mining import (VirtualNode, first_href, mine_records, primary_tokens,
-                            name_prob, rare_surname_name, strip_invisible)
-    from email_matching import DomainConventionModel
-    from text_lists import email_spans, _AT as _AT_PATTERN
-    _AT_RE = re.compile(_AT_PATTERN)
-    L2_AVAILABLE = True
-except ImportError as _ex:                          # never silently: log it
-    log.error("L2 algorithm layer unavailable: %s", _ex)
-    mine_records = DomainConventionModel = VirtualNode = first_href = primary_tokens = email_spans = None
-    rare_surname_name = None
-    L2_AVAILABLE = False
-
-    # _clean_name is called on every extraction path, including this degraded
-    # one, so it must never depend on a name that only the happy path binds.
-    _INVISIBLE_FALLBACK = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff\u00ad]")
-
-    def strip_invisible(t: str) -> str:
-        return _INVISIBLE_FALLBACK.sub("", t or "")
+# The algorithm layer is required: without it there is no rule for whose
+# address is whose, so a missing layer fails the import instead of running on
+# looser stand-ins.
+from iso_mining import (VirtualNode, first_href, mine_records, primary_tokens,  # noqa: E402
+                        name_prob, rare_surname_name, strip_invisible)
+from email_matching import DomainConventionModel  # noqa: E402
+L2_AVAILABLE = True  # kept for worker_selfcheck; the import above raises otherwise
 
 try:
     from server.runtime_l1 import L1RuntimeExecutor, SQLiteWrapperRegistry, cluster_key_for
@@ -76,33 +64,13 @@ _INTRODUCED_NAME = re.compile(
     r"^([\u4e00-\u9fff]{2,4}?)(" + "|".join(map(re.escape, TITLE_KEYWORDS))
     + r")(?:个人简介|简介|介绍|个人主页|主页)$")
 
-try:
-    from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
-                                    contact_email_candidates, labeled_text_emails, explicit_title_candidates,
-                                    mailto_address_conflicts, find_emails)
-    DETAIL_MECC_AVAILABLE = True
-except ImportError:
-    try:
-        from detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,
-                                 contact_email_candidates, labeled_text_emails, explicit_title_candidates,
-                                 mailto_address_conflicts, find_emails)
-        DETAIL_MECC_AVAILABLE = True
-    except ImportError as _ex:
-        log.warning("Detail MECC extractor unavailable: %s", _ex)
-        DetailMECCExtractor = ProfileDetail = LayoutAwareTokenizer = contact_email_candidates = None
-
-        def labeled_text_emails(text):  # no evidence reader: nothing is labelled
-            return []
-
-        def find_emails(text):  # the address reader lives in detail_mecc
-            return []
-
-        def explicit_title_candidates(text):
-            return ()
-
-        def mailto_address_conflicts(root):
-            return ()
-        DETAIL_MECC_AVAILABLE = False
+# One definition of "this address spells this teacher" and of address reading
+# for every path (profile pages, shared pages, roster cards, OCR biographies).
+from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,  # noqa: E402,F401
+                                contact_email_candidates, labeled_text_emails, explicit_title_candidates,
+                                mailto_address_conflicts, find_emails,
+                                is_institutional_email, is_personal_email_for_scholar)
+DETAIL_MECC_AVAILABLE = True
 
 _DEFAULT_L1_EXECUTOR = None
 
@@ -124,24 +92,6 @@ PRUNE_CLASSES = [
     'wp_paging', 'sidebar', 'sub-nav', 'bottom', 'copyright',
     'col_path', 'col_menu', 'breadcrumb', 'breadcrumbs', 'left_nav', 'nav_left'
 ]
-
-
-if DETAIL_MECC_AVAILABLE:
-    # One definition of "this address spells this teacher" for every path
-    # (profile pages, shared pages, roster cards, OCR biographies).
-    from server.detail_mecc import is_institutional_email, is_personal_email_for_scholar  # noqa: E402,F401
-else:
-    def is_personal_email_for_scholar(email: str, scholar_name: str = "") -> bool:
-        """Degraded mode: without the pinyin model only numeric IDs identify a person."""
-        if not email or '@' not in email:
-            return False
-        local = re.sub(r'[-_.]', '', email.lower().partition('@')[0])
-        return local.isdigit() or not scholar_name
-
-    def is_institutional_email(email: str, scholar_name: str = "") -> bool:
-        if not email or '@' not in email:
-            return False
-        return bool(scholar_name) and not is_personal_email_for_scholar(email, scholar_name)
 
 
 @dataclass(frozen=True)
@@ -616,11 +566,7 @@ class FacultyDirectoryExtractor:
                 continue
 
             # Prior name probability via Opus, avoiding any hardcoded keyword blacklists
-            if L2_AVAILABLE:
-                from iso_mining import name_prob
-                if name_prob(clean_name) < 0.35:
-                    continue
-            elif re.search(r'[\d_#=<>\[\]\(\)]', clean_name):
+            if name_prob(clean_name) < 0.35:
                 continue
 
             # Resolve URL
