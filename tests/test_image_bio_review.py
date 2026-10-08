@@ -54,6 +54,34 @@ def test_review_page_shows_only_low_confidence_line_and_its_original_crop(tmp_pa
     assert "data:image/png;base64," in html
 
 
+def test_owner_mismatch_exposes_header_even_when_ocr_confidence_is_high(tmp_path):
+    audit, _ = _audit_fixture(tmp_path)
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    payload["unresolved"][0]["status"] = "image_bio_owner_unresolved"
+    ocr_path = Path(payload["image_biography_evidence"][0]["ocr_path"])
+    scanned = json.loads(ocr_path.read_text(encoding="utf-8"))
+    for line in scanned["pages"][0]["lines"]:
+        line["confidence"] = .99
+    ocr_path.write_text(json.dumps(scanned), encoding="utf-8")
+    audit.write_text(json.dumps(payload), encoding="utf-8")
+    items = collect_review_items(audit)
+    assert len(items) == 2 and all(item["purpose"] == "image_owner" for item in items)
+    assert "图文归属" in render_review_page(items)
+
+
+def test_owner_header_review_does_not_include_every_confident_biography_line(tmp_path):
+    audit, _ = _audit_fixture(tmp_path)
+    payload = json.loads(audit.read_text(encoding="utf-8"))
+    payload["unresolved"][0]["status"] = "image_bio_owner_unresolved"
+    path = Path(payload["image_biography_evidence"][0]["ocr_path"])
+    scanned = json.loads(path.read_text(encoding="utf-8"))
+    line = {"text": "原文", "confidence": .99, "box": [[10, 5], [150, 5], [150, 20], [10, 20]]}
+    scanned["pages"][0]["lines"] = [dict(line) for _ in range(20)]
+    path.write_text(json.dumps(scanned), encoding="utf-8")
+    audit.write_text(json.dumps(payload), encoding="utf-8")
+    assert len(collect_review_items(audit)) == 5
+
+
 def test_review_decision_applies_only_to_identical_original_and_ocr_line(tmp_path):
     audit, scanned = _audit_fixture(tmp_path)
     item = collect_review_items(audit)[0]

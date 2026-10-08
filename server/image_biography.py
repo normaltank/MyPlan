@@ -260,6 +260,7 @@ async def audit_profile_media(
     *, fetch_asset: Callable[[str], Awaitable[bytes]], ocr_engine=None,
     scoped_urls: set[str] | None = None, known_names: set[str] | None = None,
     review_decisions_path: str | Path | None = None,
+    media_kind_decisions_path: str | Path | None = None,
     cache_dir: str | Path | None = None,
 ) -> dict:
     """Retain original assets, transcribe locally, and resolve only unique owners.
@@ -389,8 +390,13 @@ async def audit_profile_media(
                                                      shared_ocr_engine)
                     record["unread_text_lines"] = unread
                     if unread is None or unread >= UNREAD_PAGE_LINES:
-                        unresolved.append({**source, "status": "image_bio_ocr_incomplete",
-                                           "ocr_path": str(ocr_path), "unread_text_lines": unread})
+                        from server.media_kind_review import photo_confirmed
+                        if photo_confirmed(Path(media_kind_decisions_path) if media_kind_decisions_path else None,
+                                           profile_url, ref.url, digest):
+                            record["media_kind_review"] = "photo"
+                        else:
+                            unresolved.append({**source, "status": "image_bio_ocr_incomplete",
+                                               "ocr_path": str(ocr_path), "unread_text_lines": unread})
                 continue
             if not text:
                 continue

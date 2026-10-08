@@ -67,12 +67,14 @@ def _crop_original(original: bytes, kind: str, page: int, box: list) -> bytes:
 
 
 def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8) -> list[dict]:
-    """Return only uncertain lines from verified local audit artifacts."""
+    """Return uncertain OCR or unmatched owner headings from exact local evidence."""
     audit_path = Path(audit_path).resolve()
     root = audit_path.parent
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
-    flagged_urls = {item.get("media_url") for item in audit.get("unresolved", [])
-                    if item.get("status") == "image_bio_low_confidence"}
+    owner_urls = {item.get("media_url") for item in audit.get("unresolved", [])
+                  if item.get("status") == "image_bio_owner_unresolved"}
+    flagged_urls = owner_urls | {item.get("media_url") for item in audit.get("unresolved", [])
+                                if item.get("status") == "image_bio_low_confidence"}
     result: list[dict] = []
     for evidence in audit.get("image_biography_evidence", []):
         media_url = evidence.get("media_url")
@@ -87,7 +89,7 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
         scanned = json.loads(ocr_path.read_text(encoding="utf-8"))
         if scanned.get("source_sha256") not in (None, digest):
             raise ValueError("review OCR source SHA-256 mismatch")
-        if any(line.get("confidence", 1) < confidence_floor and not line.get("box")
+        if any((line.get("confidence", 1) < confidence_floor or media_url in owner_urls) and not line.get("box")
                for page in scanned["pages"] for line in page["lines"]):
             from server.image_biography import scan_media
             rescan_path = root / "review-rescans" / f"{digest}_{evidence['kind']}_ocr.json"
@@ -102,10 +104,13 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
                 rescan_path.write_text(json.dumps(refreshed, ensure_ascii=False, indent=2),
                                        encoding="utf-8")
             scanned = refreshed
+        owner_headers = {(page['page'], index) for page, index in [
+            (page, index) for page in scanned['pages'] for index, _ in enumerate(page['lines'])][:5]}
         for page in scanned["pages"]:
             page_number = page["page"]
             for line_index, line in enumerate(page["lines"]):
-                if line["confidence"] >= confidence_floor:
+                owner_header = media_url in owner_urls and (page_number, line_index) in owner_headers
+                if line["confidence"] >= confidence_floor and not owner_header:
                     continue
                 if not line.get("box"):
                     raise ValueError("OCR line lacks coordinates; refresh this image before review")
@@ -115,6 +120,7 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
                     "page": page_number, "line_index": line_index,
                     "ocr_text": line["text"], "ocr_text_sha256": _text_digest(line["text"]),
                     "confidence": line["confidence"],
+                    **({"purpose": "image_owner"} if owner_header else {}),
                     "crop_bytes": _crop_original(original, evidence["kind"], page_number,
                                                  line["box"]),
                 })
@@ -310,13 +316,15 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                        name_decision_url: str = '', identity_items: list[dict] | None = None,
                        identity_decision_url: str = '', can_review_identity: bool = True,
                        html_email_items: list[dict] | None = None,
-                       html_email_decision_url: str = '') -> str:
+                       html_email_decision_url: str = '', media_kind_items: list[dict] | None = None,
+                       media_kind_decision_url: str = '') -> str:
     cards = []
     for item in items:
         crop = base64.b64encode(item["crop_bytes"]).decode("ascii")
         cards.append(
             '<section class="card" data-id="' + escape(item["id"]) + '">'
             '<p class="meta">' + ('姓名行（请核对并改正为原图中的姓名） · ' if item.get("purpose") == "segment_name" else '')
+            + ('图文归属（只按原图核对标题或姓名，不可推测） · ' if item.get("purpose") == "image_owner" else '')
             + '第 ' + str(item["page"]) + ' 页 · 置信度 '
             + f'{item["confidence"]:.2f}' + '</p>'
             '<img alt="待核对的原图局部" src="data:image/png;base64,' + crop + '">'
@@ -324,6 +332,18 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             '<button type="button">确认这行文字</button><p class="status" role="status"></p>'
             '</section>')
     body = "\n".join(cards)
+    for item in media_kind_items or []:
+        preview = base64.b64encode(item['preview_bytes']).decode('ascii')
+        status = {'photo': '已确认纯人物照片', 'unreadable': '包含文字或无法确定，仍保持阻断'}.get(
+            item.get('saved_verdict'), '')
+        body += ('<section class="card media-kind-card" data-id="' + escape(item['id']) + '">'
+            '<h2>原图类型复核</h2><p>程序无法判断这是照片还是未读出的简历。请检查整张原图：'
+            '只有纯人物照片、没有履历或其他文字时才能确认照片。含文字、扫描件或无法判断时保持阻断。</p>'
+            '<p>来源：' + _page_link(item['profile_url']) + '</p>'
+            '<img alt="需要判断类型的完整原图" src="data:image/png;base64,' + preview + '">'
+            '<button type="button" data-verdict="photo">确认纯人物照片，无履历文字</button> '
+            '<button type="button" data-verdict="unreadable">含文字或无法判断，保持阻断</button>'
+            '<p class="status" role="status">' + status + '</p></section>')
     email_cards = []
     for item in email_items or []:
         choices = []
@@ -358,6 +378,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     name_js = json.dumps(name_decision_url).replace('<', '\\u003c')
     identity_js = json.dumps(identity_decision_url).replace('<', '\\u003c')
     html_email_js = json.dumps(html_email_decision_url).replace('<', '\\u003c')
+    media_kind_js = json.dumps(media_kind_decision_url).replace('<', '\\u003c')
     retry_js = json.dumps(retry_url).replace('<', '\\u003c')
     csrf_js = json.dumps(csrf_token).replace('<', '\\u003c')
     footer = ''
@@ -406,7 +427,16 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "if(!response.ok)throw await failure(response);"
             "status.textContent=verdict==='none'?'已确认无个人邮箱':'已保存邮箱：'+selected_email;}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
-            "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card)').forEach(card=>{"
+            "document.querySelectorAll('.media-kind-card').forEach(card=>{"
+            "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
+            "const status=card.querySelector('.status');const verdict=button.dataset.verdict;"
+            "try{const response=await fetch(" + media_kind_js + ",{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
+            "body:JSON.stringify({id:card.dataset.id,verdict})});"
+            "if(!response.ok)throw await failure(response);"
+            "status.textContent=verdict==='photo'?'已确认纯人物照片；重新采集时校验原件':'保持阻断，请处理原图文字';}"
+            "catch(error){status.textContent='保存失败：'+error.message;}});});"
+            "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card):not(.media-kind-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
             "const verified_text=card.querySelector('textarea').value;"
             "try{const response=await fetch(" + decision_js + ",{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"

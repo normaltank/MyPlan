@@ -1187,6 +1187,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         fetch_asset=fetch_original_media, scoped_urls=set(profile_scope_evidence) | segment_media_urls,
         known_names={candidate.name for candidate in candidates},
         review_decisions_path=out / "image_bio_reviews.json",
+        media_kind_decisions_path=out / "media_kind_reviews.json",
         cache_dir=ocr_cache_dir)
     unresolved.extend(media_audit["unresolved"])
     for url, scope_evidence in profile_scope_evidence.items():
