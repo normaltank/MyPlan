@@ -262,11 +262,14 @@ async def audit_profile_media(
     review_decisions_path: str | Path | None = None,
     media_kind_decisions_path: str | Path | None = None,
     cache_dir: str | Path | None = None,
+    unpublished_media: dict[str, set[str]] | None = None,
 ) -> dict:
     """Retain original assets, transcribe locally, and resolve only unique owners.
 
     The result contains data only in local files or deterministic worker memory;
     it must never be included in the model's reconnaissance plan.
+    ``unpublished_media`` names, per profile, images the browser proof found
+    gone on two opens with no room on the page; nothing was shown there to read.
     """
     out = Path(output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -274,6 +277,7 @@ async def audit_profile_media(
     assigned_parts: dict[tuple[str, str], list[str]] = {}
     unresolved: list[dict] = []
     evidence: list[dict] = []
+    skipped: list[dict] = []
     shared_ocr_engine = ocr_engine
 
     def read_cache(path: Path, digest: str, kind: str) -> dict | None:
@@ -308,6 +312,10 @@ async def audit_profile_media(
         has_substantial_dom_body = len(without_links.get_text(" ", strip=True)) >= 300
         for ref in media_references(scoped_html, profile_url):
             if ref.kind == "pdf" and ref.linked and has_substantial_dom_body:
+                continue
+            if ref.kind == "image" and ref.url in (unpublished_media or {}).get(profile_url, ()):
+                skipped.append({"profile_url": profile_url, "media_url": ref.url,
+                                "status": "image_gone_without_display_area"})
                 continue
             source = {"profile_url": profile_url, "media_url": ref.url,
                       "kind": ref.kind, "position": ref.position}
@@ -448,4 +456,4 @@ async def audit_profile_media(
                 biographies[profile_url] = "\n\n".join(parts)
     assigned = {key: "\n\n".join(parts) for key, parts in assigned_parts.items()}
     return {"biographies": biographies, "assigned_biographies": assigned,
-            "unresolved": unresolved, "evidence": evidence}
+            "unresolved": unresolved, "evidence": evidence, "unpublished_media": skipped}
