@@ -1,5 +1,9 @@
 # 变更记录
 
+## 2026-10-08 · 表格复核状态码只在一处定义（行为不变，未部署）
+
+- 表格 OCR 的 13 个复核状态码改由 `server/image_table_review.py` 的 `STATUSES` 导出，`task_image_review.py` 直接引用，不再手抄；新增一致性测试 `tests/test_review_status_registry.py`，各复核模块声明的状态码必须在 recovery_policy 的 review 组里，表格名单实际产出的状态码必须已登记。
+
 ## 2026-10-08 · 邮箱工具只留一份实现（未部署）
 
 - `find_emails` 只在 `server/detail_mecc.py` 定义，`server/faculty_extractor.py` 改为导入并继续导出同名函数，调用方不变；删除两份没有任何代码使用的 `FREE_MAIL_DOMAINS`。算法层（Opus）或 detail_mecc 导入失败时，faculty_extractor 现在直接导入报错，不再用更宽松的降级邮箱归属规则和名字过滤继续跑（badr 10-08 同意）；worker 自检遇到这种情况照旧拒绝启动。原来验证降级路径能跑的测试改为验证会报错。
