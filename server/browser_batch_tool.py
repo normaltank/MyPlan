@@ -47,6 +47,20 @@ def _validate_plan(plan: dict[str, Any]) -> None:
     for branch in branches:
         if not isinstance(branch, dict):
             raise ValueError("each branch must be an object")
+        if branch.get("kind") == "image_table":
+            parsed_image_url = urlparse(str(branch.get("url", "")))
+            if (parsed_image_url.scheme not in ("http", "https") or not parsed_image_url.netloc
+                    or parsed_image_url.username or parsed_image_url.password
+                    or set(branch) - {"url", "kind", "source_kind", "card_selector", "single_page"}
+                    or branch.get("source_kind", "university_faculty_roster") not in allowed_sources):
+                raise ValueError("image_table requires a structure-only official URL branch")
+            if (branch.get("single_page") is not True or not branch.get("card_selector")
+                    or any(key in branch for key in ("next_selector", "initial_click_selector", "child_branch",
+                                                    "profile_content_selector", "empty_state_selector"))):
+                raise ValueError("image_table requires only a verified single-page image selector")
+            if not isinstance(branch["card_selector"], str) or not branch["card_selector"].strip():
+                raise ValueError("image_table selector must be non-empty")
+            continue
         if branch.get("source_kind") is not None and branch["source_kind"] not in allowed_sources:
             raise ValueError("invalid branch source_kind")
         if "empty_state_selector" in branch or "roster_container_selector" in branch:
@@ -531,6 +545,13 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 with contextlib.suppress(Exception):
                     await page.wait_for_load_state("networkidle", timeout=3000)
             html = await page.content()
+            if branch.get("kind") == "image_table":
+                from server.image_table_browser import verify_table_images
+                proof = await verify_table_images(page, branch["card_selector"])
+                evidence.setdefault("table_images", {})[page.url] = proof
+                if not proof["valid"]:
+                    unresolved.append({"url": page.url, "status": "table_image_selector_unverified"})
+                html = await page.content()
             frontier = (page.url, _frontier_signature(html, branch))
             if frontier[1] is not None and frontier in seen_frontiers:
                 unresolved.append({"url": page.url, "status": "pagination_cycle", "page": page_number})
@@ -671,7 +692,7 @@ async def _capture_sources_with_state(plan, browser_context, state):
     async def capture_branch(context, branch):
         nonlocal restored_branches, resumed_branches, restored_roster_pages
         key = json.dumps(branch, sort_keys=True, separators=(",", ":"))
-        bundle = state.load_page_record("branch", branch["url"], key=key) if state and not branch.get("empty_state_selector") else None
+        bundle = state.load_page_record("branch", branch["url"], key=key) if state and not branch.get("empty_state_selector") and branch.get("kind") != "image_table" else None
         if bundle:
             # A valid HTML digest alone cannot establish a completed branch.
             # Treat incomplete/corrupt cursor metadata as a cache miss; errors
@@ -709,7 +730,8 @@ async def _capture_sources_with_state(plan, browser_context, state):
                 return [(row["url"], row["html"]) for row in saved], [], evidence
         def checkpoint(url, html, sequence):
             state.save_roster_progress(branch, url, html, sequence)
-        kwargs = {"on_page": checkpoint, "resume_pages": state.load_roster_progress(branch)} if state else {}
+        kwargs = {"on_page": checkpoint, "resume_pages": state.load_roster_progress(branch)
+                  if branch.get("kind") != "image_table" else []} if state else {}
         pages, errors, evidence = await _capture_branch(context, branch, **kwargs)
         if evidence.get("restored_pages"):
             resumed_branches += 1
@@ -900,7 +922,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     image_roster_cards: dict[str, int] = {}
     for captured_page in source_capture.roster_pages:
         selector = captured_page.branch.get("card_selector")
-        if selector:
+        if selector and captured_page.branch.get("kind") != "image_table":
             cards = BeautifulSoup(captured_page.html, "html.parser").select(selector)
             if cards and all(card.name == "img" for card in cards):
                 image_roster_cards[captured_page.url] = len(cards)
@@ -962,17 +984,38 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                         else "pdf_roster_unresolved"),
                 pdf_rosters=pdf_observations,
                 extracted_candidates=sum(item.get("records_admitted", 0) for item in pdf_observations))
+    table_reading = {"records": [], "unresolved": [], "evidence": [], "observations": {}}
+    if roster_reconciliation.image_table_sources:
+        from server.image_biography import fetch_browser_asset
+        from server.image_table_roster import read_image_table_rosters, REVIEW_FILE
+        async def fetch_table(media_url):
+            return await fetch_browser_asset(browser_context, media_url)
+        table_reading = await read_image_table_rosters(
+            roster_reconciliation.image_table_sources, fetch_asset=fetch_table,
+            evidence_dir=out / f"{_safe_name(plan['school'] + '_' + plan['college'])}_snapshots" / "image_tables",
+            reviews_path=out / REVIEW_FILE)
+        unresolved.extend(table_reading["unresolved"])
+        for record in table_reading["records"]:
+            person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
+            candidates.append(person)
+            candidate_sources.setdefault((person.name, person.url), set()).add(record.source_kind)
+        for observation in roster_reconciliation.observations:
+            tables = table_reading["observations"].get(observation["url"])
+            if tables:
+                observation.update(status="image_table_reconciled" if all(t["complete"] for t in tables)
+                                   else "image_table_unresolved", image_tables=tables,
+                                   extracted_candidates=sum(t["records_admitted"] for t in tables))
     segment_records = {(record.page_url, record.name): record for record in
                        roster_reconciliation.segment_records + segment_naming["admitted"]
-                       + pdf_reading["records"]}
+                       + pdf_reading["records"] + table_reading["records"]}
     # Text duplicates are reported by the reconciler; a name read by OCR that
     # repeats another record of the same article must not collapse two people.
     # Two PDFs on one page with one name are two observations of that name.
     named = Counter((record.page_url, record.name) for record in
                     roster_reconciliation.segment_records + segment_naming["admitted"]
-                    + pdf_reading["records"])
+                    + pdf_reading["records"] + table_reading["records"])
     ocr_named = {(record.page_url, record.name) for record in
-                 segment_naming["admitted"] + pdf_reading["records"]}
+                 segment_naming["admitted"] + pdf_reading["records"] + table_reading["records"]}
     unresolved.extend({"url": url, "status": "segment_duplicate_name", "occurrences": count}
                       for (url, name), count in named.items() if count > 1 and (url, name) in ocr_named)
     roster_observations = roster_reconciliation.observations
@@ -1201,16 +1244,20 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         return [source for source in table_sources
                 if source["name"] == row["姓名"] and source["profile_url"] in urls]
 
+    table_profileless = {(record.page_url, record.name) for record in table_reading["records"]}
     coverage["field_sources"] = [{"record_index": index, "profile_url": row["主页"],
         "profile_snapshot": next((snap["path"] for snap in snapshots
                                   if snap["kind"] == "profile" and snap["url"] == row["主页"]), None),
         "roster_snapshot_urls": sorted(roster_urls),
         "extraction": ("deterministic_dom_and_local_ocr"
                        if (row["主页"], row["姓名"]) in media_audit["assigned_biographies"]
+                       else "deterministic_image_table_ocr"
+                       if (row["主页"], row["姓名"]) in table_profileless
                        else "deterministic_pdf_text_layer_and_local_ocr"
                        if (row["主页"], row["姓名"]) in pdf_record_keys
                        else "deterministic_dom"),
-        "attribution_scope": ("pdf_roster_record" if (row["主页"], row["姓名"]) in pdf_record_keys
+        "attribution_scope": ("image_table_cells" if (row["主页"], row["姓名"]) in table_profileless
+                              else "pdf_roster_record" if (row["主页"], row["姓名"]) in pdf_record_keys
                               else "segmented_article_record"
                               if (row["主页"], row["姓名"]) in segment_records else "candidate_and_profile"),
         **({"segment_record": segment_records[(row["主页"], row["姓名"])].provenance()}
@@ -1224,6 +1271,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     coverage["identity_merges"] = identity_merges
     coverage["identity_reviews"] = identity_reviews
     coverage_path = out / f"{name}_coverage.json"
+    for row in records:
+        if (row["主页"], row["姓名"]) in table_profileless:
+            row["主页"] = ""
+    for source, row in zip(coverage["field_sources"], records):
+        source["receipt_sha256"] = identity_review.record_digest(row)
     coverage_path.write_text(json.dumps(coverage, ensure_ascii=False, indent=2), encoding="utf-8")
     ready = bool(extraction_ready and not unresolved and coverage["complete"])
     records_path = out / f"{name}_records.json"
@@ -1261,6 +1313,9 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "image_biography_evidence": media_audit["evidence"] + pdf_reading["evidence"],
         "segment_name_evidence": segment_naming["evidence"] + pdf_reading["name_evidence"],
         "pdf_roster_evidence": pdf_reading["evidence"],
+        "image_table_evidence": table_reading["evidence"],
+        "image_table_reviews_sha256": hashlib.sha256((out / "image_table_reviews.json").read_bytes()).hexdigest()
+                                      if (out / "image_table_reviews.json").is_file() else None,
         "unresolved": unresolved, "snapshots": snapshots,
         "records_path": str(records_path), "excel_path": excel_path,
         "coverage_scope": "supplied_roster_branches_only",

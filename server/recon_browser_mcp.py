@@ -368,6 +368,9 @@ class BrowserScout:
                     "retry": "Verify a selector for the visible roster rather than hidden or preload nodes."}),
                     "isError": True}
             cards = await self.page.locator(arguments["card_selector"]).evaluate_all("nodes => nodes.map(n=>n.outerHTML)")
+            if cards and all(card.lstrip().lower().startswith("<img") for card in cards):
+                from server.image_table_browser import verify_table_images
+                value["image_table"] = await verify_table_images(self.page, arguments["card_selector"])
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()
             value["pagination"] = await self.page.evaluate(
                 "selector => __facultyRecon.pagination('body',0,12,false,selector)", arguments["card_selector"])

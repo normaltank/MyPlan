@@ -32,7 +32,7 @@ class RosterFields(StrictObject):
 
 class Branch(RosterFields):
     url: Url
-    kind: Literal["roster", "navigation", "segmented"] | None = None
+    kind: Literal["roster", "navigation", "segmented", "image_table"] | None = None
     child_link_selector: Selector | None = None
     child_branch: RosterFields | None = None
     max_children: Count | None = None
