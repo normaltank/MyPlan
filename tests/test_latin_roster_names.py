@@ -33,3 +33,18 @@ def test_unverified_linked_cards_preserve_full_latin_name():
     found, review = FacultyDirectoryExtractor.extract_with_review(f'<ul>{cards}</ul>', URL)
     assert not review
     assert [p.name for p in found] == NAMES
+
+
+def test_latin_institution_inside_a_chinese_biography_is_not_the_name():
+    # 安阳工学院 / 绥化学院 bio paragraphs: the teacher stays the name slot.
+    bios = ['王涛，武汉理工大学硕士研究生、 Universiti Teknologi Malaysia博士研究生，副教授。',
+            '刘海燕，Université Paris Descartes博士，讲师。']
+    cards = ''.join(f'<li><a href="/person/{i}">{bio}</a></li>' for i, bio in enumerate(bios))
+    found, _ = FacultyDirectoryExtractor.extract_with_review(f'<ul>{cards}</ul>', URL)
+    assert [p.name for p in found] == ['王涛', '刘海燕']
+
+
+def test_labelled_latin_name_is_kept():
+    found, _ = FacultyDirectoryExtractor.extract_with_review(
+        '<div><p>姓名：Muhammad Nadeem（穆罕默德·纳迪姆）</p></div>', URL, card_selector='div')
+    assert [p.name for p in found] == ['Muhammad Nadeem']

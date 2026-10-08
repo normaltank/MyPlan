@@ -208,7 +208,20 @@ def latin_name_shape(s: str) -> bool:
     return words[0][0].isupper() and words[-1][0].isupper()
 
 
+_LEADING_LABEL = re.compile(r"^[\s\u3000]*(?:(?:姓\s*名|name)\s*[:：]\s*)?", re.I)
+
+
 def _latin_tokens(text: str) -> list[str]:
+    # Only a run that opens the text (optionally after a 姓名 label) is a
+    # name slot; Latin words later in a Chinese biography are institutions.
+    text = unicodedata.normalize('NFC', text)
+    text = text[_LEADING_LABEL.match(text).end():]
+    if not text or not (text[0].isalpha() and 'LATIN' in unicodedata.name(text[0], '')):
+        return []
+    return _latin_runs(text)[:1]
+
+
+def _latin_runs(text: str) -> list[str]:
     # The maximal Latin run ends at a different script (degree/title metadata
     # on the Malaga cards), punctuation or a number; spaces remain in the name.
     runs, current = [], []
