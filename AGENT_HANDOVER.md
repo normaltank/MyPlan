@@ -20,7 +20,7 @@
 
 #15（名单串页角色行教师进复核，`server/name_list.py` 的 `name_list_role_line`）与 #16（查询串里写 `.pdf` 的附件识别为 PDF，`server/image_biography.py` 的 `media_references`）也在 10-02 之后合并。
 
-### 2. 人工复核：学院级 7 种在 `review_registry` 登记，大学级 1 种单独
+### 2. 人工复核：学院级 8 种在 `review_registry` 登记，大学级 1 种单独
 
 单个学院的复核种类只在 `server/review_registry.py` 的 `KINDS` 登记（E 包，PR 见 CHANGELOG 2026-10-09）：每种写明状态码、收集函数、完成判定和决策文件。复核页是否出现（`has_review`）、重试前是否复核完（`review_complete`）、恢复时带哪些决策文件（`DECISION_FILES`，由 `server/task_image_review.py` 的 `carry_review_decisions` 使用）都只遍历这张表。**加一种学院复核 = 写模块 + 在 `KINDS` 加一项 + 复核页一个区块和保存接口**，不要再到别处手写状态码或文件名。每种复核的完成判定必须自己核对“每个被标记的问题都有可复核项”，`tests/test_review_registry.py` 对每种逐一检查；不属于任何种类的问题不挡重试，由重跑审计决定。复核页是 `server/app.py` 的 `/review/task/{task_id}`，各类提交走 `/api/task/{task_id}/review/<种类>`（表格在 `server/image_table_routes.py`）。
 
@@ -34,11 +34,14 @@
 | `identity` | `server/identity_review.py`（学院内同名多主页） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
 | `html_email` | `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个）；只有带教师姓名的才要裁决，旧审计缺证据时只能重跑生成 | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
 | `media_kind` | `server/media_kind_review.py`（原图是照片、无关图片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`；`kind == "image"` 才进复核页，PDF 的始终挡重试 | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
+| `profile_page` | `server/profile_page_review.py`（名录链接打开的页面不写本人名字，如“无权访问”页；badr 10-09） | `profile_page_review.STATUS` = `profile_identity_not_found`；证据从审计里保存的个人页快照读，旧审计也能判 | `profile_page_review.DECISIONS_FILE` = `profile_page_reviews.json` |
 | `image_table` | `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生）；有表格证据即需复核完 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
 
 “无关图片”（书法、签名、装饰等，没有本人信息）是 `media_kind` 的一种判定（`media_kind_review.IRRELEVANT`），按个人页 + 图片网址 + 原图 SHA-256 记在 `media_kind_reviews.json`；原图类型卡片和 `image_bio_text` 的个人页图片行卡片（`image_bio_review.irrelevant_allowed`，接口 `/api/task/{task_id}/review/irrelevant-media`）都能判；行卡片附整张原图（单帧图才有，动图不给判）。判了之后这张图的所有待核行都算复核完，重新采集时 `image_biography.audit_profile_media` 跳过这张原图的文字，证据记 `media_kind_review: "irrelevant"`。分段名录的姓名行、PDF、整图表格和简介图邮箱冲突不能判无关：丢掉它们等于丢人或丢整份简历。
 
-`tests/test_review_status_registry.py` 核对登记表的状态码都在 recovery_policy 的 review 组里。
+`profile_page` 两种判定：`roster_only`（链接不是本人页，按名录收录，主页记名录页，简介留空）、`not_teacher`（不收）。决定绑定个人页网址、姓名和页面可见文字摘要；重新采集时由 `browser_batch_tool.run_plan` 在抓完个人页后调用 `profile_page_review.apply_decisions`，判过的页没人再用就不再做正文证明，审计记 `profile_page_reviews`。
+
+`tests/test_review_status_registry.py` 核对登记表的状态码都在 recovery_policy 的 review 组里。review 组里还有状态没有复核页（10-09 时 25 个），前台对这种失败学院显示“需维护处理”而不是“待人工复核”（`index.html` 的 `failureKind`：去向是 review 但没有 `review_url`），批次汇总按子任务重算。
 
 大学级复核不在登记表里：`server/university_identity_review.py`（跨学院同名）按批次和学校聚合，决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，卡的是大学发布，不是学院重试。
 

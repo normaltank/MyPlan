@@ -814,16 +814,29 @@
         }
 
         // A failed college keeps status 'failed'; its recorded codes say what it waits on.
-        const FAILURE_LABELS = {review: '待人工复核', structure: '待结构处理', access: '访问未成功，可重试',
-                                recon: '侦察未完成', failed: '失败'};
+        const FAILURE_LABELS = {review: '待人工复核', maintenance: '需维护处理', structure: '待结构处理',
+                                access: '访问未成功，可重试', recon: '侦察未完成', failed: '失败'};
+        // A review code with no review page to settle it waits on maintenance, not on a reviewer.
+        function failureKind(task) {
+            const kind = task.failure_disposition || 'failed';
+            return kind === 'review' && !task.review_url ? 'maintenance' : kind;
+        }
         function failureLabel(task) {
             if (task.source_review_required) return ['来源范围待核验', 'warn'];
-            const kind = task.failure_disposition || 'failed';
+            const kind = failureKind(task);
             return [FAILURE_LABELS[kind] || '失败', kind === 'failed' ? 'danger' : 'warn'];
         }
 
+        function failureCounts(batch) {
+            const failed = (batch.subtasks || []).filter(st => st.status === 'failed');
+            if (!failed.length) return batch.failure_dispositions;
+            const counts = {};
+            for (const st of failed) counts[failureKind(st)] = (counts[failureKind(st)] || 0) + 1;
+            return counts;
+        }
+
         function failureBreakdown(counts) {
-            return ['review', 'structure', 'access', 'recon', 'failed'].filter(kind => counts?.[kind])
+            return ['review', 'maintenance', 'structure', 'access', 'recon', 'failed'].filter(kind => counts?.[kind])
                 .map(kind => `${FAILURE_LABELS[kind]} ${counts[kind]} 个`).join('，');
         }
 
@@ -933,7 +946,7 @@
                         const terminal = batch.terminal_failed_colleges || 0;
                         setBadge(terminal ? '任务异常' : '待处理', terminal ? 'danger' : 'warn');
                         setResultTone(terminal ? 'danger' : false);
-                        document.getElementById('statSummary').innerText = `完成 ${batch.completed_colleges} 个学院；${failureBreakdown(batch.failure_dispositions) || `${batch.failed_colleges || 0} 个学院未通过`}。逐院状态见下方列表；待人工复核的学院可点“人工复核”。`;
+                        document.getElementById('statSummary').innerText = `完成 ${batch.completed_colleges} 个学院；${failureBreakdown(failureCounts(batch)) || `${batch.failed_colleges || 0} 个学院未通过`}。逐院状态见下方列表；待人工复核的学院可点“人工复核”。`;
                         document.getElementById('downloadBtn').classList.add('hidden');
                         document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();
