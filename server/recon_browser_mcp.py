@@ -399,6 +399,13 @@ class BrowserScout:
             if cards and all(card.lstrip().lower().startswith("<img") for card in cards):
                 from server.image_table_browser import verify_table_images
                 value["image_table"] = await verify_table_images(self.page, arguments["card_selector"])
+            elif cards:
+                # Picture cards are read from their images later; every other card
+                # must be one the harvest reads. Counts only: names stay local.
+                from server.harvest_workflow import roster_card_reading
+                mismatch = roster_card_reading(await self.page.content(), self.page.url, arguments["card_selector"])
+                if mismatch:
+                    value["card_mismatch"] = mismatch
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()
             from server.browser_batch_tool import without_banner_arrows
             value["pagination"] = without_banner_arrows(await self.page.content(), arguments["card_selector"],

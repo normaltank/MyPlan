@@ -70,6 +70,7 @@
 - 证据判定在 `server/agent_recon.py` 的 `selector_evidence_issues`：每条问题带 `failed_condition`、`closest`、`need`；个人页证明在可用页不够证明数（或补缺点名的页被挡）时标 `page_only`。“挡住任何容器”的请求由 `server/profile_structure.py` 的 `verify_profile_container` 在重开后记为 `page_blocking_requests`。
 - `server/recon_contract.py` 的 `validate_submission` 原样转给模型（只削 schema 报错的输入值）；`server/recon_browser_mcp.py` 的 `submit_plan` 记住被打回的提交：同一计划无新浏览器调用时不重判，第二次给出 stop `recon_gate_stalled`；全部 `page_only` 时给出 stop `recon_page_unverifiable`。
 - `agent_recon._execute_harness` 用 `_watch_gate` 跟踪回复，遇到 stop 抛 `ReconGateStopped`（属于 `ReconPlanError`），并记下每个会话最后一次打回；超时/预算错误带 `last_gate_rejections`。两个码在 `recovery_policy._GROUPS`：页面类 access，worker 不再派补缺侦察；stalled 归 structure。
+- 名录卡片核对（badr 10-09）：`browser_verify` 带 `card_selector` 时，用采集端同一套读取（`server/harvest_workflow.py` 的 `roster_card_reading`，内部调 `reconcile_rosters`）读当前页，采集会报 `roster_card_mismatch` 的就在结果里带 `card_mismatch`（可见卡片数、读出人数）；门禁据此打回 `roster_card_mismatch` / `cards_not_read`，不标 `page_only`。
 
 ### 6. 改了代码，可交付学院是多了还是少了（案例库离线回放）
 
