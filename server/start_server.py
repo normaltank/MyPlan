@@ -1,7 +1,10 @@
+import ipaddress
+import socket
+import subprocess
 import sys
 import webbrowser
 from pathlib import Path
-import socket
+
 import uvicorn
 
 # 确保控制台支持 UTF-8 打印
@@ -25,16 +28,58 @@ def port_is_open(port: int) -> bool:
         connection.settimeout(0.5)
         return connection.connect_ex(("127.0.0.1", port)) == 0
 
-def lan_address() -> str | None:
-    """This PC's address on the office network, for the colleagues' link."""
+# Office networks use these ranges. Proxy TUN adapters (Clash uses
+# 198.18.0.0/15) and public addresses are outside them, so they are never offered.
+_LAN_RANGES = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+
+
+def _is_lan(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return ip.version == 4 and any(ip in network for network in _LAN_RANGES)
+
+
+def _gateway_addresses() -> list[str] | None:
+    """IPv4 addresses on Windows adapters that have a default gateway.
+
+    WSL, Hyper-V and Docker adapters are host-only and have no gateway, so
+    this keeps the Wi-Fi or Ethernet address. None where it cannot be asked.
+    """
+    if sys.platform != "win32":
+        return None
+    command = ("Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | "
+               "ForEach-Object { $_.IPv4Address.IPAddress }")
+    try:
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+                                capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.split() if result.returncode == 0 else None
+
+
+def _host_addresses() -> list[str]:
+    addresses = []
+    try:
+        addresses += [info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+    except OSError:
+        pass
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         try:
             # UDP connect only picks the outgoing interface; nothing is sent.
             probe.connect(("10.255.255.255", 1))
-            address = probe.getsockname()[0]
+            addresses.append(probe.getsockname()[0])
         except OSError:
-            return None
-    return None if address.startswith("127.") or address == "0.0.0.0" else address
+            pass
+    return addresses
+
+
+def lan_addresses() -> list[str]:
+    """This PC's office-network addresses for the colleagues' link, best first."""
+    preferred = [a for a in (_gateway_addresses() or []) if _is_lan(a)]
+    found = preferred or [a for a in _host_addresses() if _is_lan(a)]
+    return list(dict.fromkeys(found))
 
 
 def main():
@@ -52,10 +97,14 @@ def main():
     print()
     host = cfg.get("host", "127.0.0.1")
     port = cfg.get("port", 8000)
-    lan = lan_address() if host == "0.0.0.0" else None
+    lan = lan_addresses() if host == "0.0.0.0" else []
     print(f" [✓] 本机访问地址:    {address}")
-    if lan:
-        print(f" [★] 同事访问地址:    http://{lan}:{port}")
+    if len(lan) == 1:
+        print(f" [★] 同事访问地址:    http://{lan[0]}:{port}")
+    elif lan:
+        print(" [★] 同事访问地址:    本机有多个局域网地址，请发和同事同一网络的那个：")
+        for candidate in lan:
+            print(f"                      http://{candidate}:{port}")
     elif host == "0.0.0.0":
         print(" [★] 同事访问地址:    未找到本机局域网地址，请用 ipconfig 查看")
     else:

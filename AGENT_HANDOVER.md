@@ -63,7 +63,7 @@
 
 ### 7. 谁能用网页：只填姓名，没有密码和管理员（badr 10-09）
 
-- 网页监听 `server/config.json` 的 `host`（现为 `0.0.0.0`），同事用 `http://<本机局域网 IP>:<端口>` 直接访问，不再要求 HTTPS 反向代理；启动时 `server/start_server.py` 的 `lan_address` 打印同事地址。
+- 网页监听 `server/config.json` 的 `host`（现为 `0.0.0.0`），同事用 `http://<本机局域网 IP>:<端口>` 直接访问，不再要求 HTTPS 反向代理；启动时 `server/start_server.py` 的 `lan_addresses` 打印同事地址：只给 10/8、172.16/12、192.168/16 内的地址（排除 Clash 等代理 TUN 的 198.18.0.0/15），Windows 上优先有默认网关的网卡（排除 WSL、Hyper-V、Docker 这类仅主机网卡），剩多个就全列出来。
 - 身份只用来记“谁提交的、每天采了多少”：`server/access_control.py` 的 `AccountStore.sign_in` 按姓名找或建账号（同名即同一账号，旧账号按显示名称沿用），`/api/auth/name` 发 30 天会话 cookie。没有密码、角色判断或“各看各的”：所有填了姓名的人能看、复核、下载全部工单。`users.role`、`password_hash` 列只为兼容旧库保留，代码不再读。
 - 仍然保留的边界在 `server/app.py` 的 `access_gate`：未填姓名一律 401；写操作要 CSRF 令牌和同源；worker 续租、同步和认领只认本机直连（`_local_request`，带转发头的请求算远程）。
 - 每日统计 `/api/reports/daily`：顶部是自己的数，下面按姓名列出当天有工作的人；历史工单带 `submitted_by`。
