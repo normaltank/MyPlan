@@ -175,7 +175,21 @@ def _is_banner_arrow(control: Tag, roster_nodes: list[Tag]) -> bool:
         return False
     touches_roster = any(node is slider or slider in node.parents or node in slider.parents
                          for node in roster_nodes)
-    return not touches_roster and len(slider.find_all("img")) >= 2
+    if touches_roster:
+        return False
+    if len(slider.find_all("img")) >= 2:
+        return True
+    # One slide is still an image component. Require its paired script-only
+    # arrows and media-only content, rather than relaxing the image threshold.
+    arrows = slider.find_all('a', recursive=False)
+    classes = {token for arrow in arrows for token in arrow.get('class', [])}
+    frames = slider.select(':scope > .bd > ul > li')
+    return (len(slider.find_all('img')) == 1 and {'prev', 'next'} <= classes
+            and len(frames) == 1 and len(frames[0].find_all('img')) == 1
+            and slider.select_one(':scope > .hd') is not None
+            and all(not arrow.get('href', '').strip() or arrow['href'].strip().startswith(('#', 'javascript:'))
+                    for arrow in arrows)
+            and bool(re.fullmatch(r'[\d\s.·•]*', slider.get_text('', strip=True))))
 
 
 def _in_pager(control: Tag) -> bool:
@@ -226,12 +240,15 @@ def without_banner_arrows(html: str, card_selector: str, pagination: dict) -> di
 
 
 def _pagination_candidates(html: str, current_url: str,
-                           card_selector: str | None = None) -> list[str | None]:
+                           card_selector: str | None = None, ignored_controls=()) -> list[str | None]:
     """Find bounded pagination leads from browser-rendered structure, not names."""
     soup = BeautifulSoup(html, "html.parser")
     roster_nodes = soup.select(card_selector) if card_selector else []
+    ignored = [node for selector in ignored_controls for node in soup.select(selector)]
     leads: list[str | None] = []
     for control in soup.select("a, button"):
+        if any(control is node for node in ignored):
+            continue
         if (control.has_attr("disabled") or control.get("aria-disabled") == "true"
                 or control.get("aria-current") == "page"):
             continue
@@ -269,13 +286,14 @@ def _pagination_candidates(html: str, current_url: str,
     return leads
 
 
-async def _probe_single_page(context: Any, html: str, url: str, card_selector: str) -> list[dict]:
+async def _probe_single_page(context: Any, html: str, url: str, card_selector: str,
+                             ignored_controls=()) -> list[dict]:
     """Fail closed if an asserted single page has an unexplained pager lead."""
     if not card_selector:
         return []  # roster reconciliation handles this; reviewed posters are separate
     baseline = tuple(card.get_text(" ", strip=True) for card in BeautifulSoup(html, "html.parser").select(card_selector))
     unresolved: list[dict] = []
-    for target in _pagination_candidates(html, url, card_selector):
+    for target in _pagination_candidates(html, url, card_selector, ignored_controls):
         if target is None:
             unresolved.append({"url": url, "status": "single_page_pagination_unverified"})
             continue
@@ -639,8 +657,18 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                     on_page(page.url, html, page_number - 1)
             evidence["visited_pages"] = page_number
             if branch.get("single_page"):
+                from server.pager_evidence import terminal_pagers, proof_valid
+                proofs = await terminal_pagers(page, _unit_selector(branch))
+                if any(p.get('reason') == 'pager_state_changed' for p in proofs):
+                    unresolved.append({'url': url, 'status': 'single_page_pagination_unverified'})
+                    evidence['end'] = 'single_page_pagination_unverified'
+                    return captured, unresolved, evidence
+                ignored = [p['control_selector'] for p in proofs
+                           if proof_valid(p, html, _unit_selector(branch))]
+                if proofs:
+                    evidence['terminal_pagers'] = proofs
                 probe_errors = await _probe_single_page(context, html, page.url,
-                                                         _unit_selector(branch))
+                                                         _unit_selector(branch), ignored)
                 unresolved.extend(probe_errors)
                 evidence["end"] = ("single_page_pagination_unverified" if probe_errors
                                    else "single_page_no_pagination_control_seen")
