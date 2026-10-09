@@ -381,6 +381,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         ]
         ignored_pending = 0
         content_images_pending = 0
+        places = [None] * len(pending_requests)
         if pending_requests and facts['container_count'] == 1:
             places = await page.evaluate(
                 _PENDING_IMAGE_PLACES,
@@ -434,9 +435,13 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             if result["reason"] == "network_not_idle":
                 blocking = [item for item in failed if item not in presentation
                             and not (item in failed_content_requests and server_rendered)]
+                # A request still open is named too: "network_not_idle" with no
+                # request listed left a scout trying selectors until the deadline.
+                still_open = [(url, kind, "pending") for (url, kind), place in zip(pending_requests, places)
+                              if place not in ("outside", "inside")]
                 result["blocking_requests"] = [
                     {"type": kind, "status": status, "path": urlsplit(url).path[-80:]}
-                    for url, kind, status in blocking[:3]]
+                    for url, kind, status in (blocking + still_open)[:3]]
     except Exception as exc:
         result["confirmed"] = False
         result['error_type'] = type(exc).__name__
