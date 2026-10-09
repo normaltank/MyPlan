@@ -7,6 +7,9 @@ from typing import Any
 class RequestTracker:
     pending: set[Any] = field(default_factory=set)
     activity: int = 0
+    # The part of ``activity`` made by image requests. An image's bytes do not
+    # change the page's HTML, so a profile proof can tell them apart.
+    image_activity: int = 0
     available: bool = False
     navigation_observed: bool = False
     failures: int = 0
@@ -27,8 +30,13 @@ def install_request_tracking(page: Any) -> RequestTracker:
     if page is None or not callable(getattr(page, "on", None)):
         return tracker
 
-    def started(request):
+    def count(request):
         tracker.activity += 1
+        if getattr(request, "resource_type", "") == "image":
+            tracker.image_activity += 1
+
+    def started(request):
+        count(request)
         tracker.pending.add(request)
         try:
             if request.is_navigation_request() and request.frame == page.main_frame:
@@ -41,7 +49,7 @@ def install_request_tracking(page: Any) -> RequestTracker:
 
     def finished(request):
         if request in tracker.pending:
-            tracker.activity += 1
+            count(request)
         tracker.pending.discard(request)
 
     answered = set()  # requests already recorded with their HTTP error status

@@ -109,13 +109,17 @@ _UNSIZED_IMAGES = """async args => {
 }"""
 
 
-_EXTERNAL_REQUESTS = """args => {
+# Where each pending image's <img> is: "outside" the container, "inside" it,
+# or "" when no <img> element names it (a CSS background, a preload, a script).
+_PENDING_IMAGE_PLACES = """args => {
   const root=document.querySelector(args.selector);
-  if(!root) return args.requests.map(()=>false);
+  if(!root) return args.requests.map(()=>"");
   return args.requests.map(item=>{
-    if(item.resource_type!=="image") return false;
+    if(item.resource_type!=="image") return "";
     const images=[...document.images].filter(img=>img.currentSrc===item.url || img.src===item.url);
-    return images.length>0 && images.every(img=>!root.contains(img));
+    if(!images.length) return "";
+    if(images.every(img=>!root.contains(img))) return "outside";
+    return images.every(img=>root.contains(img)) ? "inside" : "";
   });
 }"""
 
@@ -289,7 +293,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             # Playwright's networkidle is only a preliminary wait. The
             # request tracker, selected DOM snapshots, and animation checks
             # below provide the actual completion proof.
-        activity = tracker.activity
+        activity, image_activity = tracker.activity, tracker.image_activity
         initially_idle = tracker.available and tracker.navigation_observed
         html = await page.content()
         _, first_evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
@@ -316,7 +320,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             if stable or issue or time.monotonic() >= settle_deadline:
                 break
             first_evidence, first_facts = evidence, facts
-            activity = tracker.activity
+            activity, image_activity = tracker.activity, tracker.image_activity
         # A failed stylesheet, font or an image that is not inside the container
         # (theme icons, CSS backgrounds) cannot change the captured profile.
         failed = list(tracker.failed_requests)
@@ -372,27 +376,35 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             for request in tracker.pending
         ]
         ignored_pending = 0
+        content_images_pending = 0
         if pending_requests and facts['container_count'] == 1:
-            outside_pending = await page.evaluate(
-                _EXTERNAL_REQUESTS,
+            places = await page.evaluate(
+                _PENDING_IMAGE_PLACES,
                 {'selector': selector,
                  'requests': [{'url': url, 'resource_type': kind}
                               for url, kind in pending_requests]})
-            ignored_pending = sum(bool(value) for value in outside_pending)
+            ignored_pending = places.count('outside')
+            # An <img> already in the captured, stable HTML whose bytes are
+            # still arriving (a 13 MB artwork) cannot change that HTML. Its
+            # picture is fetched and checked by the image audit on its own, so
+            # it is recorded here instead of failing the proof.
+            content_images_pending = places.count('inside')
         blocking_failures = tracker.failures - ignored
-        blocking_pending = len(tracker.pending) - ignored_pending
+        blocking_pending = len(tracker.pending) - ignored_pending - content_images_pending
         idle = (initially_idle and blocking_pending == 0 and blocking_failures == 0
-                and activity == tracker.activity)
+                and activity - image_activity == tracker.activity - tracker.image_activity)
         result.update(container_count=facts["container_count"], container_visible=facts["container_visible"],
                       dom_stable=stable, network_idle=idle,
                       ignored_external_image_failures=ignored,
                       server_rendered_content=server_rendered,
                       unpublished_images=sorted(set(unpublished_images)),
                       ignored_external_image_pending=ignored_pending,
+                      pending_content_image_count=content_images_pending,
                       blocking_pending_request_count=blocking_pending,
                       blocking_failed_request_count=blocking_failures,
                       selected_dom_stable=selected_stable, visibility_stable=bool(visibility_stable),
-                      network_activity_changed=activity != tracker.activity,
+                      network_activity_changed=(activity - image_activity
+                                                != tracker.activity - tracker.image_activity),
                       hidden_content_count=facts['hidden_content_count'], start_valid=facts['start_valid'],
                       active_animation_count=facts['active_animation_count'])
         result['settle_samples'] = settle_samples

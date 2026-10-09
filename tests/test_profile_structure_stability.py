@@ -306,3 +306,42 @@ async def test_capture_reopens_and_accepts_a_stylesheet_that_fails_on_every_open
         assert not issues and evidence[URL]['confirmed'] and evidence[URL]['network_idle']
         assert evidence[URL]['failed_request_count'] == 1
         await browser.close()
+
+
+async def capture_with_hanging(extra):
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        context = await browser.new_context()
+        async def route(request):
+            if 'hanging' in request.request.url:
+                await asyncio.sleep(30)
+            else:
+                await request.fulfill(body=BODY.replace('</article>', extra + '</article>'),
+                                      content_type='text/html; charset=utf-8')
+        await context.route('**/*', route)
+        evidence = {}
+        _, issues = await capture_profiles(context, [URL], 1,
+            profile_content_selectors={URL: {('#text', None)}},
+            profile_content_evidence=evidence)
+        await browser.close()
+        return evidence, issues
+
+
+@pytest.mark.asyncio
+async def test_content_image_still_downloading_is_recorded_not_blocking():
+    # A huge artwork inside the profile: its <img> is in the stable HTML, only
+    # its bytes are still arriving. The image audit fetches it on its own.
+    evidence, issues = await capture_with_hanging('<img src="/hanging-artwork.jpg" width="800" height="600">')
+    assert not issues and evidence[URL]['confirmed'] and evidence[URL]['network_idle']
+    assert evidence[URL]['pending_content_image_count'] == 1
+    assert evidence[URL]['pending_request_count'] > 0
+
+
+@pytest.mark.asyncio
+async def test_content_request_still_loading_keeps_blocking():
+    evidence, issues = await capture_with_hanging(
+        '<script>fetch("/hanging-data.json").then(r=>r.text())</script>')
+    negative = next(item['browser_evidence'] for item in issues
+                    if item['status'] == 'profile_content_browser_unverified')
+    assert not evidence and negative['reason'] == 'network_not_idle'
+    assert negative['blocking_pending_request_count'] > 0

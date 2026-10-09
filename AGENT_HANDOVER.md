@@ -76,6 +76,12 @@
 - 依据：案例库里能认出主人的简历图 288 张，最大 3.3 MB。服务器不报大小的图照旧下载；PDF 不设上限。
 - 不会悄悄漏：个人页正文没有字、只有被跳过的图时，原有的 `image_bio_unreadable_profile` 照样拦下；名录卡片图、分段名录图被跳过时，对应的 `roster_card_mismatch`、`segment_image_bio_unassigned` 也照样留着。
 
+### 9. 名录卡片读名位置、正文证明里的在途图片、重复补缺计划（西美油画系，10-09）
+
+- 名录卡片：`faculty_extractor._verified_card_candidates` 先记下已认出名字的卡片把名字放在哪个元素（`_name_slot_path`，从卡片到该元素的子节点路径），至少 3 张卡片一致时，没认出名字的卡片先读同一位置（`_node_at_path`），再退回整段链接文字。读出的名字照原规则：结构可信时收，否则进 `rare_surname_needs_review`。不在卡片所有词里找生僻姓，避免把简介里的词当人名。
+- 个人页正文证明：`profile_structure.verify_profile_container` 里，正文容器内已在 HTML 里的 `<img>` 还在下载时不再算 `network_not_idle`，记为 `pending_content_image_count`；图片请求的起止也不算网络活动变化（`RequestTracker.image_activity`）。图片由 `image_biography.audit_profile_media` 单独下载和检查。没有 `<img>` 对应的图片请求、脚本和 fetch/XHR 仍然阻断。
+- 补缺计划去重：`agent_worker._harvest_with_repair` 用 `_capture_plan_key`（去掉等于计划默认值的分支 `source_kind`）和本任务采集过的每一份计划比，相同就停（`repair_plan_unchanged`）。
+
 ---
 
 > **2026-10-02 文档治理与 Claude 派工**：根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，`CLAUDE.md` 为读取入口。OCR 修复及宪法已提交并同步 main（`4fe72c2`、`10370eb`）；服务是否加载仍按下方部署记录判断。用户指定在 [Claude Projects → MyPlan 主对话](https://claude.ai/code/project/chan_012KwoNrMicyn2LoBSKGmCan) 派工，现有两个项目内实现线程：多人 PDF 名录采集、HTML 邮箱歧义复核恢复；具体范围见 [任务规格](docs/implementation/2026-10-02-claude-assignment.md)，要求独立 PR，不自动合并／部署。此前误开的两个独立 Code 会话已显示 Idle，不再继续。PR #4 仅改项目说明，实际与 main 的 AGENTS.md 存在合并冲突，且有过期状态和额外确认要求；本轮只审阅，未修改或合并该 PR。
