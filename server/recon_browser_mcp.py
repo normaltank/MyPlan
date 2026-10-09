@@ -403,7 +403,12 @@ class BrowserScout:
                 # Picture cards are read from their images later; every other card
                 # must be one the harvest reads. Counts only: names stay local.
                 from server.harvest_workflow import roster_card_reading
-                mismatch = roster_card_reading(await self.page.content(), self.page.url, arguments["card_selector"])
+                html = await self.page.content()
+                from server.faculty_extractor import FacultyDirectoryExtractor
+                introductions = FacultyDirectoryExtractor.profile_introduction_links(
+                    html, self.page.url, arguments["card_selector"])
+                value["profile_intro_link_count"] = len(introductions)
+                mismatch = roster_card_reading(html, self.page.url, arguments["card_selector"])
                 if mismatch:
                     value["card_mismatch"] = mismatch
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()

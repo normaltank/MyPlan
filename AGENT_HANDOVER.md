@@ -67,6 +67,7 @@
 
 ### 5. 侦察提交门禁怎么打回、什么时候停（PR #33）
 
+- 名录／个人页角色冲突：`FacultyDirectoryExtractor.profile_introduction_links` 复用既有“姓名＋职称＋简介/介绍/主页”字段语法，只返回实际所选简介链接 URL；裸姓名、机构和“查看详情”不据此判型。`browser_verify` 返回 `profile_intro_link_count`，`selector_evidence_issues` 对 navigation 中的冲突返回 `child_roster_not_verified` / `navigation_links_are_profiles`；`harvest_workflow.capture_sources` 同判据在任何子页捕获／缓存恢复之前阻断。混合目录保留全部链接和快照，不自动转换或过滤。须重新核验普通名录卡片及个人页正文范围。皖西法学院专项见 [`docs/audits/2026-10-09-wxc-law-name-list.md`](docs/audits/2026-10-09-wxc-law-name-list.md)；先前 `6f34c0f` 标题例外已撤回，未重采/重排/重启服务。
 - 证据判定在 `server/agent_recon.py` 的 `selector_evidence_issues`：每条问题带 `failed_condition`、`closest`、`need`；个人页证明在可用页不够证明数（或补缺点名的页被挡）时标 `page_only`。“挡住任何容器”的请求由 `server/profile_structure.py` 的 `verify_profile_container` 在重开后记为 `page_blocking_requests`。
 - `server/recon_contract.py` 的 `validate_submission` 原样转给模型（只削 schema 报错的输入值）；`server/recon_browser_mcp.py` 的 `submit_plan` 记住被打回的提交：同一计划无新浏览器调用时不重判，第二次给出 stop `recon_gate_stalled`；全部 `page_only` 时给出 stop `recon_page_unverifiable`。
 - `agent_recon._execute_harness` 用 `_watch_gate` 跟踪回复，遇到 stop 抛 `ReconGateStopped`（属于 `ReconPlanError`），并记下每个会话最后一次打回；超时/预算错误带 `last_gate_rejections`。两个码在 `recovery_policy._GROUPS`：页面类 access，worker 不再派补缺侦察；stalled 归 structure。

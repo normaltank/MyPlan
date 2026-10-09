@@ -491,6 +491,26 @@ class FacultyDirectoryExtractor:
         return node
 
     @classmethod
+    def profile_introduction_links(cls, html: str, base_url: str, selector: str) -> list[str]:
+        """Selected links explicitly labelled as a person's introduction.
+
+        Reuse the field grammar used by the card reader. This is conflicting
+        evidence for a directory plan, not proof of what the linked page holds;
+        the caller must stop and verify its role rather than rewrite the plan.
+        Bare names, institutions and generic detail links stay unclassified.
+        """
+        links = []
+        for node in BeautifulSoup(html, 'html.parser').select(selector):
+            anchors = ([node] if node.name == 'a' else []) + node.find_all('a')
+            for anchor in anchors:
+                label = re.sub(r'\s+', '', strip_invisible(anchor.get_text(' ', strip=True)))
+                href = first_href([anchor], base_url)
+                if (_INTRODUCED_NAME.fullmatch(label) and href and href not in links
+                        and urlparse(href).scheme in ('http', 'https')):
+                    links.append(href)
+        return links
+
+    @classmethod
     def _verified_card_candidates(cls, html: str, base_url: str, selector: str):
         """Account for each verified card; full-page mining cannot override its boundary."""
         soup = BeautifulSoup(html, 'html.parser')

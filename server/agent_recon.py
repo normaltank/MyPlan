@@ -737,6 +737,15 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
             linked.extend(url for url in result.get("linkedSamples", result.get("profileSamples", []))
                           if _is_structure_url(url) and resolve(url) not in chain and url not in linked)
         if branch.get("kind") == "navigation":
+            if matching and matching[-1][1].get("profile_intro_link_count", 0) > 0:
+                issues.append({"status": "child_roster_not_verified", "url": branch["url"],
+                    "selector": selector, **_gate_detail("navigation_links_are_profiles",
+                    {"profile_intro_link_count": matching[-1][1]["profile_intro_link_count"]},
+                    "Selected links are labelled as personal introductions, conflicting with navigation. "
+                    "Open their targets and verify whether they are profiles or child rosters. "
+                    "For profiles, verify this entrance as an ordinary roster and prove the profile_content_selector. "
+                    "For mixed roles, verify separate branches; do not omit or auto-convert the selected links.")})
+                continue
             if not samples or not isinstance(child := branch.get("child_branch"), dict):
                 issues.append({"status": "child_roster_not_verified", "url": branch["url"],
                                **_gate_detail("child_roster_missing" if samples else "child_links_not_verified",
