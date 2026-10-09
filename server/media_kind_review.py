@@ -1,4 +1,4 @@
-"""Original-bound review of images whose lack of OCR text is ambiguous."""
+"""Original-bound review of non-biography photos versus profile text assets."""
 from __future__ import annotations
 
 import hashlib
@@ -7,9 +7,11 @@ from pathlib import Path
 import time
 
 from server import review_store
+from server.image_bio_review import OWNER_STATUS, LOW_CONFIDENCE_STATUS
 
 DECISIONS_FILE = "media_kind_reviews.json"
 STATUS = "image_bio_ocr_incomplete"
+STATUSES = frozenset({STATUS, OWNER_STATUS, LOW_CONFIDENCE_STATUS})
 
 
 def evidence_id(profile_url: str, media_url: str, source_sha256: str) -> str:
@@ -35,13 +37,15 @@ def collect_items(audit_path: Path) -> list[dict]:
     root = audit_path.resolve().parent
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     flagged = {(item.get("profile_url"), item.get("media_url")) for item in audit.get("unresolved", [])
-               if item.get("status") == STATUS and item.get("kind") == "image"}
+               if item.get("status") in STATUSES and item.get("kind") == "image"}
     items = {}
     saved = load_decisions(root / DECISIONS_FILE)
     for evidence in audit.get("image_biography_evidence", []):
         pair = evidence.get("profile_url"), evidence.get("media_url")
         if pair not in flagged or evidence.get("kind") != "image":
             continue
+        if not all(isinstance(url, str) and url.startswith(('http://', 'https://')) for url in pair):
+            raise ValueError('media review source identity missing')
         path = Path(evidence["original_path"]).resolve()
         if not path.is_relative_to(root):
             raise ValueError("media review original outside audit")
@@ -78,10 +82,33 @@ def save_decision(path: Path, item: dict, verdict: str, reviewed_by: int) -> Non
 
 def review_complete(audit_path: Path, items: list[dict]) -> bool:
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
-    flagged = [item for item in audit.get("unresolved", []) if item.get("status") == STATUS]
+    flagged = [item for item in audit.get("unresolved", []) if item.get("status") in STATUSES
+               and (item.get('kind') == 'image' or item.get('status') == STATUS)]
     if any(item.get("kind") != "image" for item in flagged):
         return False  # a PDF's empty pages cannot be classified as a portrait
-    return len({(item["profile_url"], item["media_url"]) for item in items}) == len({
-        (item.get("profile_url"), item.get("media_url")) for item in flagged}) and all(
-        photo_confirmed(audit_path.parent / DECISIONS_FILE, item["profile_url"], item["media_url"],
-                        item["source_sha256"]) for item in items)
+    pairs = {(item['profile_url'], item['media_url']) for item in items}
+    if pairs != {(item.get('profile_url'), item.get('media_url')) for item in flagged}:
+        return False
+    photos = approved_photos(audit_path, audit)
+    remaining = [issue for issue in flagged if (issue.get('profile_url'), issue.get('media_url')) not in photos]
+    if any(issue.get('status') == STATUS for issue in remaining):
+        return False
+    if not remaining:
+        return True
+    # A real biography may instead be settled by correcting its OCR headings.
+    from server.image_bio_review import collect_review_items, text_review_complete
+    return text_review_complete(audit_path, collect_review_items(audit_path))
+
+
+def approved_photos(audit_path: Path, audit: dict) -> set[tuple[str, str]]:
+    approved = set()
+    root = audit_path.resolve().parent
+    for evidence in audit.get('image_biography_evidence', []):
+        profile, media, digest = (evidence.get(key) for key in ('profile_url', 'media_url', 'sha256'))
+        if evidence.get('kind') != 'image' or not photo_confirmed(root / DECISIONS_FILE, profile, media, digest):
+            continue
+        original = Path(evidence['original_path']).resolve()
+        if not original.is_relative_to(root) or hashlib.sha256(original.read_bytes()).hexdigest() != digest:
+            raise ValueError('photo decision original changed or outside audit')
+        approved.add((profile, media))
+    return approved

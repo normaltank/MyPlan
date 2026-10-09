@@ -112,7 +112,7 @@ async def test_media_review_buttons_execute_in_browser_without_ocr_handler_colli
             await page.set_content(render_review_page([], media_kind_items=items,
                 media_kind_decision_url="https://review.example.edu/decision"))
             await page.locator('.media-kind-card button[data-verdict="photo"]').click()
-            await page.locator('.media-kind-card .status').filter(has_text="已确认纯人物照片").wait_for()
+            await page.locator('.media-kind-card .status').filter(has_text="已确认非简历照片").wait_for()
             assert not errors and submitted == [{"id": items[0]["id"], "verdict": "photo"}]
         finally:
             await browser.close()
@@ -146,7 +146,7 @@ async def test_owner_scoped_media_decision_retry_carries_exact_evidence(tmp_path
     other, other_csrf = _client(store, "bob", "bob password 12345")
     page = owner.get(f"/review/task/{task.task_id}")
     assert page.status_code == 200 and "原图类型复核" in page.text
-    assert "纯人物照片" in page.text and "data:image/png;base64," in page.text
+    assert "非简历照片" in page.text and "data:image/png;base64," in page.text
     item = media_kind_review.collect_items(audit)[0]
     url = f"/api/task/{task.task_id}/review/media-kind"
     decision = {"id": item["id"], "verdict": "photo"}

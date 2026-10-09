@@ -13,13 +13,16 @@ from html import escape
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 import time
 
 from PIL import Image
 
 from server import review_store
 
-TEXT_STATUSES = frozenset({"image_bio_low_confidence", "image_bio_owner_unresolved", "segment_name_needs_review"})
+LOW_CONFIDENCE_STATUS = "image_bio_low_confidence"
+OWNER_STATUS = "image_bio_owner_unresolved"
+TEXT_STATUSES = frozenset({LOW_CONFIDENCE_STATUS, OWNER_STATUS, "segment_name_needs_review"})
 EMAIL_STATUS = "image_bio_email_conflict"
 TEXT_DECISIONS_FILE = "image_bio_reviews.json"
 EMAIL_DECISIONS_FILE = "image_bio_email_reviews.json"
@@ -76,12 +79,16 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
     audit_path = Path(audit_path).resolve()
     root = audit_path.parent
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    from server.media_kind_review import approved_photos
+    photos = approved_photos(audit_path, audit)
     owner_urls = {item.get("media_url") for item in audit.get("unresolved", [])
                   if item.get("status") == "image_bio_owner_unresolved"}
     flagged_urls = owner_urls | {item.get("media_url") for item in audit.get("unresolved", [])
                                 if item.get("status") == "image_bio_low_confidence"}
     result: list[dict] = []
     for evidence in audit.get("image_biography_evidence", []):
+        if (evidence.get("profile_url"), evidence.get("media_url")) in photos:
+            continue
         media_url = evidence.get("media_url")
         if media_url not in flagged_urls:
             continue
@@ -339,15 +346,16 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     body = "\n".join(cards)
     for item in media_kind_items or []:
         preview = base64.b64encode(item['preview_bytes']).decode('ascii')
-        status = {'photo': '已确认纯人物照片', 'unreadable': '包含文字或无法确定，仍保持阻断'}.get(
+        status = {'photo': '已确认非简历照片', 'unreadable': '包含履历文字或无法确定，仍保持阻断'}.get(
             item.get('saved_verdict'), '')
         body += ('<section class="card media-kind-card" data-id="' + escape(item['id']) + '">'
-            '<h2>原图类型复核</h2><p>程序无法判断这是照片还是未读出的简历。请检查整张原图：'
-            '只有纯人物照片、没有履历或其他文字时才能确认照片。含文字、扫描件或无法判断时保持阻断。</p>'
+            '<h2>原图类型复核</h2><p>请检查整张原图。人物或场景照片上仅有背景标牌、校名、学院名等文字，'
+            '且没有个人履历、联系方式或学术信息时，可确认非简历照片，背景文字无需再逐行纠字。'
+            '简历、图文个人卡片、扫描件或无法判断时，请保留为文字资料继续复核。</p>'
             '<p>来源：' + _page_link(item['profile_url']) + '</p>'
             '<img alt="需要判断类型的完整原图" src="data:image/png;base64,' + preview + '">'
-            '<button type="button" data-verdict="photo">确认纯人物照片，无履历文字</button> '
-            '<button type="button" data-verdict="unreadable">含文字或无法判断，保持阻断</button>'
+            '<button type="button" data-verdict="photo">确认非简历照片，仅照片或背景文字</button> '
+            '<button type="button" data-verdict="unreadable">保留为文字资料，继续复核</button>'
             '<p class="status" role="status">' + status + '</p></section>')
     email_cards = []
     for item in email_items or []:
@@ -439,7 +447,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
             "body:JSON.stringify({id:card.dataset.id,verdict})});"
             "if(!response.ok)throw await failure(response);"
-            "status.textContent=verdict==='photo'?'已确认纯人物照片；重新采集时校验原件':'保持阻断，请处理原图文字';}"
+            "status.textContent=verdict==='photo'?'已确认非简历照片；重新采集时校验原件':'保持阻断，请处理原图文字';}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
             "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card):not(.media-kind-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
@@ -599,6 +607,14 @@ def resolve_email_conflict(path: str | Path, item_id: str, choices: list[str]) -
 
 def text_review_complete(audit_path: str | Path, items: list[dict]) -> bool:
     """Every OCR line under review has a nonempty decision bound to the same original line."""
+    audit_path = Path(audit_path)
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    from server.media_kind_review import approved_photos
+    photos = approved_photos(audit_path, audit)
+    remaining = [issue for issue in audit.get('unresolved', []) if issue.get('status') in TEXT_STATUSES
+                 and (issue.get('profile_url'), issue.get('media_url')) not in photos]
+    if not remaining:
+        return any(issue.get('status') in TEXT_STATUSES for issue in audit.get('unresolved', []))
     if not items:
         return False
     decisions = review_store.load(Path(audit_path).parent / TEXT_DECISIONS_FILE)
@@ -609,7 +625,32 @@ def text_review_complete(audit_path: str | Path, items: list[dict]) -> bool:
                 or not isinstance(decision.get("verified_text"), str)
                 or not decision["verified_text"].strip()):
             return False
-    return True
+    # A corrected institution sign still has no biography owner. Prevent the
+    # same fully-corrected photo from being requeued without a type decision.
+    return all(_owner_review_matches(audit_path, audit, issue)
+               for issue in remaining if issue.get('status') == OWNER_STATUS and issue.get('kind') == 'image')
+
+
+def _owner_review_matches(audit_path: Path, audit: dict, issue: dict) -> bool:
+    from server.faculty_identity import field_value
+    try:
+        records = json.loads(_inside(audit['records_path'], audit_path.resolve().parent).read_text(encoding='utf-8'))
+        owners = {field_value(row, '姓名') for row in records
+                  if field_value(row, '主页') == issue.get('profile_url')}
+        evidence = next(e for e in audit.get('image_biography_evidence', [])
+                        if e.get('profile_url') == issue.get('profile_url')
+                        and e.get('media_url') == issue.get('media_url'))
+        scanned = json.loads(_inside(evidence['ocr_path'], audit_path.resolve().parent).read_text(encoding='utf-8'))
+        corrected, _ = apply_review_decisions(scanned, evidence['media_url'], evidence['sha256'],
+                                              audit_path.parent / TEXT_DECISIONS_FILE)
+        lines = [line['text'] for page in corrected['pages'] for line in page['lines']][:5]
+        for line in lines:
+            matched = {name for name in owners if name and re.sub(r'\s+', '', name) in re.sub(r'\s+', '', line)}
+            if matched:
+                return len(matched) == 1
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return False
+    return False
 
 
 def email_review_complete(audit_path: str | Path, audit: dict, items: list[dict]) -> bool:

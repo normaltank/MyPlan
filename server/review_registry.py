@@ -53,11 +53,13 @@ def _nonempty_and(check):
 
 KINDS: tuple[ReviewKind, ...] = (
     ReviewKind(
-        "media_kind", frozenset({media_kind_review.STATUS}), (media_kind_review.DECISIONS_FILE,),
+        "media_kind", media_kind_review.STATUSES, (media_kind_review.DECISIONS_FILE,),
         media_kind_review.collect_items, lambda path, audit, items: media_kind_review.review_complete(path, items),
-        shown=lambda issue: issue.get("status") == media_kind_review.STATUS and issue.get("kind") == "image",
+        shown=lambda issue: issue.get("status") in media_kind_review.STATUSES and issue.get("kind") == "image",
         # A PDF's empty pages cannot be classified as a portrait, so they keep the retry blocked.
-        triggered=_has_status({media_kind_review.STATUS})),
+        triggered=lambda audit: any(issue.get('status') == media_kind_review.STATUS
+            or (issue.get('status') in media_kind_review.STATUSES and issue.get('kind') == 'image')
+            for issue in audit.get('unresolved', []))),
     ReviewKind(
         "image_bio_text", image_bio_review.TEXT_STATUSES, (image_bio_review.TEXT_DECISIONS_FILE,),
         image_bio_review.collect_review_items,

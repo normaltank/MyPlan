@@ -371,6 +371,12 @@ async def audit_profile_media(
                       "ocr_path": str(ocr_path), "page_count": scanned["page_count"],
                       "pages_ocrd": scanned["pages_ocrd"], "ocr_reused": reused}
             evidence.append(record)
+            from server.media_kind_review import photo_confirmed
+            if ref.kind == 'image' and photo_confirmed(
+                    Path(media_kind_decisions_path) if media_kind_decisions_path else None,
+                    profile_url, ref.url, digest):
+                record['media_kind_review'] = 'photo'
+                continue  # Original and OCR remain local; background text is not biography data.
             from server.image_bio_review import apply_review_decisions
             reviewed = set()
             if review_decisions_path is not None:
@@ -398,13 +404,8 @@ async def audit_profile_media(
                                                      shared_ocr_engine)
                     record["unread_text_lines"] = unread
                     if unread is None or unread >= UNREAD_PAGE_LINES:
-                        from server.media_kind_review import photo_confirmed
-                        if photo_confirmed(Path(media_kind_decisions_path) if media_kind_decisions_path else None,
-                                           profile_url, ref.url, digest):
-                            record["media_kind_review"] = "photo"
-                        else:
-                            unresolved.append({**source, "status": "image_bio_ocr_incomplete",
-                                               "ocr_path": str(ocr_path), "unread_text_lines": unread})
+                        unresolved.append({**source, "status": "image_bio_ocr_incomplete",
+                                           "ocr_path": str(ocr_path), "unread_text_lines": unread})
                 continue
             if not text:
                 continue
