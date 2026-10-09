@@ -155,8 +155,12 @@ _FIELDS = ("学院", "姓名", "主页", "职称", "邮箱")
 
 
 def render_page(school: str, scope: dict, groups: list[dict], *, csrf_token: str,
-                decision_url: str, publish_url: str, return_url: str = "/") -> str:
-    """Show every original observation of each same-name group side by side."""
+                decision_url: str, publish_url: str, return_url: str = "/", colleges_html: str = "") -> str:
+    """Show every original observation of each same-name group side by side.
+
+    ``colleges_html`` lists the delivery's colleges with the no-faculty verdict
+    (``no_faculty_review``); it carries its own script.
+    """
     from html import escape
     from server.image_bio_review import _REVIEW_CSS, _base_css, _page_link
     verdict_text = {"distinct": "不同教师", "insufficient": "证据不足，保持阻断"}
@@ -202,13 +206,13 @@ def render_page(school: str, scope: dict, groups: list[dict], *, csrf_token: str
            ".observation dt{color:var(--muted)}.observation dd{margin:0;word-break:break-all}")
     return ("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<title>大学身份复核 · 高校师资采集平台</title><style>" + _base_css() + _REVIEW_CSS + css + "</style>"
+            "<title>大学交付复核 · 高校师资采集平台</title><style>" + _base_css() + _REVIEW_CSS + css + "</style>"
             '<p class="back"><a href="' + escape(return_url, quote=True) + '">← 返回采集平台</a></p>'
-            "<h1>" + escape(school) + " · 跨学院同名复核</h1>"
+            "<h1>" + escape(school) + " · 大学交付复核</h1>"
             '<p class="intro">本次范围：' + escape("、".join(scope.get("target_colleges", []))) + "；大学汇总"
             + state_text + "。各学院仍为采集完成。决定只对页面上这组完全相同的观察生效，来源变化后须重新复核。"
             "首版只能确认“不同教师”或记录“证据不足”；跨学院合并为同一人尚未开放。</p>"
-            + body + '<button id="publish" type="button">重新审计并发布大学版本</button>'
+            + colleges_html + ("<h2>跨学院同名</h2>" if colleges_html else "") + body + '<button id="publish" type="button">重新审计并发布大学版本</button>'
             '<p id="publish-status" role="status"></p>'
             "<script>const review=" + data + ";"
             "async function failure(response){const text=await response.text();"

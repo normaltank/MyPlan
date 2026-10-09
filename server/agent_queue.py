@@ -112,6 +112,17 @@ def failure_disposition(error: str | None, stats: dict[str, Any] | None) -> str:
     return disposition(classify_failure(error or "", stats or {})[0])
 
 
+def scout_found_no_roster(error: str | None, stats: dict[str, Any] | None) -> bool:
+    """A failed college whose scout ended without a plan; a person checks its site."""
+    try:
+        from .recovery_policy import scout_found_no_roster as no_roster
+        from .site_type_registry import classify_failure
+    except ImportError:  # imported as top-level ``agent_queue`` from server/
+        from recovery_policy import scout_found_no_roster as no_roster
+        from site_type_registry import classify_failure
+    return no_roster(classify_failure(error or "", stats or {})[0])
+
+
 def _failure_counts(failed: Iterable[tuple[str | None, dict[str, Any]]]) -> dict[str, Any]:
     """Failed colleges split into those still waiting on someone and terminal failures."""
     by = {}
