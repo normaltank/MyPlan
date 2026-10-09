@@ -38,7 +38,7 @@
 
 1. 双击 `双击启动局域网服务.bat`：启动后台接单 worker 和网页，然后打开 http://127.0.0.1:8000 。
 2. 第一次启动会要求输入 DeepSeek API Key。它用当前 Windows 账号加密保存在 `.runtime/`，以后不用再输。
-3. 第一次在本机打开网页时，按提示创建管理员账号，再在网页上给同事创建员工账号。
+3. 启动窗口会打印“同事访问地址”，同事在局域网里打开它、填上自己的姓名就能用，没有密码和管理员。
 4. 更新代码后双击 `重启本地服务.bat`。
 
 启动记录和 worker 日志在 `.runtime/`（`launcher.log`、`local-worker.out.log`、`local-worker.err.log`）。部署参数、资源保护、排障方法见 [运维手册](docs/operations.md)。
@@ -89,7 +89,7 @@ uv run --no-project --with-requirements requirements-dev.lock --python 3.12 ruff
 | :--- | :--- |
 | `server/` | 网页、队列、worker、侦察、采集、审计与 Excel 导出 |
 | `server/recon_discovery.md`、`server/recon_instructions.md` | 两个侦察阶段的指令，由代码直接读取 |
-| `server/templates/` | 网页的主页、登录页、创建管理员页与共用样式 `base.css`（静态文件，改后刷新即生效；不依赖外部 CDN） |
+| `server/templates/` | 网页的主页、填姓名页与共用样式 `base.css`（静态文件，改后刷新即生效；不依赖外部 CDN） |
 | `Opus/` | 名录挖掘、邮箱匹配等算法层 |
 | `tests/` | 自动化测试 |
 | `scripts/` | 本机启动与重启脚本 |
@@ -98,7 +98,7 @@ uv run --no-project --with-requirements requirements-dev.lock --python 3.12 ruff
 
 ## 文档导航
 
-- [运维手册](docs/operations.md)：启动与重启、员工账号、复核、worker 参数、资源与用量保护、测试记录、手工采集
+- [运维手册](docs/operations.md)：启动与重启、同事访问、复核、worker 参数、资源与用量保护、测试记录、手工采集
 - [AGENTS.md](AGENTS.md)：红线与智能体派发规则
 - [AGENT_HANDOVER.md](AGENT_HANDOVER.md)：交接文档、业务规则与系统状态
 - [CONTEXT.md](CONTEXT.md)：领域术语与页面类型定义

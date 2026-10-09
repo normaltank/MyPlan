@@ -46,8 +46,8 @@ async def test_table_image_is_not_one_person_and_review_replay_releases_two_rows
     url = f"http://127.0.0.1:{server.server_port}/roster"
     queue = AgentTaskQueue(tmp_path / "queue.db")
     store = AccountStore(queue.db_path)
-    owner = store.create_user("alice", "Alice", "alice password 12345")
-    store.create_user("bob", "Bob", "bob password 12345")
+    owner = store.sign_in("alice")
+    store.sign_in("bob")
     task = queue.submit_task("样本大学", "样本学院", url, owner_user_id=owner.id)
     root = tmp_path / "outputs"
     attempt = root / "tasks" / task.task_id / "attempt-1"
@@ -68,7 +68,7 @@ async def test_table_image_is_not_one_person_and_review_replay_releases_two_rows
             monkeypatch.setattr(web, "account_store", store)
             monkeypatch.setattr(web, "OUTPUT_DIR", str(root))
             client = TestClient(web.app)
-            assert client.post("/api/auth/login", json={"username": "alice", "password": "alice password 12345"}).status_code == 200
+            assert client.post("/api/auth/name", json={"display_name": "alice"}).status_code == 200
             headers = {"X-CSRF-Token": client.get("/api/auth/me").json()["csrf_token"]}
             assert "图片表格逐格复核" in client.get(f"/review/task/{task.task_id}").text
             assert client.get(f"/review/task/{task.task_id}/table").status_code == 200

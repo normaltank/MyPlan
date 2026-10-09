@@ -61,9 +61,8 @@ def records():
 def prepare(tmp_path):
     queue = AgentTaskQueue(tmp_path / "tasks.db", legacy_json_path=None)
     store = AccountStore(queue.db_path)
-    alice = store.create_user("alice", "Alice", "alice password 12345")
-    store.create_user("bob", "Bob", "bob password 12345")
-    admin = store.create_user("admin", "Admin", "admin password 12345", "admin")
+    alice = store.sign_in("alice")
+    admin = store.sign_in("bob")
     task = queue.submit_task("甲大学", "甲学院", "https://example.edu/", owner_user_id=alice.id)
     claim = queue.claim_task("worker", task_id=task.task_id)
     queue.sync_task_result(task.task_id, [], {}, "", "身份待复核", worker_id="worker", lease_token=claim.lease_token)
@@ -79,7 +78,7 @@ def prepare(tmp_path):
 
 def client(store, username):
     browser = TestClient(web.app)
-    login = browser.post("/api/auth/login", json={"username": username, "password": username + " password 12345"})
+    login = browser.post("/api/auth/name", json={"display_name": username})
     assert login.status_code == 200
     return browser, {"X-CSRF-Token": browser.cookies.get("faculty_csrf")}
 
@@ -121,28 +120,24 @@ def test_partition_handles_two_people_with_one_alias_without_dropping_original_b
         identity_review.save_decision(path, item, "partition", assignments={rows[0]["主页"]: rows[1]["主页"]}, reviewed_by=1)
 
 
-def test_admin_review_owner_isolation_and_insufficient_decision_cannot_requeue(tmp_path, monkeypatch):
+def test_anyone_signed_in_reviews_identity_and_insufficient_decision_cannot_requeue(tmp_path, monkeypatch):
     queue, store, _admin, task, audit, item = prepare(tmp_path)
     monkeypatch.setattr(web, "agent_queue", queue)
     monkeypatch.setattr(web, "account_store", store)
     monkeypatch.setattr(web, "OUTPUT_DIR", str(tmp_path / "outputs"))
     owner, owner_headers = client(store, "alice")
     other, other_headers = client(store, "bob")
-    admin, admin_headers = client(store, "admin")
     page = f"/review/task/{task.task_id}"
     decision = f"/api/task/{task.task_id}/review/identity"
     retry = f"/api/task/{task.task_id}/review/retry"
     payload = {"id": item["id"], "verdict": "distinct"}
-    assert other.get(page).status_code == 404
-    assert other.post(decision, json=payload, headers=other_headers).status_code == 404
-    assert owner.get(page).status_code == 200
-    assert owner.post(decision, json=payload, headers=owner_headers).status_code == 403
-    html = admin.get(page).text
+    assert TestClient(web.app).get(page).status_code == 401
+    html = other.get(page).text
     assert "同名身份复核" in html and all(r["简介"] in html for r in records())
-    assert admin.post(decision, json=payload).status_code == 403
-    assert admin.post(decision, json={**payload, "verdict": "insufficient"}, headers=admin_headers).status_code == 204
-    assert admin.post(retry, headers=admin_headers).status_code == 409
-    assert admin.post(decision, json=payload, headers=admin_headers).status_code == 204
+    assert other.post(decision, json=payload).status_code == 403
+    assert other.post(decision, json={**payload, "verdict": "insufficient"}, headers=other_headers).status_code == 204
+    assert owner.post(retry, headers=owner_headers).status_code == 409
+    assert owner.post(decision, json=payload, headers=owner_headers).status_code == 204
     assert owner.post(retry, headers=owner_headers).status_code == 200
     assert queue.get_task(task.task_id).owner_user_id == task.owner_user_id
     from server.task_image_review import carry_review_decisions

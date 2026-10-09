@@ -3,7 +3,6 @@ import os
 import sys
 import uuid
 import json
-import sqlite3
 from html import escape
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +25,7 @@ from pydantic import BaseModel, Field
 
 if __package__:
     from .agent_queue import agent_queue, LeaseConflictError, failure_disposition
-    from .access_control import AccountStore, Account
+    from .access_control import Account, AccountStore, SESSION_SECONDS
     from .image_table_routes import router as image_table_router
     from .task_image_review import (task_review_audit, review_items, prepare_review_resume,
                                     legacy_review_audits)
@@ -35,7 +34,7 @@ if __package__:
                                    save_email_decision)
 else:
     from agent_queue import agent_queue, LeaseConflictError, failure_disposition
-    from access_control import AccountStore, Account
+    from access_control import Account, AccountStore, SESSION_SECONDS
     from image_table_routes import router as image_table_router
     from task_image_review import (task_review_audit, review_items, prepare_review_resume,
                                    legacy_review_audits)
@@ -77,9 +76,9 @@ SESSION_COOKIE = 'faculty_session'
 CSRF_COOKIE = 'faculty_csrf'
 
 
-# A reverse proxy on this machine also connects from 127.0.0.1. Anything it
-# forwarded carries one of these headers and is treated as a remote request,
-# so the proxy must send them (see docs/operations.md, 反向代理部署).
+# A reverse proxy on this machine would also connect from 127.0.0.1. Anything
+# it forwarded carries one of these headers and is treated as a remote request,
+# so worker-only routes stay local even behind a proxy.
 _FORWARDING_HEADERS = ('forwarded', 'x-forwarded-for', 'x-forwarded-host',
                        'x-forwarded-proto', 'x-real-ip')
 
@@ -90,15 +89,6 @@ def _local_request(request: Request) -> bool:
     return bool(request.client and request.client.host in {'127.0.0.1', '::1', 'testclient'})
 
 
-def _direct_local_http(request: Request) -> bool:
-    return (request.url.scheme == 'http' and _local_request(request) and
-            request.url.hostname in {'127.0.0.1', 'localhost', 'testserver'})
-
-
-def _safe_transport(request: Request) -> bool:
-    return request.url.scheme == 'https' or _direct_local_http(request)
-
-
 def _user(request: Request | None) -> Account:
     user = getattr(getattr(request, 'state', None), 'user', None)
     if user is None:
@@ -106,17 +96,17 @@ def _user(request: Request | None) -> Account:
     return user
 
 
-def _owner_filter(user: Account) -> int | None:
-    return None if user.role == 'admin' else user.id
-
-
-def _internal_user(request: Request | None) -> Account:
-    """Allow direct Python callers used by worker/unit tests, never HTTP calls."""
-    return _user(request) if request is not None else Account(0, 'internal', 'Internal', 'admin')
-
-
-def _can_view(user: Account, owner_user_id: int | None) -> bool:
-    return user.role == 'admin' or (owner_user_id is not None and owner_user_id == user.id)
+def _same_origin(request: Request) -> bool:
+    origin = request.headers.get('origin')
+    if not origin:
+        return True
+    try:
+        parsed = urlsplit(origin)
+        return (parsed.scheme == request.url.scheme and
+                parsed.hostname == request.url.hostname and
+                parsed.port == request.url.port)
+    except ValueError:
+        return False
 
 
 def _public_task(task: dict) -> dict:
@@ -127,15 +117,9 @@ def _public_task(task: dict) -> dict:
 @app.middleware('http')
 async def access_gate(request: Request, call_next):
     path = request.url.path
-    if path == '/api/auth/login':
-        if not _safe_transport(request):
-            return JSONResponse({'detail': '登录需要本机访问或 HTTPS'}, status_code=403)
-        response = await call_next(request)
-        response.headers['Cache-Control'] = 'no-store'
-        return response
-    if path == '/api/auth/bootstrap':
-        if not _direct_local_http(request):
-            return JSONResponse({'detail': '首次设置仅限服务器本机'}, status_code=403)
+    if path == '/api/auth/name':
+        if not _same_origin(request):
+            return JSONResponse({'detail': '请求来源不符'}, status_code=403)
         response = await call_next(request)
         response.headers['Cache-Control'] = 'no-store'
         return response
@@ -162,21 +146,10 @@ async def access_gate(request: Request, call_next):
             cookie_csrf = request.cookies.get(CSRF_COOKIE)
             if not csrf or csrf != cookie_csrf or not account_store.verify_csrf(token, csrf):
                 return JSONResponse({'detail': '页面已过期，请刷新后重试'}, status_code=403)
-            origin = request.headers.get('origin')
-            if origin:
-                try:
-                    parsed = urlsplit(origin)
-                    same_origin = (parsed.scheme == request.url.scheme and
-                                   parsed.hostname == request.url.hostname and
-                                   parsed.port == request.url.port)
-                except ValueError:
-                    same_origin = False
-                if not same_origin:
-                    return JSONResponse({'detail': '请求来源不符'}, status_code=403)
-        if path.startswith('/api/queue/claim/') and (user.role != 'admin' or not _local_request(request)):
+            if not _same_origin(request):
+                return JSONResponse({'detail': '请求来源不符'}, status_code=403)
+        if path.startswith('/api/queue/claim/') and not _local_request(request):
             return JSONResponse({'detail': '无权认领'}, status_code=403)
-        if path in {'/api/queue/pending', '/api/queue/mode'} and user.role != 'admin':
-            return JSONResponse({'detail': '仅管理员可查看'}, status_code=403)
     response = await call_next(request)
     if path.startswith('/api/') or path.startswith('/download/') or path.startswith('/review/'):
         response.headers['Cache-Control'] = 'no-store'
@@ -208,21 +181,8 @@ class LeaseRenewRequest(BaseModel):
     lease_token: str
 
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class CreateUserRequest(BaseModel):
-    username: str
+class NameSignInRequest(BaseModel):
     display_name: str
-    password: str
-    role: str = 'employee'
-
-
-class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str
 
 
 class OcrReviewRequest(BaseModel):
@@ -271,46 +231,29 @@ class IdentityReviewRequest(BaseModel):
     assignments: dict[str, str] | None = None
 
 
-@app.post('/api/auth/login')
-async def login(req: LoginRequest, request: Request, response: Response):
-    user = account_store.authenticate(req.username, req.password)
-    if user is None:
-        raise HTTPException(status_code=401, detail='用户名或密码错误')
-    token, csrf = account_store.create_session(user.id)
-    secure = not _direct_local_http(request)
-    response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=secure,
-                        samesite='strict', max_age=12 * 60 * 60, path='/')
-    response.set_cookie(CSRF_COOKIE, csrf, httponly=False, secure=secure,
-                        samesite='strict', max_age=12 * 60 * 60, path='/')
-    return {'id': user.id, 'username': user.username, 'display_name': user.display_name,
-            'role': user.role}
-
-
-@app.post('/api/auth/bootstrap')
-async def bootstrap_admin(req: CreateUserRequest, request: Request, response: Response):
-    if not _direct_local_http(request):
-        raise HTTPException(status_code=403, detail='首次设置仅限服务器本机')
-    try:
-        user = account_store.bootstrap_admin(req.username, req.display_name, req.password)
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail='用户名已存在') from None
-    except ValueError as exc:
-        raise HTTPException(status_code=409 if str(exc) == '管理员已存在' else 422,
-                            detail=str(exc)) from None
-    token, csrf = account_store.create_session(user.id)
+def _set_session_cookies(response: Response, token: str, csrf: str) -> None:
+    # Plain HTTP on the office LAN: the cookie cannot be Secure. SameSite=strict
+    # plus the CSRF token still stop other sites from acting as a signed-in person.
     response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=False,
-                        samesite='strict', max_age=12 * 60 * 60, path='/')
+                        samesite='strict', max_age=SESSION_SECONDS, path='/')
     response.set_cookie(CSRF_COOKIE, csrf, httponly=False, secure=False,
-                        samesite='strict', max_age=12 * 60 * 60, path='/')
-    return {'id': user.id, 'username': user.username,
-            'display_name': user.display_name, 'role': user.role}
+                        samesite='strict', max_age=SESSION_SECONDS, path='/')
+
+
+@app.post('/api/auth/name')
+async def sign_in_by_name(req: NameSignInRequest, response: Response):
+    try:
+        user = account_store.sign_in(req.display_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _set_session_cookies(response, *account_store.create_session(user.id))
+    return {'id': user.id, 'display_name': user.display_name}
 
 
 @app.get('/api/auth/me')
 async def current_user(request: Request):
     user = _user(request)
-    return {'id': user.id, 'username': user.username,
-            'display_name': user.display_name, 'role': user.role,
+    return {'id': user.id, 'display_name': user.display_name,
             'csrf_token': request.cookies.get(CSRF_COOKIE)}
 
 
@@ -322,47 +265,18 @@ async def logout(request: Request, response: Response):
     return {'status': 'logged_out'}
 
 
-@app.post('/api/auth/change-password')
-async def change_password(req: ChangePasswordRequest, request: Request, response: Response):
-    user = _user(request)
-    try:
-        changed = account_store.change_password(user.id, req.old_password, req.new_password)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    if not changed:
-        raise HTTPException(status_code=403, detail='当前密码不正确')
-    response.delete_cookie(SESSION_COOKIE, path='/')
-    response.delete_cookie(CSRF_COOKIE, path='/')
-    return {'status': 'password_changed'}
-
-
-@app.post('/api/admin/users')
-async def create_account(req: CreateUserRequest, request: Request):
-    if _user(request).role != 'admin':
-        raise HTTPException(status_code=403, detail='仅管理员可创建账号')
-    try:
-        user = account_store.create_user(req.username, req.display_name,
-                                         req.password, req.role)
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail='用户名已存在') from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    return {'id': user.id, 'username': user.username,
-            'display_name': user.display_name, 'role': user.role}
-
-
 @app.get('/api/reports/daily')
 async def daily_report(request: Request, day: str | None = None):
     user = _user(request)
     selected = day or datetime.now(ZoneInfo('Asia/Taipei')).date().isoformat()
     try:
-        counts = agent_queue.get_daily_counts(selected, owner_user_id=_owner_filter(user))
-        if user.role == 'admin':
-            counts['employees'] = [
-                {'id': person.id, 'username': person.username,
-                 'display_name': person.display_name,
-                 **agent_queue.get_daily_counts(selected, owner_user_id=person.id)}
-                for person in account_store.list_users() if person.role == 'employee']
+        counts = agent_queue.get_daily_counts(selected, owner_user_id=user.id)
+        people = [{'id': person.id, 'display_name': person.display_name,
+                   **agent_queue.get_daily_counts(selected, owner_user_id=person.id)}
+                  for person in account_store.list_users()]
+        counts['employees'] = [row for row in people if any(
+            row[key] for key in ('submitted_colleges', 'completed_colleges', 'delivered_record_rows',
+                                 'pending_colleges', 'terminal_failed_colleges'))]
         return counts
     except ValueError:
         raise HTTPException(status_code=400, detail='日期格式须为 YYYY-MM-DD') from None
@@ -460,18 +374,18 @@ def present_task(data, scope):
 
 
 @app.get("/api/task/{task_id}")
-async def get_task_status(task_id: str, request: Request = None):
+async def get_task_status(task_id: str):
     task = agent_queue.get_task(task_id)
-    if not task or not _can_view(_internal_user(request), task.owner_user_id):
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     data = present_task(_public_task(task.to_dict()), agent_queue.get_delivery_scope(task.batch_id, task.school))
-    data["queue_stats"] = agent_queue.get_queue_stats(owner_user_id=_owner_filter(_internal_user(request)))
+    data["queue_stats"] = agent_queue.get_queue_stats()
     return data
 
 
 def _review_task(task_id: str, request: Request):
     task = agent_queue.get_task(task_id)
-    if not task or not _can_view(_user(request), task.owner_user_id):
+    if not task:
         raise HTTPException(status_code=404, detail='Task not found')
     if task.status != 'failed':
         raise HTTPException(status_code=409, detail='该工单当前不在人工复核状态')
@@ -493,7 +407,7 @@ async def task_image_review_page(task_id: str, request: Request):
             item['saved_verdict'] = decision.get('verdict', '')
         _mark_html_email_decisions(audit, task_id, items['html_email'])
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status_code=409, detail='复核证据不完整，请管理员检查审计文件') from exc
+        raise HTTPException(status_code=409, detail='复核证据不完整，请维护人员检查审计文件') from exc
     rendered = render_review_page(items['image_bio_text'], items['image_bio_email'],
         decision_url=f'/api/task/{task_id}/review/ocr',
         email_decision_url=f'/api/task/{task_id}/review/email',
@@ -501,7 +415,6 @@ async def task_image_review_page(task_id: str, request: Request):
         csrf_token=request.cookies.get(CSRF_COOKIE, ''), return_url='/',
         name_items=items['name'], name_decision_url=f'/api/task/{task_id}/review/name',
         identity_items=items['identity'], identity_decision_url=f'/api/task/{task_id}/review/identity',
-        can_review_identity=_user(request).role == 'admin',
         html_email_items=items['html_email'], html_email_decision_url=f'/api/task/{task_id}/review/html-email',
         media_kind_items=items['media_kind'], media_kind_decision_url=f'/api/task/{task_id}/review/media-kind')
     if json.loads(audit.read_text(encoding="utf-8")).get("image_table_evidence"):
@@ -592,8 +505,6 @@ async def save_task_name_review(task_id: str, payload: NameReviewRequest, reques
 async def save_task_identity_review(task_id: str, payload: IdentityReviewRequest, request: Request):
     _, audit = _review_task(task_id, request)
     user = _user(request)
-    if user.role != 'admin':
-        raise HTTPException(status_code=403, detail='身份合并与区分须由管理员核对来源后确认')
     try:
         item = next((item for item in identity_review.collect_items(audit) if item['id'] == payload.id), None)
         if item is None:
@@ -624,12 +535,9 @@ def _university_review_url(batch_id: str | None, school: str) -> str:
 
 
 def _university_scope(batch_id: str, school: str, request: Request):
-    """A university scope is visible only to someone who can view every task in it."""
     from server.university_delivery import scope_identity_review
     status = agent_queue.get_batch_status(batch_id)
-    user = _user(request)
-    if (not status or school not in {task['school'] for task in status['subtasks']}
-            or any(not _can_view(user, task['owner_user_id']) for task in status['subtasks'])):
+    if not status or school not in {task['school'] for task in status['subtasks']}:
         raise HTTPException(status_code=404, detail='大学交付范围不存在')
     return scope_identity_review(agent_queue, batch_id, school)
 
@@ -653,7 +561,7 @@ async def university_identity_review_page(batch_id: str, request: Request, schoo
     review = _university_scope(batch_id, school, request)
     base = f"/api/university-review/{quote(batch_id, safe='')}"
     return university_review.render_page(school, review['scope'], review['groups'],
-        can_decide=_user(request).role == 'admin', csrf_token=request.cookies.get(CSRF_COOKIE, ''),
+        csrf_token=request.cookies.get(CSRF_COOKIE, ''),
         decision_url=base + '/decisions', publish_url=base + '/publish')
 
 
@@ -669,8 +577,6 @@ async def save_university_identity_review(batch_id: str, payload: UniversityRevi
     from server import university_identity_review as university_review
     review = _university_scope(batch_id, payload.school, request)
     user = _user(request)
-    if user.role != 'admin':
-        raise HTTPException(status_code=403, detail='跨学院身份判定须由管理员核对来源后确认')
     group = next((g for g in review['groups'] if g['group_id'] == payload.group_id), None)
     if group is None:
         raise HTTPException(status_code=409, detail='复核证据已变化，请刷新页面后重新核对')
@@ -696,8 +602,6 @@ async def publish_university_after_review(batch_id: str, payload: UniversityPubl
 
 
 def _legacy_review_audit(audit_key: str, request: Request):
-    if _user(request).role != 'admin':
-        raise HTTPException(status_code=403, detail='仅管理员可查看历史复核材料')
     audit = next((path for key, path, _ in legacy_review_audits(LEGACY_REVIEW_ROOT)
                   if key == audit_key), None)
     if audit is None:
@@ -707,8 +611,6 @@ def _legacy_review_audit(audit_key: str, request: Request):
 
 @app.get('/review/legacy', response_class=HTMLResponse)
 async def legacy_image_review_list(request: Request):
-    if _user(request).role != 'admin':
-        raise HTTPException(status_code=403, detail='仅管理员可查看历史复核材料')
     rows = legacy_review_audits(LEGACY_REVIEW_ROOT)
     links = ''.join('<li><a href="/review/legacy/' + key + '">'
                     + escape(str(audit.get('school') or '历史材料')) + ' · '
@@ -717,7 +619,7 @@ async def legacy_image_review_list(request: Request):
                     + '</li>' for key, path, audit in rows)
     return ('<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
             '<title>历史图片复核</title><body><h1>历史图片复核</h1>'
-            '<p>这些验收材料没有员工工单归属，仅管理员可查看。</p><ul>'
+            '<p>这些是早期试跑的验收材料，没有提交人。</p><ul>'
             + (links or '<li>暂无历史图片复核材料</li>')
             + '</ul><a href="/">返回采集平台</a></body></html>')
 
@@ -763,20 +665,18 @@ async def save_legacy_email_review(audit_key: str, payload: EmailReviewRequest, 
 
 @app.get("/api/batch/latest")
 async def get_latest_batch(request: Request = None):
-    user = _internal_user(request)
-    batch_ids = [r['id'] for r in agent_queue.get_request_history(50, owner_user_id=_owner_filter(user))
+    # "Latest" is the signed-in person's own latest batch, not someone else's.
+    owner = _user(request).id if request is not None else None
+    batch_ids = [r['id'] for r in agent_queue.get_request_history(50, owner_user_id=owner)
                  if r['kind'] == 'batch']
     if not batch_ids:
         raise HTTPException(status_code=404, detail="No batches found")
-    return await get_batch_status(batch_ids[0], request)
+    return await get_batch_status(batch_ids[0])
 
 @app.get("/api/batch/{batch_id}")
-async def get_batch_status(batch_id: str, request: Request = None):
+async def get_batch_status(batch_id: str):
     status = agent_queue.get_batch_status(batch_id)
     if not status:
-        raise HTTPException(status_code=404, detail="Batch not found")
-    user = _internal_user(request)
-    if any(not _can_view(user, task['owner_user_id']) for task in status['subtasks']):
         raise HTTPException(status_code=404, detail="Batch not found")
     for scope in status["delivery_scopes"]:
         if any(item.get("requires_review") for item in scope.get("identity_conflicts", [])):
@@ -791,17 +691,15 @@ async def get_batch_status(batch_id: str, request: Request = None):
     status["university_files"] = univ_files
     if univ_files and len(univ_files) == len(status["delivery_scopes"]):
         status["download_url"] = univ_files[0]["download_url"]
-    status["queue_stats"] = agent_queue.get_queue_stats(owner_user_id=_owner_filter(user))
+    status["queue_stats"] = agent_queue.get_queue_stats()
     return status
 
 @app.get("/api/queue/stats")
-async def get_queue_stats(request: Request = None):
-    return agent_queue.get_queue_stats(owner_user_id=_owner_filter(_internal_user(request)))
+async def get_queue_stats():
+    return agent_queue.get_queue_stats()
 
-@app.get("/api/admin/failure-types")
-async def get_failure_types(request: Request):
-    if _user(request).role != 'admin':
-        raise HTTPException(status_code=403, detail='仅管理员可查看失败类型统计')
+@app.get("/api/failure-types")
+async def get_failure_types():
     return agent_queue.get_failure_type_stats()
 
 @app.get("/api/worker/status")
@@ -809,15 +707,16 @@ async def get_worker_status():
     return agent_queue.get_worker_status()
 
 @app.get("/api/history")
-async def get_request_history(request: Request = None, limit: int = Query(default=20, ge=1, le=50),
+async def get_request_history(limit: int = Query(default=20, ge=1, le=50),
                               offset: int = Query(default=0, ge=0)):
-    return {"requests": agent_queue.get_request_history(limit, owner_user_id=_owner_filter(_internal_user(request)),
-                                                        offset=offset)}
+    names = {person.id: person.display_name for person in account_store.list_users()}
+    requests = agent_queue.get_request_history(limit, offset=offset)
+    for item in requests:
+        item['submitted_by'] = names.get(item.pop('owner_user_id'), '')
+    return {"requests": requests}
 
 @app.get("/api/queue/pending")
-async def get_pending_tasks(request: Request):
-    if _user(request).role != 'admin':
-        raise HTTPException(status_code=403, detail='仅管理员可查看')
+async def get_pending_tasks():
     pending = agent_queue.get_pending_tasks()
     return {
         "dispatch_mode": DISPATCH_MODE,
@@ -827,8 +726,8 @@ async def get_pending_tasks(request: Request):
 
 @app.post("/api/queue/claim/{task_id}")
 async def claim_task(task_id: str, request: Request):
-    if _user(request).role != 'admin' or not _local_request(request):
-        raise HTTPException(status_code=403, detail='仅本机管理员可认领')
+    if not _local_request(request):
+        raise HTTPException(status_code=403, detail='仅本机可认领')
     task = agent_queue.claim_task(task_id, claimant="Antigravity (IDE Agent)")
     if not task:
         raise HTTPException(status_code=404, detail="Task not found or not in queued state")
@@ -877,22 +776,18 @@ async def sync_task(task_id: str, req: TaskSyncRequest):
             "current_identity_conflicts": delivery.get("current_identity_conflicts", [])}
 
 @app.get("/api/queue/mode")
-async def get_mode(request: Request):
-    if _user(request).role != 'admin':
-        raise HTTPException(status_code=403, detail='仅管理员可查看')
+async def get_mode():
     return {"dispatch_mode": DISPATCH_MODE}
 
 @app.post("/api/queue/mode")
-async def set_mode(mode: str, request: Request = None):
-    if _internal_user(request).role != 'admin':
-        raise HTTPException(status_code=403, detail='仅管理员可操作')
+async def set_mode(mode: str):
     global DISPATCH_MODE
     if mode == "server_worker":
         return {"status": "ok", "dispatch_mode": DISPATCH_MODE}
     raise HTTPException(status_code=400, detail="Only dedicated server_worker dispatch is supported; script dispatch is retired")
 
 @app.get("/download/{filename:path}")
-async def download_file(filename: str, request: Request = None):
+async def download_file(filename: str):
     from pathlib import Path
     root = Path(OUTPUT_DIR).resolve()
     filepath = (root / filename).resolve()
@@ -901,18 +796,9 @@ async def download_file(filename: str, request: Request = None):
     relative = filepath.relative_to(root)
     manifest_path = (filepath.parent / "manifest.json" if relative.parts[0] == "versions"
                      else filepath.with_suffix(".manifest.json"))
-    user = _internal_user(request)
-    if user.role != 'admin' and relative.parts[0] != 'versions':
-        raise HTTPException(status_code=404, detail='File not found')
     if relative.parts[0] == "versions" or manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if user.role != 'admin':
-                sources = manifest['college_snapshots']
-                source_tasks = [agent_queue.get_task(source['task_id']) for source in sources]
-                if (not source_tasks or any(task is None or not _can_view(user, task.owner_user_id)
-                                            for task in source_tasks)):
-                    raise HTTPException(status_code=404, detail='File not found')
             school = manifest["school"]
             from server.university_delivery import manifest_snapshot_is_safe
             safe = manifest_snapshot_is_safe(agent_queue, manifest)
@@ -940,20 +826,14 @@ def _page(name: str) -> str:
     return page.replace("/*base.css*/", (_TEMPLATES / "base.css").read_text(encoding="utf-8"), 1)
 
 
-def _bootstrap_page() -> str:
-    return _page("bootstrap.html")
-
-
-def _login_page() -> str:
+def _name_page() -> str:
     return _page("login.html")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui(request: Request = None):
     if request is not None and getattr(request.state, 'user', None) is None:
-        if not account_store.has_admin() and _direct_local_http(request):
-            return _bootstrap_page()
-        return _login_page()
+        return _name_page()
     return _page("index.html")
 
 if __name__ == "__main__":

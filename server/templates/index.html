@@ -133,15 +133,10 @@
         .log-meta time { font-family: var(--mono); }
         .log-action { color: var(--ok); font-size: 12.5px; }
 
-        /* 账号管理 */
-        .admin { padding: 20px; display: grid; gap: 12px; }
-        .admin-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 110px auto; gap: 8px; }
-
         .footer { max-width: 1240px; margin: 0 auto; padding: 4px 20px 28px; color: var(--muted); font-size: 12px; text-align: center; }
 
         @media (max-width: 1023px) {
             .workspace { grid-template-columns: minmax(0, 1fr); }
-            .admin-form { grid-template-columns: 1fr 1fr; }
         }
         @media (max-width: 640px) {
             .topbar-inner { flex-wrap: wrap; padding: 10px 16px; gap: 8px 12px; }
@@ -149,8 +144,7 @@
             .topbar-status { order: 3; flex-basis: 100%; }
             .container { padding: 14px 16px; gap: 14px; }
             .today { padding: 12px 16px; }
-            .composer, .monitor, .admin { padding: 16px; }
-            .admin-form { grid-template-columns: 1fr; }
+            .composer, .monitor { padding: 16px; }
             .subtask { flex-wrap: wrap; }
         }
     </style>
@@ -193,13 +187,10 @@
                     <svg class="icon"><use href="#i-chevron"/></svg>
                 </summary>
                 <div class="account-panel card">
-                    <h3>修改我的密码</h3>
-                    <input id="oldPassword" class="input" type="password" autocomplete="current-password" placeholder="当前密码">
-                    <input id="changedPassword" class="input" type="password" autocomplete="new-password" placeholder="新密码（至少 12 位）">
-                    <button type="button" class="btn btn-primary" onclick="changeMyPassword()">保存新密码</button>
-                    <p id="passwordStatus" class="hint"></p>
+                    <p class="hint">工单和每日统计记在这个名字下。</p>
+                    <a href="/review/legacy">查看历史复核材料</a>
                     <hr>
-                    <button type="button" class="btn btn-secondary" onclick="logoutAccount()"><svg class="icon"><use href="#i-logout"/></svg>退出登录</button>
+                    <button type="button" class="btn btn-secondary" onclick="logoutAccount()"><svg class="icon"><use href="#i-logout"/></svg>换个名字</button>
                 </div>
             </details>
         </div>
@@ -328,20 +319,6 @@
             </section>
         </div>
 
-        <section id="adminUsers" class="card admin hidden" aria-labelledby="adminTitle">
-            <div class="card-head">
-                <h2 id="adminTitle">账号管理</h2>
-                <a href="/review/legacy">查看历史复核材料</a>
-            </div>
-            <div class="admin-form">
-                <input id="newUsername" class="input" autocomplete="off" placeholder="登录名（小写英文）" aria-label="登录名">
-                <input id="newDisplayName" class="input" autocomplete="off" placeholder="员工姓名" aria-label="员工姓名">
-                <input id="newPassword" class="input" type="password" autocomplete="new-password" placeholder="初始密码（至少 12 位）" aria-label="初始密码">
-                <select id="newRole" class="input" aria-label="角色"><option value="employee">员工</option><option value="admin">管理员</option></select>
-                <button type="button" class="btn btn-primary" onclick="createAccount()">创建账号</button>
-            </div>
-            <p id="createAccountStatus" class="hint"></p>
-        </section>
     </main>
     <footer class="footer">采集单位是学院，交付单位是大学 · 简介保留原文 · 有邮箱与无邮箱两张表合计等于已采集人数</footer>
 
@@ -385,18 +362,6 @@
             location.reload();
         }
 
-        async function changeMyPassword() {
-            const response = await fetch('/api/auth/change-password', {method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
-                body: JSON.stringify({old_password: document.getElementById('oldPassword').value,
-                    new_password: document.getElementById('changedPassword').value})});
-            document.getElementById('oldPassword').value = '';
-            document.getElementById('changedPassword').value = '';
-            if (response.ok) { location.reload(); return; }
-            const result = await response.json();
-            document.getElementById('passwordStatus').innerText = typeof result.detail === 'string' ? result.detail : '修改失败';
-        }
-
         async function loadDailyReport() {
             const day = document.getElementById('reportDay').value;
             const response = await fetch(`/api/reports/daily?day=${encodeURIComponent(day)}`);
@@ -412,32 +377,14 @@
             if (Array.isArray(report.employees)) {
                 rows.classList.remove('hidden');
                 rows.innerHTML = report.employees.length
-                    ? `<table class="table"><thead><tr><th>员工</th><th class="n">提交学院</th><th class="n">完成学院</th><th class="n">交付记录</th><th class="n">待处理学院</th><th class="n">失败学院</th></tr></thead><tbody>`
+                    ? `<table class="table"><thead><tr><th>姓名</th><th class="n">提交学院</th><th class="n">完成学院</th><th class="n">交付记录</th><th class="n">待处理学院</th><th class="n">失败学院</th></tr></thead><tbody>`
                       + report.employees.map(item => `<tr><td>${escapeHtml(item.display_name)}</td><td class="n">${item.submitted_colleges}</td><td class="n">${item.completed_colleges}</td><td class="n">${item.delivered_record_rows}</td><td class="n">${item.pending_colleges || 0}</td><td class="n">${item.terminal_failed_colleges || 0}</td></tr>`).join('')
                       + '</tbody></table>'
-                    : '<p class="hint">当天还没有员工工单</p>';
+                    : '<p class="hint">当天还没有人提交工单</p>';
             } else {
                 rows.classList.add('hidden');
                 rows.replaceChildren();
             }
-        }
-
-        async function createAccount() {
-            const payload = {
-                username: document.getElementById('newUsername').value.trim(),
-                display_name: document.getElementById('newDisplayName').value.trim(),
-                password: document.getElementById('newPassword').value,
-                role: document.getElementById('newRole').value
-            };
-            const response = await fetch('/api/admin/users', {method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
-                body: JSON.stringify(payload)});
-            const result = await response.json();
-            document.getElementById('newPassword').value = '';
-            document.getElementById('createAccountStatus').innerText = response.ok
-                ? `已创建 ${result.display_name}（${result.username}）`
-                : (typeof result.detail === 'string' ? result.detail : '创建失败');
-            if (response.ok) loadDailyReport();
         }
 
         // tone: true = 可交付，false = 待处理，也可直接传 'success' | 'warn' | 'danger'
@@ -538,7 +485,7 @@
             title.textContent = request.schools.join('、');
             const meta = document.createElement('span');
             meta.className = 'history-meta';
-            meta.textContent = `${request.total_colleges} 个学院 · ${new Date(request.created_at * 1000).toLocaleString()}`;
+            meta.textContent = `${request.submitted_by ? request.submitted_by + ' · ' : ''}${request.total_colleges} 个学院 · ${new Date(request.created_at * 1000).toLocaleString()}`;
             main.append(title, meta);
             const state = document.createElement('span');
             state.className = 'pill pill-dot';
@@ -1004,9 +951,8 @@
             if (!identity.ok) { location.reload(); return; }
             currentUser = await identity.json();
             csrfToken = currentUser.csrf_token;
-            document.getElementById('accountLabel').innerText = `${currentUser.display_name}（${currentUser.role === 'admin' ? '管理员' : '员工'}）`;
+            document.getElementById('accountLabel').innerText = currentUser.display_name;
             document.getElementById('accountAvatar').innerText = (currentUser.display_name || '·').slice(0, 1);
-            if (currentUser.role === 'admin') document.getElementById('adminUsers').classList.remove('hidden');
             document.getElementById('reportDay').value = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
             loadDailyReport();
             fetchQueueStats();

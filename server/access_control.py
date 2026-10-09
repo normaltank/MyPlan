@@ -1,5 +1,7 @@
-"""Local employee accounts and revocable browser sessions.
+"""Name-only staff sign-in and revocable browser sessions.
 
+Staff type their name once per browser; it attributes tasks and daily counts.
+There are no passwords or roles in use: everyone signed in has the same rights.
 The task database is shared with the queue, but no session credential is ever
 stored there in plaintext. This module deliberately has no web dependencies.
 """
@@ -7,19 +9,16 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import re
 import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 
-PASSWORD_ITERATIONS = 600_000
-SESSION_SECONDS = 12 * 60 * 60
-_USERNAME = re.compile(r"^[a-z][a-z0-9_.-]{2,31}$")
+SESSION_SECONDS = 30 * 24 * 60 * 60
+NAME_MAX_LENGTH = 40
 
 
 @dataclass(frozen=True)
@@ -51,11 +50,6 @@ class AccountStore:
                 expires_at REAL NOT NULL,
                 created_at REAL NOT NULL)""")
             con.execute("CREATE INDEX IF NOT EXISTS idx_browser_sessions_user ON browser_sessions(user_id)")
-            con.execute("""CREATE TABLE IF NOT EXISTS login_failures (
-                username TEXT PRIMARY KEY,
-                failed_count INTEGER NOT NULL,
-                window_start REAL NOT NULL,
-                locked_until REAL NOT NULL DEFAULT 0)""")
 
     @contextmanager
     def _connect(self):
@@ -70,49 +64,29 @@ class AccountStore:
             con.close()
 
     @staticmethod
-    def _password_hash(password: str, salt: bytes | None = None) -> str:
-        salt = salt or secrets.token_bytes(16)
-        digest = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, PASSWORD_ITERATIONS)
-        return f'pbkdf2_sha256${PASSWORD_ITERATIONS}${salt.hex()}${digest.hex()}'
-
-    @staticmethod
-    @lru_cache(maxsize=1)
-    def _dummy_hash() -> str:
-        return AccountStore._password_hash('dummy password', b'\0' * 16)
-
-    @staticmethod
-    def _verify_password(password: str, encoded: str) -> bool:
-        try:
-            name, iterations, salt, expected = encoded.split('$')
-            if name != 'pbkdf2_sha256' or int(iterations) < PASSWORD_ITERATIONS:
-                return False
-            actual = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'),
-                                         bytes.fromhex(salt), int(iterations))
-            return hmac.compare_digest(actual, bytes.fromhex(expected))
-        except (ValueError, TypeError):
-            return False
-
-    @staticmethod
     def _account(row: sqlite3.Row) -> Account:
         return Account(row['id'], row['username'], row['display_name'], row['role'], bool(row['enabled']))
 
-    def create_user(self, username: str, display_name: str, password: str,
-                    role: str = 'employee') -> Account:
-        username = username.strip().lower()
-        display_name = display_name.strip()
-        if not _USERNAME.fullmatch(username):
-            raise ValueError('用户名须为 3–32 位小写字母、数字、点、下划线或连字符，且以字母开头')
-        if not display_name or len(display_name) > 80:
-            raise ValueError('请填写不超过 80 字的显示名称')
-        if len(password) < 12 or len(password) > 1024:
-            raise ValueError('密码长度须为 12–1024 字符')
-        if role not in {'admin', 'employee'}:
-            raise ValueError('账号角色无效')
-        encoded = self._password_hash(password)
+    def sign_in(self, display_name: str) -> Account:
+        """The person's typed name is their identity; the same name returns the same account.
+
+        Names only attribute work and daily counts. They are not a secret, so
+        anyone on the LAN can type any name; there is no password to check.
+        """
+        display_name = ' '.join(display_name.split())
+        if not display_name or len(display_name) > NAME_MAX_LENGTH:
+            raise ValueError(f'请填写不超过 {NAME_MAX_LENGTH} 字的姓名')
+        username = 'name-' + hashlib.sha256(display_name.encode('utf-8')).hexdigest()[:16]
         with self._connect() as con:
-            cur = con.execute("INSERT INTO users(username,display_name,role,password_hash,created_at) "
-                              "VALUES (?,?,?,?,?)", (username, display_name, role, encoded, time.time()))
-            return Account(cur.lastrowid, username, display_name, role)
+            con.execute('BEGIN IMMEDIATE')
+            row = con.execute('SELECT * FROM users WHERE display_name=? AND enabled=1 '
+                              'ORDER BY id LIMIT 1', (display_name,)).fetchone()
+            if row is None:
+                # The password column predates name sign-in; '!' matches no password.
+                cur = con.execute("INSERT INTO users(username,display_name,role,password_hash,created_at) "
+                                  "VALUES (?,?,'employee','!',?)", (username, display_name, time.time()))
+                row = con.execute('SELECT * FROM users WHERE id=?', (cur.lastrowid,)).fetchone()
+        return self._account(row)
 
     def get_user(self, user_id: int) -> Account | None:
         with self._connect() as con:
@@ -123,66 +97,6 @@ class AccountStore:
         with self._connect() as con:
             rows = con.execute("SELECT * FROM users ORDER BY id").fetchall()
         return [self._account(row) for row in rows]
-
-    def change_password(self, user_id: int, old_password: str, new_password: str) -> bool:
-        if len(new_password) < 12 or len(new_password) > 1024:
-            raise ValueError('新密码长度须为 12–1024 字符')
-        with self._connect() as con:
-            row = con.execute('SELECT password_hash,enabled FROM users WHERE id=?', (user_id,)).fetchone()
-            if not row or not row['enabled'] or not self._verify_password(old_password, row['password_hash']):
-                return False
-            con.execute('UPDATE users SET password_hash=? WHERE id=?',
-                        (self._password_hash(new_password), user_id))
-            con.execute('DELETE FROM browser_sessions WHERE user_id=?', (user_id,))
-        return True
-
-    def has_admin(self) -> bool:
-        with self._connect() as con:
-            return con.execute("SELECT 1 FROM users WHERE role='admin' LIMIT 1").fetchone() is not None
-
-    def bootstrap_admin(self, username: str, display_name: str, password: str) -> Account:
-        """Create exactly one first admin through a local-only web route."""
-        username = username.strip().lower()
-        display_name = display_name.strip()
-        if not _USERNAME.fullmatch(username):
-            raise ValueError('用户名须为 3–32 位小写字母、数字、点、下划线或连字符，且以字母开头')
-        if not display_name or len(display_name) > 80:
-            raise ValueError('请填写不超过 80 字的显示名称')
-        if len(password) < 12 or len(password) > 1024:
-            raise ValueError('密码长度须为 12–1024 字符')
-        encoded = self._password_hash(password)
-        with self._connect() as con:
-            con.execute('BEGIN IMMEDIATE')
-            if con.execute("SELECT 1 FROM users WHERE role='admin' LIMIT 1").fetchone():
-                raise ValueError('管理员已存在')
-            cur = con.execute("INSERT INTO users(username,display_name,role,password_hash,created_at) "
-                              "VALUES (?,?,'admin',?,?)", (username, display_name, encoded, time.time()))
-            return Account(cur.lastrowid, username, display_name, 'admin')
-
-    def authenticate(self, username: str, password: str) -> Account | None:
-        username = username.strip().lower()
-        now = time.time()
-        with self._connect() as con:
-            fail = con.execute("SELECT * FROM login_failures WHERE username=?", (username,)).fetchone()
-            row = con.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-        if fail and fail['locked_until'] > now:
-            return None
-        # Equal-cost check for missing accounts prevents a trivial timing oracle.
-        encoded = row['password_hash'] if row else self._dummy_hash()
-        valid = self._verify_password(password, encoded)
-        if not row or not valid or not row['enabled']:
-            count = 1 if not fail or now - fail['window_start'] > 900 else fail['failed_count'] + 1
-            start = now if count == 1 else fail['window_start']
-            with self._connect() as con:
-                con.execute("""INSERT INTO login_failures(username,failed_count,window_start,locked_until)
-                    VALUES (?,?,?,?) ON CONFLICT(username) DO UPDATE SET
-                    failed_count=excluded.failed_count,window_start=excluded.window_start,
-                    locked_until=excluded.locked_until""",
-                    (username, count, start, now + 900 if count >= 5 else 0))
-            return None
-        with self._connect() as con:
-            con.execute("DELETE FROM login_failures WHERE username=?", (username,))
-        return self._account(row)
 
     @staticmethod
     def _hash_token(value: str) -> str:

@@ -107,23 +107,16 @@ def test_site_shape_rows_remain_separate_from_failure_rows(tmp_path):
                                          "historical_types": []}
 
 
-def test_only_admin_can_read_failure_counts(tmp_path, monkeypatch):
+def test_anyone_signed_in_can_read_failure_counts(tmp_path, monkeypatch):
     queue = AgentTaskQueue(tmp_path / "tasks.db", legacy_json_path=None)
     store = AccountStore(queue.db_path)
-    store.create_user("manager", "Manager", "admin password 12345", "admin")
-    store.create_user("staff", "Staff", "staff password 12345", "employee")
     _fail(queue, "工单缺少入口 URL")
     monkeypatch.setattr(web, "agent_queue", queue)
     monkeypatch.setattr(web, "account_store", store)
-    route = "/api/admin/failure-types"
+    route = "/api/failure-types"
     assert TestClient(web.app).get(route).status_code == 401
     staff = TestClient(web.app)
-    assert staff.post("/api/auth/login", json={"username": "staff",
-           "password": "staff password 12345"}).status_code == 200
-    assert staff.get(route).status_code == 403
-    manager = TestClient(web.app)
-    assert manager.post("/api/auth/login", json={"username": "manager",
-           "password": "admin password 12345"}).status_code == 200
-    report = manager.get(route)
+    assert staff.post("/api/auth/name", json={"display_name": "staff"}).status_code == 200
+    report = staff.get(route)
     assert report.status_code == 200
     assert report.json()["types"][0]["reason_code"] == "missing_entry_url"

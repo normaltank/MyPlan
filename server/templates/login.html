@@ -1,14 +1,13 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>登录 · 高校师资采集平台</title>
+<title>填写姓名 · 高校师资采集平台</title>
 <style>
 /*base.css*/
 </style>
 </head><body><main class="auth"><div class="auth-card card">
 <div class="auth-brand"><span class="brand-mark"><svg class="icon" viewBox="0 0 24 24"><path d="M3 21h18M5 21V11M9.5 21V11M14.5 21V11M19 21V11M2.5 11 12 4.5 21.5 11z"/></svg></span>高校师资采集平台</div>
-<h1>登录</h1><p>请使用管理员分配的账号登录。每位员工只会看到自己的工单。</p>
-<form id="login"><label class="field"><span class="field-label">用户名</span><input id="username" class="input" autocomplete="username" required></label>
-<label class="field"><span class="field-label">密码</span><input id="password" class="input" type="password" autocomplete="current-password" required></label>
-<button type="submit" class="btn btn-primary btn-lg btn-block">登录</button><p id="message" role="alert"></p></form></div></main>
-<script>document.getElementById('login').addEventListener('submit',async event=>{event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;const response=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value,password:document.getElementById('password').value})});if(response.ok){location.reload();return}const data=await response.json();document.getElementById('message').textContent=data.detail||'登录失败';button.disabled=false});</script>
+<h1>你是谁？</h1><p>填一下你的姓名，提交的工单和每日采集量会记在这个名字下。这台浏览器会记住它。</p>
+<form id="signin"><label class="field"><span class="field-label">姓名</span><input id="displayName" class="input" autocomplete="name" maxlength="40" required></label>
+<button type="submit" class="btn btn-primary btn-lg btn-block">进入</button><p id="message" role="alert"></p></form></div></main>
+<script>document.getElementById('signin').addEventListener('submit',async event=>{event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;const response=await fetch('/api/auth/name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name:document.getElementById('displayName').value})});if(response.ok){location.reload();return}const data=await response.json();document.getElementById('message').textContent=typeof data.detail==='string'?data.detail:'请填写姓名';button.disabled=false});</script>
 </body></html>

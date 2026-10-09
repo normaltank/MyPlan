@@ -40,11 +40,17 @@ def test_invalid_local_port_is_rejected_before_launch(tmp_path, port):
         load_web_config(settings_tree(tmp_path, port))
 
 
-def test_web_launcher_uses_override_for_browser_listener_and_instructions(monkeypatch, capsys):
+@pytest.mark.parametrize('host,lan,shown', [
+    ('0.0.0.0', '192.168.1.5', '同事访问地址:    http://192.168.1.5:18000'),
+    ('0.0.0.0', None, '未找到本机局域网地址'),
+    ('127.0.0.1', '192.168.1.5', '当前只允许本机访问'),
+])
+def test_web_launcher_uses_override_for_browser_listener_and_instructions(monkeypatch, capsys, host, lan, shown):
     from server import local_service_config, start_server
 
-    monkeypatch.setattr(local_service_config, 'load_web_config', lambda: {'host': '127.0.0.1', 'port': 18000})
+    monkeypatch.setattr(local_service_config, 'load_web_config', lambda: {'host': host, 'port': 18000})
     monkeypatch.setattr(local_service_config, 'local_web_url', lambda: 'http://127.0.0.1:18000')
+    monkeypatch.setattr(start_server, 'lan_address', lambda: lan)
     application = object()
     opened, listeners = [], []
     monkeypatch.setattr(start_server, 'load_web_app', lambda: application)
@@ -55,9 +61,10 @@ def test_web_launcher_uses_override_for_browser_listener_and_instructions(monkey
     start_server.main()
 
     assert opened == ['http://127.0.0.1:18000']
-    assert listeners == [(application, {'host': '127.0.0.1', 'port': 18000})]
+    assert listeners == [(application, {'host': host, 'port': 18000})]
     output = capsys.readouterr().out
-    assert '转发到本机 http://127.0.0.1:18000' in output
+    assert shown in output
+    assert 'HTTPS' not in output and '管理员' not in output
     assert ':8000' not in output
 
 

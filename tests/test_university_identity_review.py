@@ -39,23 +39,20 @@ def l1_batch(queue, owner_user_id=None):
 def clients(tmp_path, monkeypatch):
     queue = AgentTaskQueue(tmp_path / 'tasks.db')
     store = AccountStore(queue.db_path)
-    store.create_user('admin', 'Administrator', 'correct horse battery staple', 'admin')
-    alice = store.create_user('alice', 'Alice', 'alice password 12345', 'employee')
-    store.create_user('bob', 'Bob', 'bob password 12345', 'employee')
+    alice = store.sign_in('alice')
     monkeypatch.setattr(web, 'agent_queue', queue)
     monkeypatch.setattr(web, 'account_store', store)
     monkeypatch.setattr(web, 'OUTPUT_DIR', str(tmp_path / 'outputs'))
     browsers = {}
-    for name, password in [('admin', 'correct horse battery staple'), ('alice', 'alice password 12345'),
-                           ('bob', 'bob password 12345')]:
+    for name in ('admin', 'alice', 'bob'):
         browser = TestClient(web.app)
-        assert browser.post('/api/auth/login', json={'username': name, 'password': password}).status_code == 200
+        assert browser.post('/api/auth/name', json={'display_name': name}).status_code == 200
         browser.headers['X-CSRF-Token'] = browser.get('/api/auth/me').json()['csrf_token']
         browsers[name] = browser
     return queue, alice, browsers
 
 
-def test_admin_distinct_decision_releases_l1_with_versioned_evidence(tmp_path, monkeypatch):
+def test_distinct_decision_by_anyone_releases_l1_with_versioned_evidence(tmp_path, monkeypatch):
     queue, alice_user, b = clients(tmp_path, monkeypatch)
     chem, phys = l1_batch(queue, owner_user_id=alice_user.id)
     batch = b['alice'].get('/api/batch/b1').json()
@@ -66,8 +63,8 @@ def test_admin_distinct_decision_releases_l1_with_versioned_evidence(tmp_path, m
     page = b['alice'].get(review_url)
     assert page.status_code == 200
     assert '化学王伟的完整简介' in page.text and '物理王伟的完整简介' in page.text
-    assert '须由管理员完成' in page.text
-    assert b['bob'].get(review_url).status_code == 404
+    assert '确认是不同教师' in page.text
+    assert b['bob'].get(review_url).status_code == 200
     groups = b['alice'].get('/api/university-review/b1', params={'school': SCHOOL}).json()['groups']
     assert len(groups) == 1 and len(groups[0]['observations']) == 2
     group_id = groups[0]['group_id']
@@ -75,8 +72,6 @@ def test_admin_distinct_decision_releases_l1_with_versioned_evidence(tmp_path, m
     decide = '/api/university-review/b1/decisions'
     body = {'school': SCHOOL, 'group_id': group_id, 'verdict': 'distinct',
             'reason': '两学院主页照片、研究方向与学历均不同', 'expected_revision': 0}
-    assert b['alice'].post(decide, json=body).status_code == 403
-    assert b['bob'].post(decide, json=body).status_code == 404
     assert b['admin'].post(decide, json=body, headers={'X-CSRF-Token': 'forged'}).status_code == 403
     assert b['admin'].post(decide, json={**body, 'reason': ' '}).status_code == 422
     assert b['admin'].post(decide, json={**body, 'verdict': 'same'}).status_code == 422

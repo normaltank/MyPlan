@@ -154,7 +154,7 @@ def save_decision(con, school: str, group: dict, verdict: str, reason: str, *,
 _FIELDS = ("学院", "姓名", "主页", "职称", "邮箱")
 
 
-def render_page(school: str, scope: dict, groups: list[dict], *, can_decide: bool, csrf_token: str,
+def render_page(school: str, scope: dict, groups: list[dict], *, csrf_token: str,
                 decision_url: str, publish_url: str, return_url: str = "/") -> str:
     """Show every original observation of each same-name group side by side."""
     from html import escape
@@ -180,18 +180,14 @@ def render_page(school: str, scope: dict, groups: list[dict], *, can_decide: boo
                  + escape(decision["reason"])) if decision else "尚未复核"
         if group.get("applied"):
             state += "；已在大学汇总中生效"
-        form = ""
-        if can_decide:
-            shared = "" if group["merge_keys_distinct"] else (
-                '<p class="meta">有观察指向同一个人主页，不能判为不同教师。</p>')
-            form = (shared + '<label>判定理由（必填，写明对照了哪些来源）<textarea rows="2"></textarea></label>'
-                    '<div class="actions">'
-                    + ('<button type="button" data-verdict="distinct">确认是不同教师</button>'
-                       if group["merge_keys_distinct"] else "")
-                    + '<button type="button" class="secondary" data-verdict="insufficient">'
-                      '证据不足或疑似同一人，保持阻断</button></div>')
-        else:
-            form = '<p class="meta">身份判定须由管理员完成。</p>'
+        shared = "" if group["merge_keys_distinct"] else (
+            '<p class="meta">有观察指向同一个人主页，不能判为不同教师。</p>')
+        form = (shared + '<label>判定理由（必填，写明对照了哪些来源）<textarea rows="2"></textarea></label>'
+                '<div class="actions">'
+                + ('<button type="button" data-verdict="distinct">确认是不同教师</button>'
+                   if group["merge_keys_distinct"] else "")
+                + '<button type="button" class="secondary" data-verdict="insufficient">'
+                  '证据不足或疑似同一人，保持阻断</button></div>')
         cards.append('<section class="card university-group" data-group="' + escape(group["group_id"], quote=True)
                      + '" data-revision="' + str(decision["revision"] if decision else 0) + '">'
                      + "<h2>" + escape(group["name"] or "（无姓名）") + " · " + str(len(group["observations"]))
