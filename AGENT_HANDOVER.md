@@ -33,8 +33,10 @@
 | `name` | `server/name_review.py`（生僻姓、角色行姓名） | `name_review.STATUS` = `rare_surname_needs_review` | `name_review.DECISIONS_FILE` = `name_reviews.json` |
 | `identity` | `server/identity_review.py`（学院内同名多主页） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
 | `html_email` | `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个）；只有带教师姓名的才要裁决，旧审计缺证据时只能重跑生成 | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
-| `media_kind` | `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`；`kind == "image"` 才进复核页，PDF 的始终挡重试 | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
+| `media_kind` | `server/media_kind_review.py`（原图是照片、无关图片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`；`kind == "image"` 才进复核页，PDF 的始终挡重试 | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
 | `image_table` | `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生）；有表格证据即需复核完 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
+
+“无关图片”（书法、签名、装饰等，没有本人信息）是 `media_kind` 的一种判定（`media_kind_review.IRRELEVANT`），按个人页 + 图片网址 + 原图 SHA-256 记在 `media_kind_reviews.json`；原图类型卡片和 `image_bio_text` 的个人页图片行卡片（`image_bio_review.irrelevant_allowed`，接口 `/api/task/{task_id}/review/irrelevant-media`）都能判；行卡片附整张原图（单帧图才有，动图不给判）。判了之后这张图的所有待核行都算复核完，重新采集时 `image_biography.audit_profile_media` 跳过这张原图的文字，证据记 `media_kind_review: "irrelevant"`。分段名录的姓名行、PDF、整图表格和简介图邮箱冲突不能判无关：丢掉它们等于丢人或丢整份简历。
 
 `tests/test_review_status_registry.py` 核对登记表的状态码都在 recovery_policy 的 review 组里。
 

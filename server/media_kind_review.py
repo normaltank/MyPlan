@@ -1,4 +1,10 @@
-"""Original-bound review of images whose lack of OCR text is ambiguous."""
+"""Original-bound review of what a profile image is.
+
+Two verdicts settle an image: "photo" (a portrait with no resume text, for images whose lack of OCR
+text is ambiguous) and "irrelevant" (artwork, calligraphy, a signature or decoration: no information
+about the teacher). Either one drops the image's text from that teacher; "unreadable" keeps it blocked.
+The irrelevant verdict can also be given from an OCR line card of the same image (image_bio_review).
+"""
 from __future__ import annotations
 
 import hashlib
@@ -10,6 +16,8 @@ from server import review_store
 
 DECISIONS_FILE = "media_kind_reviews.json"
 STATUS = "image_bio_ocr_incomplete"
+PHOTO, IRRELEVANT, UNREADABLE = "photo", "irrelevant", "unreadable"
+SETTLED = frozenset({PHOTO, IRRELEVANT})
 
 
 def evidence_id(profile_url: str, media_url: str, source_sha256: str) -> str:
@@ -21,14 +29,24 @@ def load_decisions(path: Path) -> dict:
     return review_store.load(path)
 
 
-def photo_confirmed(path: Path | None, profile_url: str, media_url: str, source_sha256: str) -> bool:
+def confirmed_verdict(path: Path | None, profile_url: str, media_url: str, source_sha256: str) -> str | None:
+    """The settling verdict saved for exactly this profile page, image URL and original bytes."""
     if path is None:
-        return False
+        return None
     identifier = evidence_id(profile_url, media_url, source_sha256)
     decision = load_decisions(path).get(identifier, {})
-    return (decision.get("verdict") == "photo" and decision.get("profile_url") == profile_url
+    valid = (decision.get("verdict") in SETTLED and decision.get("profile_url") == profile_url
             and decision.get("media_url") == media_url and decision.get("source_sha256") == source_sha256
             and type(decision.get("reviewed_by")) is int and decision["reviewed_by"] > 0)
+    return decision["verdict"] if valid else None
+
+
+def photo_confirmed(path: Path | None, profile_url: str, media_url: str, source_sha256: str) -> bool:
+    return confirmed_verdict(path, profile_url, media_url, source_sha256) == PHOTO
+
+
+def irrelevant_confirmed(path: Path | None, profile_url: str, media_url: str, source_sha256: str) -> bool:
+    return confirmed_verdict(path, profile_url, media_url, source_sha256) == IRRELEVANT
 
 
 def collect_items(audit_path: Path) -> list[dict]:
@@ -67,11 +85,13 @@ def collect_items(audit_path: Path) -> list[dict]:
 
 
 def save_decision(path: Path, item: dict, verdict: str, reviewed_by: int) -> None:
-    if verdict not in {"photo", "unreadable"} or type(reviewed_by) is not int or reviewed_by <= 0:
+    """item names one verified original: profile_url, media_url, source_sha256 (its id is recomputed)."""
+    if verdict not in {PHOTO, IRRELEVANT, UNREADABLE} or type(reviewed_by) is not int or reviewed_by <= 0:
         raise ValueError("invalid media kind decision")
-    decision = {key: item[key] for key in ("id", "profile_url", "media_url", "source_sha256")}
-    if decision["id"] != evidence_id(decision["profile_url"], decision["media_url"], decision["source_sha256"]):
+    if not all(isinstance(item.get(key), str) and item[key] for key in ("profile_url", "media_url", "source_sha256")):
         raise ValueError("invalid media evidence identity")
+    decision = {key: item[key] for key in ("profile_url", "media_url", "source_sha256")}
+    decision = {"id": evidence_id(*decision.values()), **decision}
     decision.update(verdict=verdict, reviewed_by=reviewed_by, reviewed_at=time.time())
     review_store.put(path, decision)
 
@@ -83,5 +103,5 @@ def review_complete(audit_path: Path, items: list[dict]) -> bool:
         return False  # a PDF's empty pages cannot be classified as a portrait
     return len({(item["profile_url"], item["media_url"]) for item in items}) == len({
         (item.get("profile_url"), item.get("media_url")) for item in flagged}) and all(
-        photo_confirmed(audit_path.parent / DECISIONS_FILE, item["profile_url"], item["media_url"],
-                        item["source_sha256"]) for item in items)
+        confirmed_verdict(audit_path.parent / DECISIONS_FILE, item["profile_url"], item["media_url"],
+                          item["source_sha256"]) is not None for item in items)

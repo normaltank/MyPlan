@@ -223,3 +223,37 @@ def test_email_review_choice_in_main_web(tmp_path, monkeypatch):
                       headers={'X-CSRF-Token': alice_csrf}).status_code == 204
     assert alice.post(f'/api/task/{task.task_id}/review/retry',
                       headers={'X-CSRF-Token': alice_csrf}).status_code == 200
+
+
+def test_irrelevant_image_verdict_in_main_web_settles_review_and_carries(tmp_path, monkeypatch):
+    from server import media_kind_review
+    queue = AgentTaskQueue(tmp_path / 'tasks.db')
+    store = AccountStore(queue.db_path)
+    alice = store.sign_in('alice')
+    task = queue.submit_task('甲大学', '甲学院', 'https://a.edu', owner_user_id=alice.id)
+    audit = _sample_audit(tmp_path / 'outputs', task)
+    with queue._connect() as con:
+        con.execute("UPDATE tasks SET status='failed',error='审计未通过交付门禁' WHERE task_id=?", (task.task_id,))
+    monkeypatch.setattr(web, 'agent_queue', queue)
+    monkeypatch.setattr(web, 'account_store', store)
+    monkeypatch.setattr(web, 'OUTPUT_DIR', str(tmp_path / 'outputs'))
+    owner, csrf = _client(store, 'alice')
+    headers = {'X-CSRF-Token': csrf}
+    url = f'/api/task/{task.task_id}/review/irrelevant-media'
+    item = collect_review_items(audit)[0]
+    # Evidence with no profile page cannot be judged irrelevant.
+    assert owner.post(url, json={'id': item['id']}, headers=headers).status_code == 409
+    data = json.loads(audit.read_text(encoding='utf-8'))
+    data['image_biography_evidence'][0]['profile_url'] = 'https://faculty.example.edu/profile'
+    audit.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    page = owner.get(f'/review/task/{task.task_id}')
+    assert url in page.text and '无关图片' in page.text
+    assert owner.post(url, json={'id': 'missing'}, headers=headers).status_code == 404
+    assert owner.post(url, json={'id': item['id']}).status_code == 403
+    assert owner.post(url, json={'id': item['id']}, headers=headers).status_code == 204
+    assert '已判定为无关图片' in owner.get(f'/review/task/{task.task_id}').text
+    assert owner.post(f'/api/task/{task.task_id}/review/retry', headers=headers).status_code == 200
+    target = audit.parent.parent / 'attempt-2'
+    carry_review_decisions(audit.parent.parent, target)
+    assert media_kind_review.irrelevant_confirmed(target / media_kind_review.DECISIONS_FILE,
+        'https://faculty.example.edu/profile', item['media_url'], item['source_sha256'])
