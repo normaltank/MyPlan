@@ -26,7 +26,7 @@ def _finish(queue, task, rows):
 
 def _fail(queue, task):
     claimed = queue.claim_task("fixture", task_id=task.task_id)
-    queue.sync_task_result(task.task_id, [], {}, "侦察失败：侦察超时（900s）", "failed", "fixture",
+    queue.sync_task_result(task.task_id, [], {}, "", "侦察失败：侦察超时（900s）", "fixture",
                            claimed.lease_token)
 
 
@@ -77,3 +77,53 @@ def test_web_verdict_needs_a_signed_in_person(tmp_path, monkeypatch):
     again = browser.post(f"/api/task/{task.task_id}/no-faculty", headers={"X-CSRF-Token": csrf})
     # The first verdict keeps what it replaced; judging again would overwrite that record.
     assert again.status_code == 409
+
+
+def _signed_in(queue, monkeypatch, tmp_path):
+    monkeypatch.setattr(web, "agent_queue", queue)
+    monkeypatch.setattr(web, "account_store", AccountStore(queue.db_path))
+    monkeypatch.setattr(web, "OUTPUT_DIR", tmp_path / "outputs")
+    browser = TestClient(web.app)
+    assert browser.post("/api/auth/name", json={"display_name": "badr"}).status_code == 200
+    return browser, browser.get("/api/auth/me").json()["csrf_token"]
+
+
+def test_a_scout_without_a_roster_gets_a_college_review_page(tmp_path, monkeypatch):
+    # The verdict lives on review pages: later the server only pushes review links to reviewers.
+    queue = AgentTaskQueue(tmp_path / "tasks.db")
+    browser, csrf = _signed_in(queue, monkeypatch, tmp_path)
+    task = queue.submit_task("集美大学", "国际教育学院", url="https://oec.x.edu.cn/")
+    _fail(queue, task)
+    url = browser.get(f"/api/task/{task.task_id}").json()["review_url"]
+    page = browser.get(url).text
+    assert "https://oec.x.edu.cn/" in page and "侦察超时" in page and "本学院没有专任教师" in page
+    assert browser.post(f"/api/task/{task.task_id}/no-faculty", headers={"X-CSRF-Token": csrf}).status_code == 200
+    page = browser.get(url).text
+    assert "已判为无师资" in page and 'class="secondary no-faculty"' not in page
+
+
+def test_other_failures_do_not_offer_the_college_verdict(tmp_path, monkeypatch):
+    queue = AgentTaskQueue(tmp_path / "tasks.db")
+    browser, _ = _signed_in(queue, monkeypatch, tmp_path)
+    task = queue.submit_task("集美大学", "海洋文化与法律学院")
+    claimed = queue.claim_task("fixture", task_id=task.task_id)
+    queue.sync_task_result(task.task_id, [], {"failure_codes": ["card_selector_empty"]},
+                           "", "审计未通过交付门禁", "fixture", claimed.lease_token)
+    assert "review_url" not in browser.get(f"/api/task/{task.task_id}").json()
+    assert browser.get(f"/review/task/{task.task_id}").status_code == 404
+
+
+def test_university_review_lists_every_college_with_the_verdict(tmp_path, monkeypatch):
+    queue = AgentTaskQueue(tmp_path / "tasks.db")
+    browser, csrf = _signed_in(queue, monkeypatch, tmp_path)
+    teaching = queue.submit_task("集美大学", "诚毅学院", mode="batch", batch_id="b")
+    offices = queue.submit_task("集美大学", "继续教育学院", mode="batch", batch_id="b")
+    _finish(queue, teaching, [_record("诚毅学院", "林静")])
+    _finish(queue, offices, [_record("继续教育学院", "陈成涛")])
+    [scope] = browser.get("/api/batch/b").json()["delivery_scopes"]
+    assert scope["state"] == "ready"
+    page = browser.get(scope["review_url"]).text
+    assert "继续教育学院" in page and "1 人：陈成涛" in page and page.count("本学院没有专任教师</button>") == 2
+    assert browser.post(f"/api/task/{offices.task_id}/no-faculty", headers={"X-CSRF-Token": csrf}).status_code == 200
+    page = browser.get(scope["review_url"]).text
+    assert page.count("本学院没有专任教师</button>") == 1 and "已判为无师资" in page

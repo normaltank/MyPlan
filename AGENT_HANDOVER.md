@@ -43,11 +43,16 @@
 
 `tests/test_review_status_registry.py` 核对登记表的状态码都在 recovery_policy 的 review 组里。review 组里还有状态没有复核页（10-09 时 25 个），前台对这种失败学院显示“需维护处理”而不是“待人工复核”（`index.html` 的 `failureKind`：去向是 review 但没有 `review_url`），批次汇总按子任务重算。
 
-大学级复核不在登记表里：`server/university_identity_review.py`（跨学院同名）按批次和学校聚合，决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，卡的是大学发布，不是学院重试。
+大学级复核不在登记表里：`server/university_identity_review.py`（跨学院同名）按批次和学校聚合，决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，卡的是大学发布，不是学院重试。页面标题现为“大学交付复核”，同页还有各学院的无师资判定（见 2b）。
 
 ### 2b. 学院判为“无师资”（badr 10-09）
 
-官网没有师资栏目的学院（集美大学继续教育学院、国际教育学院）由人判定：批次列表每个已结束的学院（失败或完成）有“判为无师资”，调用 `/api/task/{task_id}/no-faculty`，即 `agent_queue.mark_no_faculty`。学院按 0 人完成，之前采到的记录从库里删掉（不进大学表；审计文件留在磁盘），`stats.no_faculty` 记判定人、时间、原状态、原错误和原人数，`coverage_scope` 为 `no_faculty_reviewed`；同一学院不能再判一次。前台显示“无师资（人工判定）”。这不是复核种类，不在 `review_registry`。
+官网没有师资栏目的学院（集美大学继续教育学院、国际教育学院）由人判定，判定调用 `/api/task/{task_id}/no-faculty`，即 `agent_queue.mark_no_faculty`。学院按 0 人完成，之前采到的记录从库里删掉（不进大学表；审计文件留在磁盘），`stats.no_faculty` 记判定人、时间、原状态、原错误和原人数，`coverage_scope` 为 `no_faculty_reviewed`；同一学院不能再判一次。前台显示“无师资（人工判定）”。这不是复核种类，不在 `review_registry`。
+
+入口只在复核页里（以后服务器只推复核链接；badr 10-09 选的“两处都放”），页面由 `server/no_faculty_review.py` 生成：
+- 学院复核页 `/review/task/{task_id}`：侦察没拿到计划就结束的失败学院（`recovery_policy.SCOUT_WITHOUT_PLAN`，判断用 `agent_queue.scout_found_no_roster`），且没有别的复核材料时，页面给官网链接、侦察结果和“本学院没有专任教师”。这种学院的 `review_url` 指向这一页，判过的学院打开同一链接看到判定结果。
+- 大学交付复核页 `/review/university/{batch_id}?school=`：每个大学范围都有这一页（`delivery_scopes[].review_url` 总是给出），“各学院”一节列出每个学院的状态、人数和前 8 位姓名，已结束且没判过的学院可判。用于“按完成收尾但采错了人”的学院，程序发现不了。判完要在同页重新发布大学版本。
+批次列表上不再有判定按钮。
 
 ### 3. 失败去向只在一处定义
 
@@ -65,6 +70,7 @@
 - 证据判定在 `server/agent_recon.py` 的 `selector_evidence_issues`：每条问题带 `failed_condition`、`closest`、`need`；个人页证明在可用页不够证明数（或补缺点名的页被挡）时标 `page_only`。“挡住任何容器”的请求由 `server/profile_structure.py` 的 `verify_profile_container` 在重开后记为 `page_blocking_requests`。
 - `server/recon_contract.py` 的 `validate_submission` 原样转给模型（只削 schema 报错的输入值）；`server/recon_browser_mcp.py` 的 `submit_plan` 记住被打回的提交：同一计划无新浏览器调用时不重判，第二次给出 stop `recon_gate_stalled`；全部 `page_only` 时给出 stop `recon_page_unverifiable`。
 - `agent_recon._execute_harness` 用 `_watch_gate` 跟踪回复，遇到 stop 抛 `ReconGateStopped`（属于 `ReconPlanError`），并记下每个会话最后一次打回；超时/预算错误带 `last_gate_rejections`。两个码在 `recovery_policy._GROUPS`：页面类 access，worker 不再派补缺侦察；stalled 归 structure。
+- 名录卡片核对（badr 10-09）：`browser_verify` 带 `card_selector` 时，用采集端同一套读取（`server/harvest_workflow.py` 的 `roster_card_reading`，内部调 `reconcile_rosters`）读当前页，采集会报 `roster_card_mismatch` 的就在结果里带 `card_mismatch`（可见卡片数、读出人数）；门禁据此打回 `roster_card_mismatch` / `cards_not_read`，不标 `page_only`。
 
 ### 6. 改了代码，可交付学院是多了还是少了（案例库离线回放）
 

@@ -37,15 +37,19 @@ def install_request_tracking(page: Any) -> RequestTracker:
 
     def started(request):
         count(request)
-        tracker.pending.add(request)
         try:
             if request.is_navigation_request() and request.frame == page.main_frame:
                 tracker.navigation_observed = True
                 tracker.failures = 0
                 tracker.failed_requests.clear()
+                # A request of the previous document cannot change this one. One
+                # that never reported back (集美诚毅管理系, 10-09) otherwise kept
+                # every later page in this tab from ever being idle.
+                tracker.pending.clear()
         except Exception:
             # Service-worker requests may have no frame; they still count.
             pass
+        tracker.pending.add(request)
 
     def finished(request):
         if request in tracker.pending:
@@ -56,8 +60,9 @@ def install_request_tracking(page: Any) -> RequestTracker:
 
     def failed(request):
         # Chromium aborts a 404 subresource after its response arrives; that is
-        # one failure, already recorded with its status, not a second one.
-        if request not in answered:
+        # one failure, already recorded with its status, not a second one. The
+        # previous document's requests aborted by a navigation are not this page's.
+        if request in tracker.pending and request not in answered:
             tracker.failures += 1
             tracker.failed_requests.append((getattr(request, "url", ""),
                                             getattr(request, "resource_type", ""), None))
@@ -69,7 +74,7 @@ def install_request_tracking(page: Any) -> RequestTracker:
                 tracker.document_response = response
         except Exception:
             pass
-        if response.status >= 400:
+        if response.status >= 400 and response.request in tracker.pending:
             answered.add(response.request)
             tracker.failures += 1
             tracker.failed_requests.append((response.url, response.request.resource_type, response.status))

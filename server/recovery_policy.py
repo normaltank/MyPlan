@@ -88,6 +88,13 @@ def classify_issues(issues: list[dict]) -> Recovery:
 Disposition = Literal["review", "access", "structure", "recon", "failed"]
 # A scout that ended without a plan can be scouted again; budget and cost stops cannot.
 RECON_RETRY = frozenset({"recon_failed", "recon_timeout", "recon_failure", "recon_plan_invalid"})
+# Every way a scout ends without a plan: it never reached a roster, so a person
+# checks the official site (and may judge the college to have no faculty).
+SCOUT_WITHOUT_PLAN = RECON_RETRY | {"recon_budget_exceeded", "recon_phase_limit", "recon_cost_guard_manual_stop"}
+
+
+def scout_found_no_roster(codes: list[str]) -> bool:
+    return bool(codes) and set(codes) <= SCOUT_WITHOUT_PLAN
 
 
 def failure_disposition(codes: list[str]) -> Disposition:

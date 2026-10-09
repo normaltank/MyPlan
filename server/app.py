@@ -24,17 +24,17 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 if __package__:
-    from .agent_queue import agent_queue, LeaseConflictError, failure_disposition
+    from .agent_queue import agent_queue, LeaseConflictError, failure_disposition, scout_found_no_roster
     from .access_control import Account, AccountStore, SESSION_SECONDS
     from .image_table_routes import router as image_table_router
     from .task_image_review import (task_review_audit, review_items, prepare_review_resume,
                                     legacy_review_audits)
     from . import (html_email_review, name_review, identity_review, media_kind_review, review_registry, image_bio_review,
-                   profile_page_review)
+                   profile_page_review, no_faculty_review)
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
-    from agent_queue import agent_queue, LeaseConflictError, failure_disposition
+    from agent_queue import agent_queue, LeaseConflictError, failure_disposition, scout_found_no_roster
     from access_control import Account, AccountStore, SESSION_SECONDS
     from image_table_routes import router as image_table_router
     from task_image_review import (task_review_audit, review_items, prepare_review_resume,
@@ -46,6 +46,7 @@ else:
     import identity_review
     import media_kind_review
     import profile_page_review
+    import no_faculty_review
     from image_bio_review import (render_review_page, save_review_decision,
                                   save_email_decision)
 
@@ -385,7 +386,7 @@ def present_task(data, scope):
                         if isinstance(url, str) and url.startswith(('https://', 'http://')) and url not in links:
                             links.append(url)
                 data['source_review_urls'] = links
-        if audit is not None and review_registry.has_review(audit):
+        if (audit is not None and review_registry.has_review(audit)) or (task and _college_verdict_only(task, audit)):
             data['review_url'] = f"/review/task/{data['task_id']}"
     return data
 
@@ -412,8 +413,19 @@ def _review_task(task_id: str, request: Request):
     return task, audit
 
 
+def _college_verdict_only(task, audit) -> bool:
+    """A college whose scout found no roster has nothing to review but its official site."""
+    if task.stats.get('no_faculty'):
+        return True
+    return (task.status == 'failed' and scout_found_no_roster(task.error, task.stats)
+            and (audit is None or not review_registry.has_review(audit)))
+
+
 @app.get('/review/task/{task_id}', response_class=HTMLResponse)
 async def task_image_review_page(task_id: str, request: Request):
+    task = agent_queue.get_task(task_id)
+    if task and task.task_type == 'harvest' and _college_verdict_only(task, task_review_audit(OUTPUT_DIR, task)):
+        return no_faculty_review.render_college_page(task, csrf_token=request.cookies.get(CSRF_COOKIE, ''))
     _, audit = _review_task(task_id, request)
     try:
         items = review_registry.collect(audit, 'image_bio_text', 'image_bio_email', 'name', 'identity',
@@ -623,9 +635,13 @@ async def university_identity_review_page(batch_id: str, request: Request, schoo
     from server import university_identity_review as university_review
     review = _university_scope(batch_id, school, request)
     base = f"/api/university-review/{quote(batch_id, safe='')}"
+    csrf = request.cookies.get(CSRF_COOKIE, '')
+    tasks = [{**task.to_dict(), 'records': task.records}
+             for task_id in review['scope']['task_ids'] if (task := agent_queue.get_task(task_id))]
+    colleges = no_faculty_review.colleges_section(tasks) + no_faculty_review.script(csrf)
     return university_review.render_page(school, review['scope'], review['groups'],
-        csrf_token=request.cookies.get(CSRF_COOKIE, ''),
-        decision_url=base + '/decisions', publish_url=base + '/publish')
+        csrf_token=csrf, decision_url=base + '/decisions', publish_url=base + '/publish',
+        colleges_html=colleges)
 
 
 @app.get('/api/university-review/{batch_id}')
@@ -742,8 +758,8 @@ async def get_batch_status(batch_id: str):
     if not status:
         raise HTTPException(status_code=404, detail="Batch not found")
     for scope in status["delivery_scopes"]:
-        if any(item.get("requires_review") for item in scope.get("identity_conflicts", [])):
-            scope["review_url"] = _university_review_url(batch_id, scope["school"])
+        # Every delivery has a review page: same-name groups, and each college's no-faculty verdict.
+        scope["review_url"] = _university_review_url(batch_id, scope["school"])
     scopes = {scope["school"]: scope for scope in status["delivery_scopes"]}
     status["subtasks"] = [present_task(_public_task(task), scopes[task["school"]])
                           for task in status["subtasks"]]
