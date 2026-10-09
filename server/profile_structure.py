@@ -78,9 +78,9 @@ def failed_resources(failed: list[tuple[str, str, int | None]]) -> list[tuple[st
 # An image inside the profile the server answers 404/410 on two opens is missing
 # for every reader. When the page gives it no room either, nothing was ever shown
 # there, so the profile as rendered is the profile as published (an editor's
-# leftover placeholder). A loaded 1x1 copy laid out in its place measures the
-# room: only the page's own sizing (attributes, CSS) makes it larger. A broken
-# image's own icon is the browser's, not the page's, so it is not measured.
+# leftover placeholder). A loaded 1x1 copy in the same DOM position measures
+# the image content box; theme borders/padding are not media dimensions. A
+# broken image's own icon is the browser's, so it is not measured.
 _UNSIZED_IMAGES = """async args => {
   const root=document.querySelector(args.selector);
   if(!root) return args.urls.map(()=>false);
@@ -94,14 +94,26 @@ _UNSIZED_IMAGES = """async args => {
       const probe=img.cloneNode(false);
       probe.removeAttribute('srcset');
       probe.removeAttribute('loading');
-      probe.removeAttribute('id');
+      for(const attribute of [...probe.attributes]){
+        if(attribute.name.toLowerCase().startsWith('on')) probe.removeAttribute(attribute.name);
+      }
       probe.src=pixel;
-      img.after(probe);
-      let loaded=true;
-      try { await probe.decode(); } catch(error) { loaded=false; }
-      const box=probe.getBoundingClientRect();
-      probe.remove();
-      if(!loaded || box.width>1 || box.height>1) unsized=false;
+      // Preserve ID, ancestor and positional CSS without creating duplicate IDs.
+      // Restore the original node and its handlers even if decoding fails.
+      img.replaceWith(probe);
+      try {
+        await probe.decode();
+        const style=getComputedStyle(probe);
+        let width=parseFloat(style.width), height=parseFloat(style.height);
+        if(style.boxSizing==='border-box'){
+          width-=parseFloat(style.borderLeftWidth)+parseFloat(style.borderRightWidth)
+            +parseFloat(style.paddingLeft)+parseFloat(style.paddingRight);
+          height-=parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth)
+            +parseFloat(style.paddingTop)+parseFloat(style.paddingBottom);
+        }
+        if(!Number.isFinite(width) || !Number.isFinite(height) || width>1 || height>1) unsized=false;
+      } catch(error) { unsized=false; }
+      finally { probe.replaceWith(img); }
     }
     result.push(unsized);
   }
@@ -338,7 +350,19 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             # A body made only of images goes to image review instead.
             if gone_inside and _profile_text(html, selector, start_selector, page.url):
                 unsized = await page.evaluate(_UNSIZED_IMAGES, {'selector': selector, 'urls': gone_inside})
-                unpublished_images = [url for url, value in zip(gone_inside, unsized) if value]
+                # Page observers must not turn a measurement into new content.
+                # The original DOM and visibility proof still have to hold.
+                measured_html = await page.content()
+                _, measured_evidence, measured_issue = scope_profile_html(
+                    measured_html, selector, page.url, start_selector=start_selector)
+                measured_facts = await page.evaluate(_FACTS, args)
+                probe_stable = bool(not measured_issue and measured_evidence and evidence
+                    and measured_evidence['selected_html_sha256'] == evidence['selected_html_sha256']
+                    and measured_facts == facts)
+                if probe_stable:
+                    unpublished_images = [url for url, value in zip(gone_inside, unsized) if value]
+                else:
+                    stable = False
                 ignored += len(unpublished_images)
         # A permanently missing script or fetch/XHR (e.g. a visit counter) does
         # not block an intact server-rendered profile. Compare both text and

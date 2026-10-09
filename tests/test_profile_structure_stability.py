@@ -173,6 +173,45 @@ async def test_unsized_image_gone_on_every_open_is_the_published_profile():
 
 
 @pytest.mark.asyncio
+async def test_unsized_missing_image_with_theme_border_has_no_content_display_area():
+    # Real police-college page: an unsized editor placeholder inherits the
+    # same 1px border as all article images. The border is not an image size.
+    evidence, issues = await capture_with_missing_image(
+        '<p class="vsbcontent_img"><img class="img_vsb_content" src="/editor/spacer.gif" '
+        'vwidth="" vheight=""></p>',
+        style='<style>.img_vsb_content{display:block;max-width:600px;border:1px solid #ccc}</style>')
+    assert not issues and evidence[URL]['confirmed']
+    assert evidence[URL]['unpublished_images'] == ['https://scope.example.edu/editor/spacer.gif']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('style', [
+    '#cv{width:120px}',
+    '#text img:first-child{height:80px}',
+    '.img_vsb_content{box-sizing:border-box;width:122px;height:82px;border:1px solid #ccc}',
+])
+async def test_missing_image_sized_by_id_or_position_or_border_box_stays_blocked(style):
+    evidence, issues = await capture_with_missing_image(
+        '<p><img id="cv" class="img_vsb_content" src="/editor/spacer.gif"></p>',
+        style='<style>' + style + '</style>')
+    proof = next(item['browser_evidence'] for item in issues
+                 if item['status'] == 'profile_content_browser_unverified')
+    assert not evidence and not proof['confirmed'] and not proof['unpublished_images']
+
+
+@pytest.mark.asyncio
+async def test_missing_image_probe_cannot_approve_page_changed_by_mutation_observer():
+    script = ('<script>new MutationObserver(records=>{if(records.some(r=>r.type==="childList" '
+        '&& [...r.addedNodes].some(n=>n.tagName==="IMG" && n.src.startsWith("data:"))))'
+        'document.querySelector("#bio").textContent+="changed";})'
+        '.observe(document.querySelector("#text"),{childList:true,subtree:true});</script>')
+    evidence, issues = await capture_with_missing_image('<img src="/editor/spacer.gif">' + script)
+    proof = next(item['browser_evidence'] for item in issues
+                 if item['status'] == 'profile_content_browser_unverified')
+    assert not evidence and not proof['confirmed'] and not proof['unpublished_images']
+
+
+@pytest.mark.asyncio
 async def test_missing_image_the_page_sizes_or_that_fails_transiently_still_blocks():
     for img, status, style in (('<img src="/spacer.gif">', 503, ''),
                                ('<img src="/spacer.gif">', 404, '<style>#text img{width:120px}</style>'),
