@@ -593,7 +593,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
             continue
         result.append({"id": email_conflict_id(profile_url, owner_name, image_bio,
                                                  evidence, existing, choices),
-                       "owner_name": owner_name, "choices": choices,
+                       "profile_url": profile_url, "owner_name": owner_name, "choices": choices,
                        "crops": [crops_by_email.get(choice) for choice in choices]})
     return result
 
@@ -638,6 +638,41 @@ def resolve_email_conflict(path: str | Path, item_id: str, choices: list[str]) -
         return selected
     except (OSError, ValueError, KeyError, TypeError, StopIteration):
         return None
+
+
+TEXT_STATUSES = frozenset({"image_bio_low_confidence", "image_bio_owner_unresolved", "segment_name_needs_review"})
+EMAIL_STATUS = "image_bio_email_conflict"
+TEXT_DECISIONS_FILE = "image_bio_reviews.json"
+EMAIL_DECISIONS_FILE = "image_bio_email_reviews.json"
+
+
+def text_review_complete(audit_path: str | Path, items: list[dict]) -> bool:
+    """Every OCR line under review has a nonempty decision bound to the same original line."""
+    if not items:
+        return False
+    try:
+        payload = json.loads((Path(audit_path).parent / TEXT_DECISIONS_FILE).read_text(encoding="utf-8"))
+        decisions = {row["id"]: row for row in payload["decisions"]} if payload.get("schema") == 1 else {}
+    except (OSError, ValueError, KeyError, TypeError):
+        decisions = {}
+    for item in items:
+        decision = decisions.get(item["id"], {})
+        if (any(decision.get(key) != item[key] for key in
+                ("media_url", "source_sha256", "page", "line_index", "ocr_text_sha256"))
+                or not isinstance(decision.get("verified_text"), str)
+                or not decision["verified_text"].strip()):
+            return False
+    return True
+
+
+def email_review_complete(audit_path: str | Path, audit: dict, items: list[dict]) -> bool:
+    """Every flagged conflict is on the page and has a choice; one without verified crops stays open."""
+    flagged = {(issue.get("url"), issue.get("name")) for issue in audit.get("unresolved", [])
+               if issue.get("status") == EMAIL_STATUS}
+    if not flagged or flagged - {(item["profile_url"], item["owner_name"]) for item in items}:
+        return False
+    path = Path(audit_path).parent / EMAIL_DECISIONS_FILE
+    return all(resolve_email_conflict(path, item["id"], item["choices"]) is not None for item in items)
 
 
 def make_review_server(audit_path: str | Path, port: int = 8765):

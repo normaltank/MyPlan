@@ -53,8 +53,8 @@ def items(audit_path):
     return found
 
 
-def review_complete(audit_path):
-    tables = items(audit_path)
+def review_complete(audit_path, tables=None):
+    tables = items(audit_path) if tables is None else tables
     return bool(tables) and all(not table["parsed"]["unresolved"] for table in tables)
 
 

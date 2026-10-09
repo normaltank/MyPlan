@@ -166,7 +166,7 @@ async def test_text_segmented_article_is_delivered_with_article_text_and_positio
 @pytest.mark.asyncio
 async def test_image_only_names_are_cross_checked_or_reviewed_before_delivery(tmp_path, monkeypatch):
     from server.image_bio_review import collect_review_items, save_review_decision
-    from server.task_image_review import has_image_review
+    from server.review_registry import has_review
 
     resume = [("学习经历：某大学机械工程博士", .99), ("研究方向：智能制造与机器人", .99),
               ("主持国家自然科学基金项目", .99)]
@@ -180,7 +180,7 @@ async def test_image_only_names_are_cross_checked_or_reviewed_before_delivery(tm
     assert first["delivery_ready"] is False
     assert [item["status"] for item in first["unresolved"]] == ["segment_name_needs_review"]
     audit_path = Path(first["audit_path"])
-    assert has_image_review(audit_path)
+    assert has_review(audit_path)
     items = collect_review_items(audit_path)
     assert [(item["purpose"], item["ocr_text"]) for item in items] == [("segment_name", "王芳")]
     save_review_decision(tmp_path / "image_bio_reviews.json", items[0], "王芳")

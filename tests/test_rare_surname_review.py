@@ -14,8 +14,8 @@ from server.agent_queue import AgentTaskQueue
 from server.faculty_extractor import FacultyDirectoryExtractor
 from server.harvest_workflow import CapturedRosterPage, reconcile_rosters
 from server.image_bio_review import render_review_page
-from server.task_image_review import (carry_review_decisions, has_image_review, name_items,
-                                      review_complete)
+from server.review_registry import has_review, review_complete
+from server.task_image_review import carry_review_decisions
 import iso_mining
 
 ROSTER_URL = "https://cs.x.edu.cn/list.htm"
@@ -176,7 +176,7 @@ def test_tampered_review_item_is_rejected(tmp_path):
     item = dict(_reconcile().unresolved[0], name="王建国")
     audit = _audit(tmp_path / "outputs", task, [item])
     with pytest.raises(ValueError):
-        name_items(audit)
+        name_review.collect_items(audit)
 
 
 def test_name_review_through_the_web_and_retry(tmp_path, monkeypatch):
@@ -187,7 +187,7 @@ def test_name_review_through_the_web_and_retry(tmp_path, monkeypatch):
     task = queue.submit_task("甲大学", "甲学院", "https://a.edu", owner_user_id=alice.id)
     item = _reconcile().unresolved[0]
     audit = _audit(tmp_path / "outputs", task, [item])
-    assert has_image_review(audit) and not review_complete(audit, [], [], name_items(audit))
+    assert has_review(audit) and not review_complete(audit)
     with queue._connect() as con:
         con.execute("UPDATE tasks SET status='failed',error='审计未通过交付门禁' WHERE task_id=?",
                     (task.task_id,))

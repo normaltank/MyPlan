@@ -28,20 +28,19 @@ if __package__:
     from .agent_queue import agent_queue, LeaseConflictError, failure_disposition
     from .access_control import AccountStore, Account
     from .image_table_routes import router as image_table_router
-    from .task_image_review import (task_review_audit, has_image_review, review_items,
-                                    review_complete, prepare_review_resume,
-                                    legacy_review_audits, name_items)
-    from . import html_email_review, name_review, identity_review, media_kind_review
+    from .task_image_review import (task_review_audit, review_items, prepare_review_resume,
+                                    legacy_review_audits)
+    from . import html_email_review, name_review, identity_review, media_kind_review, review_registry
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
     from agent_queue import agent_queue, LeaseConflictError, failure_disposition
     from access_control import AccountStore, Account
     from image_table_routes import router as image_table_router
-    from task_image_review import (task_review_audit, has_image_review, review_items,
-                                   review_complete, prepare_review_resume,
-                                   legacy_review_audits, name_items)
+    from task_image_review import (task_review_audit, review_items, prepare_review_resume,
+                                   legacy_review_audits)
     import html_email_review
+    import review_registry
     import name_review
     import identity_review
     import media_kind_review
@@ -454,7 +453,7 @@ def present_task(data, scope):
                         if isinstance(url, str) and url.startswith(('https://', 'http://')) and url not in links:
                             links.append(url)
                 data['source_review_urls'] = links
-        if audit is not None and has_image_review(audit):
+        if audit is not None and review_registry.has_review(audit):
             data['review_url'] = f"/review/task/{data['task_id']}"
     return data
 
@@ -476,7 +475,7 @@ def _review_task(task_id: str, request: Request):
     if task.status != 'failed':
         raise HTTPException(status_code=409, detail='该工单当前不在人工复核状态')
     audit = task_review_audit(OUTPUT_DIR, task)
-    if audit is None or not has_image_review(audit):
+    if audit is None or not review_registry.has_review(audit):
         raise HTTPException(status_code=404, detail='没有该工单的人工复核材料')
     return task, audit
 
@@ -485,41 +484,37 @@ def _review_task(task_id: str, request: Request):
 async def task_image_review_page(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
-        ocr_items, email_items = review_items(audit)
-        names = name_items(audit)
-        identities = identity_review.collect_items(audit)
+        items = review_registry.collect(audit, 'image_bio_text', 'image_bio_email', 'name', 'identity',
+                                        'html_email', 'media_kind')
         saved = identity_review.load_decisions(audit.parent / identity_review.DECISIONS_FILE)
-        for item in identities:
+        for item in items['identity']:
             decision = saved.get(item['id'], {})
             item['saved_verdict'] = decision.get('verdict', '')
-        html_emails = _html_email_items(audit, task_id)
-        media_items = media_kind_review.collect_items(audit)
+        _mark_html_email_decisions(audit, task_id, items['html_email'])
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据不完整，请管理员检查审计文件') from exc
-    rendered = render_review_page(ocr_items, email_items,
+    rendered = render_review_page(items['image_bio_text'], items['image_bio_email'],
         decision_url=f'/api/task/{task_id}/review/ocr',
         email_decision_url=f'/api/task/{task_id}/review/email',
         retry_url=f'/api/task/{task_id}/review/retry',
         csrf_token=request.cookies.get(CSRF_COOKIE, ''), return_url='/',
-        name_items=names, name_decision_url=f'/api/task/{task_id}/review/name',
-        identity_items=identities, identity_decision_url=f'/api/task/{task_id}/review/identity',
+        name_items=items['name'], name_decision_url=f'/api/task/{task_id}/review/name',
+        identity_items=items['identity'], identity_decision_url=f'/api/task/{task_id}/review/identity',
         can_review_identity=_user(request).role == 'admin',
-        html_email_items=html_emails, html_email_decision_url=f'/api/task/{task_id}/review/html-email',
-        media_kind_items=media_items, media_kind_decision_url=f'/api/task/{task_id}/review/media-kind')
+        html_email_items=items['html_email'], html_email_decision_url=f'/api/task/{task_id}/review/html-email',
+        media_kind_items=items['media_kind'], media_kind_decision_url=f'/api/task/{task_id}/review/media-kind')
     if json.loads(audit.read_text(encoding="utf-8")).get("image_table_evidence"):
         rendered = rendered.replace("</html>", '<p><a href="/review/task/' + escape(task_id)
                                     + '/table">图片表格逐格复核</a></p></html>')
     return rendered
 
 
-def _html_email_items(audit: Path, task_id: str) -> list[dict]:
-    items = html_email_review.collect_items(audit)
+def _mark_html_email_decisions(audit: Path, task_id: str, items: list[dict]) -> None:
     saved = html_email_review.load_decisions(audit.parent / html_email_review.DECISIONS_FILE)
     for item in items:
         decision = saved.get(item['id'], {})
         if html_email_review.valid_decision(item, decision, task_id) is not None:
             item['saved_verdict'], item['saved_email'] = decision['verdict'], decision['email']
-    return items
 
 
 @app.post('/api/task/{task_id}/review/ocr', status_code=204)
@@ -582,7 +577,7 @@ async def save_task_html_email_review(task_id: str, payload: HtmlEmailReviewRequ
 async def save_task_name_review(task_id: str, payload: NameReviewRequest, request: Request):
     _, audit = _review_task(task_id, request)
     try:
-        item = next((item for item in name_items(audit) if item['id'] == payload.id), None)
+        item = next((item for item in name_review.collect_items(audit) if item['id'] == payload.id), None)
         if item is None:
             raise HTTPException(status_code=404, detail='复核证据不存在')
         name_review.save_decision(audit.parent / name_review.DECISIONS_FILE, item,
@@ -613,9 +608,7 @@ async def save_task_identity_review(task_id: str, payload: IdentityReviewRequest
 async def retry_task_after_image_review(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
-        ocr_items, email_items = review_items(audit)
-        if not review_complete(audit, ocr_items, email_items, name_items(audit), identity_review.collect_items(audit),
-                               html_email_review.collect_items(audit)):
+        if not review_registry.review_complete(audit):
             raise HTTPException(status_code=409, detail='请先完成全部原图类型、图片文字、邮箱、姓名和身份复核；不可读文字或证据不足仍保持阻断')
         prepare_review_resume(audit, task_id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -719,7 +712,7 @@ async def legacy_image_review_list(request: Request):
     links = ''.join('<li><a href="/review/legacy/' + key + '">'
                     + escape(str(audit.get('school') or '历史材料')) + ' · '
                     + escape(str(audit.get('college') or path.parent.name))
-                    + '</a> · ' + ('待复核（历史试跑）' if has_image_review(path) else '已复核')
+                    + '</a> · ' + ('待复核（历史试跑）' if review_registry.has_review(path) else '已复核')
                     + '</li>' for key, path, audit in rows)
     return ('<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
             '<title>历史图片复核</title><body><h1>历史图片复核</h1>'
