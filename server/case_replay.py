@@ -208,7 +208,7 @@ async def replay_case(case: Case, browser: Any, out_dir: Path, *, timeout: float
     cache = case.directory / "out" / "ocr_cache"
     if cache.is_dir():
         shutil.copytree(cache, target / "ocr_cache")
-    context = await new_browser_context(browser)
+    context = await new_browser_context(browser, polite=False)  # offline: requests never leave
     replay = ReplayContext(context, captured_files(case.directory, case.audit))
     try:
         await replay.install()

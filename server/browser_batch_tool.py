@@ -472,17 +472,31 @@ def _fetch_page_via_native_chrome(url: str) -> str | None:
     chrome_exe = _native_chrome_executable()
     if chrome_exe is None:
         return None
+    from server.site_limits import wait_site_turn
+    wait_site_turn(url)
     started = time.monotonic()
     proc, user_dir, port = _launch_native_chrome(chrome_exe, [url])
     try:
         if port is None:
             return None
         pages = _collect_native_pages(port, started, settle_seconds=5)
-        return next(iter(pages.values()), None)
+        return _native_page_or_none(url, next(iter(pages.values()), None))
     except Exception:
         return None
     finally:
         _stop_native_chrome(proc, user_dir)
+
+
+def _native_page_or_none(url: str, html: str | None) -> str | None:
+    """A rate-limit notice is not the page: pause the site and report nothing."""
+    from server.site_limits import SiteRateLimited, check_document
+    if html is None:
+        return None
+    try:
+        check_document(url, html)
+    except SiteRateLimited:
+        return None
+    return html
 
 
 def _batch_fetch_profiles_via_native_chrome(urls: list[str], batch_size: int = 8) -> dict[str, str]:
@@ -493,14 +507,21 @@ def _batch_fetch_profiles_via_native_chrome(urls: list[str], batch_size: int = 8
     chrome_exe = _native_chrome_executable()
     if chrome_exe is None:
         return {}
+    from server.site_limits import site_is_paced, wait_site_turn
+    if any(site_is_paced(url) for url in urls):
+        batch_size = 1  # tabs of one launch all load at once; keep a paced site's pace
     results: dict[str, str] = {}
     for i in range(0, len(urls), batch_size):
         chunk = urls[i:i + batch_size]
+        for url in chunk:
+            wait_site_turn(url)
         started = time.monotonic()
         proc, user_dir, port = _launch_native_chrome(chrome_exe, chunk)
         try:
             if port is not None:
-                results.update(_collect_native_pages(port, started, settle_seconds=6))
+                results.update({url: html for url, html in
+                                _collect_native_pages(port, started, settle_seconds=6).items()
+                                if _native_page_or_none(url, html) is not None})
         except Exception:
             pass
         finally:
