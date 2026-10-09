@@ -24,7 +24,8 @@ ROOT = "https://review.example.edu"
 PLAN = {"school": "样本大学", "college": "样本学院", "source_kind": "university_faculty_roster"}
 ROSTER = "<main><ul><li><a href='/person'>王晓岚</a><span>教授</span></li></ul></main>"
 BIO = "<h1>王晓岚</h1><p>教授，主要从事数据库研究。</p><p>2010年获博士学位。</p>"
-TWO_LABELS = "<p>邮箱：sunny2008@qq.com</p><p>邮箱：wangxiaolan@example.edu</p>"
+# Neither address is on the school domain, so the labelled pair stays for review.
+TWO_LABELS = "<p>邮箱：sunny2008@qq.com</p><p>邮箱：wangxiaolan@163.com</p>"
 
 
 def profile(contacts: str) -> str:
@@ -80,7 +81,7 @@ async def test_two_labelled_addresses_block_then_reviewed_choice_resumes_deliver
     [item] = report["html_email_review_items"]
     assert item["name"] == "王晓岚" and item["url"] == ROOT + "/person" and item["source_sha256"]
     assert [(o["email"], o["selectable"]) for o in item["candidates"]] == [
-        ("sunny2008@qq.com", True), ("wangxiaolan@example.edu", True)]
+        ("sunny2008@qq.com", True), ("wangxiaolan@163.com", True)]
     assert all("邮箱：" in o["page_context"][0] for o in item["candidates"])
     # Both addresses are labelled on the teacher's own page: nothing shows the field is empty.
     assert item["none_allowed"] is False
@@ -89,7 +90,7 @@ async def test_two_labelled_addresses_block_then_reviewed_choice_resumes_deliver
     with pytest.raises(ValueError):
         _decide(first, "task-1", report, "select", "guess@example.edu")
     assert review_complete(Path(report["audit_path"])) is False
-    _decide(first, "task-1", report, "select", "wangxiaolan@example.edu")
+    _decide(first, "task-1", report, "select", "wangxiaolan@163.com")
     assert review_complete(Path(report["audit_path"])) is True
 
     (task_root / "review-resume.json").write_text(json.dumps(
@@ -99,7 +100,7 @@ async def test_two_labelled_addresses_block_then_reviewed_choice_resumes_deliver
     resumed, records = await _run(second, pages)
     assert resumed["delivery_ready"] is True, resumed["unresolved"]
     assert resumed["unresolved"] == [] and resumed["html_email_review_items"] == []
-    assert len(records) == 1 and records[0]["邮箱"] == "wangxiaolan@example.edu"
+    assert len(records) == 1 and records[0]["邮箱"] == "wangxiaolan@163.com"
     assert "2010年获博士学位。" in records[0]["简介"] and "学院版权所有" not in records[0]["简介"]
     assert resumed["html_email_reviews"][0]["reviewed_by"] == 7
     assert (resumed["total"], resumed["with_email"], resumed["no_email"]) == (1, 1, 0)
@@ -109,13 +110,13 @@ async def test_two_labelled_addresses_block_then_reviewed_choice_resumes_deliver
 @pytest.mark.browser
 @pytest.mark.parametrize("changed_page", [
     profile(TWO_LABELS + "<p>2026年新增：获省级教学奖。</p>"),  # evidence version changed
-    profile(TWO_LABELS + "<p>邮箱：wxl@lab.example.edu</p>"),   # candidate set changed
+    profile(TWO_LABELS + "<p>邮箱：wxl@126.com</p>"),   # candidate set changed
 ], ids=["source_changed", "candidates_changed"])
 async def test_stale_decision_does_not_release_changed_evidence(tmp_path, changed_page):
     task_root = tmp_path / "tasks" / "task-1"
     pages = {ROOT + "/roster": ROSTER, ROOT + "/person": profile(TWO_LABELS)}
     report, _ = await _run(task_root / "attempt-1", pages)
-    _decide(task_root / "attempt-1", "task-1", report, "select", "wangxiaolan@example.edu")
+    _decide(task_root / "attempt-1", "task-1", report, "select", "wangxiaolan@163.com")
     (task_root / "review-resume.json").write_text(json.dumps(
         {"task_id": "task-1", "audit_path": report["audit_path"]}), encoding="utf-8")
     carry_review_decisions(task_root, task_root / "attempt-2")
@@ -131,7 +132,7 @@ async def test_decision_from_another_task_is_never_reused(tmp_path):
     pages = {ROOT + "/roster": ROSTER, ROOT + "/person": profile(TWO_LABELS)}
     own = tmp_path / "tasks" / "task-1" / "attempt-1"
     report, _ = await _run(own, pages)
-    _decide(own, "task-1", report, "select", "wangxiaolan@example.edu")
+    _decide(own, "task-1", report, "select", "wangxiaolan@163.com")
     other = tmp_path / "tasks" / "task-2" / "attempt-1"
     other.mkdir(parents=True)
     shutil.copyfile(own / html_email_review.DECISIONS_FILE, other / html_email_review.DECISIONS_FILE)
