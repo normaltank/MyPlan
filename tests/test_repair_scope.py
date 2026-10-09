@@ -127,6 +127,46 @@ async def test_unchanged_repair_plan_is_not_captured_again(tmp_path, monkeypatch
     assert report["recon_attempts"][-1]["status"] == "repair_plan_unchanged"
 
 
+@pytest.mark.asyncio
+async def test_repair_plan_matching_any_captured_plan_is_not_captured_again(tmp_path, monkeypatch):
+    # Round 2 spells out the default source_kind on a branch; round 3 repeats
+    # round 1. Neither can change what capture reads, so only round 1 captures.
+    monkeypatch.setenv("HARVEST_TASK_DB", str(tmp_path / "tasks.db"))
+    worker = AgentWorker(db_path=tmp_path / "tasks.db", output_dir=tmp_path / "outputs")
+    task = SimpleNamespace(school=PLAN["school"], college=PLAN["college"], url="https://scope.example.edu/",
+                           task_id="scope-equivalent")
+    spelled = {**PLAN, "branches": [{**PLAN["branches"][0], "source_kind": "university_faculty_roster"},
+                                    PLAN["branches"][1]]}
+    plans = [PLAN, spelled, PLAN]
+    scouts, captures = [], []
+    mismatch = {"url": A, "status": "roster_card_mismatch", "visible_cards": 12, "extracted_candidates": 11}
+
+    async def scout(*_args, **kwargs):
+        scouts.append(kwargs)
+        return ReconResult(plans[len(scouts) - 1], 0, "completed", f"scope-{len(scouts)}")
+
+    async def browser(*_args):
+        captures.append(1)
+        return {"delivery_ready": False, "unresolved": [dict(mismatch)]}
+
+    async def nothing(*_args):
+        return None
+
+    monkeypatch.setattr(agent_worker, "reconnoiter", scout)
+    monkeypatch.setattr(worker, "_run_browser_plan", browser)
+    monkeypatch.setattr(worker, "_cached_recon", nothing)
+    monkeypatch.setattr(worker, "_unaffected_branches", nothing)
+    report = await worker._harvest_with_repair(task, tmp_path / "task")
+    assert len(scouts) == 2 and len(captures) == 1
+    assert report["recon_attempts"][-1]["status"] == "repair_plan_unchanged"
+
+
+def test_plan_key_keeps_a_source_kind_that_differs_from_the_default():
+    other = {**PLAN, "branches": [{**PLAN["branches"][0], "source_kind": "hospital_doctor_roster"},
+                                  PLAN["branches"][1]]}
+    assert AgentWorker._capture_plan_key(other) != AgentWorker._capture_plan_key(PLAN)
+
+
 def test_issue_on_a_later_roster_page_names_its_branch(tmp_path):
     import json
     coverage = tmp_path / "coverage.json"

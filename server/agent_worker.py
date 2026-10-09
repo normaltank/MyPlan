@@ -433,6 +433,7 @@ class AgentWorker:
         resume_discovery = None
         previous_contract_failure = None
         harvested_plan = None  # the plan whose capture produced the current report
+        harvested_keys = set()  # every plan this task has already captured
         for attempt in range(self.max_recon_repairs + 1):
             attempt_dir = output_dir / f"attempt-{attempt + 1}"
             attempt_dir.mkdir(parents=True, exist_ok=True)
@@ -507,10 +508,10 @@ class AgentWorker:
                 save_runtime({"unresolved": [{"status": status,
                                               **({"last_gate_rejections": rejected} if rejected else {})}]})
                 raise
-            if harvested_plan is not None and recon.plan == harvested_plan:
-                # Capture is deterministic for a plan: the same plan would
-                # reproduce the same structural report.
-                print("[worker]   补缺后计划与上轮相同，不再重复采集", flush=True)
+            if self._capture_plan_key(recon.plan) in harvested_keys:
+                # Capture is deterministic for a plan: a plan this task already
+                # captured, in any earlier round, would reproduce its report.
+                print("[worker]   补缺后计划与已采集过的计划相同，不再重复采集", flush=True)
                 attempts.append({**recon.summary(), "status": "repair_plan_unchanged"})
                 self._save_recon_audit(output_dir, attempts, "repair_plan_unchanged")
                 report["recon_attempts"] = attempts.copy()
@@ -522,6 +523,7 @@ class AgentWorker:
             self._save_active_plan(task, output_dir, recon, attempts)
             report = await capture(recon.plan, attempt_dir, 0)
             harvested_plan = recon.plan
+            harvested_keys.add(self._capture_plan_key(recon.plan))
             local_attempts = []
             for retry in range(2):
                 issues = report.get("unresolved") or []
@@ -789,6 +791,17 @@ class AgentWorker:
             else:
                 mapped.append(item)
         return mapped
+
+    @staticmethod
+    def _capture_plan_key(plan: dict) -> str:
+        """What capture reads from a plan; spelling out a default changes nothing."""
+        default_source = plan.get("source_kind") or "university_faculty_roster"
+        branches = [{key: value for key, value in branch.items()
+                     if not (key == "source_kind" and (value or default_source) == default_source)}
+                    if isinstance(branch, dict) else branch
+                    for branch in plan.get("branches") or []]
+        return json.dumps({**plan, "source_kind": default_source, "branches": branches},
+                          sort_keys=True, ensure_ascii=False)
 
     @staticmethod
     def _damaged_branches(plan: dict, feedback: dict) -> set | None:
