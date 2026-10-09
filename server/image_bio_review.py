@@ -19,6 +19,11 @@ from PIL import Image
 
 from server import review_store
 
+TEXT_STATUSES = frozenset({"image_bio_low_confidence", "image_bio_owner_unresolved", "segment_name_needs_review"})
+EMAIL_STATUS = "image_bio_email_conflict"
+TEXT_DECISIONS_FILE = "image_bio_reviews.json"
+EMAIL_DECISIONS_FILE = "image_bio_email_reviews.json"
+
 
 def _text_digest(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
@@ -524,7 +529,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
     root = audit_path.parent
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     issues = [item for item in audit.get("unresolved", [])
-              if item.get("status") == "image_bio_email_conflict"]
+              if item.get("status") == EMAIL_STATUS]
     if not issues:
         return []
     records_path = _inside(audit["records_path"], root)
@@ -551,7 +556,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
             if scanned.get("source_sha256") not in (None, item["sha256"]):
                 raise ValueError("email review OCR source SHA-256 mismatch")
             adjusted, _ = apply_review_decisions(
-                scanned, item["media_url"], item["sha256"], root / "image_bio_reviews.json")
+                scanned, item["media_url"], item["sha256"], root / TEXT_DECISIONS_FILE)
             image_parts.append(adjusted["text"].strip())
             for page in adjusted["pages"]:
                 for line in page["lines"]:
@@ -592,12 +597,6 @@ def resolve_email_conflict(path: str | Path, item_id: str, choices: list[str]) -
     return selected if decision.get("choices") == choices and selected in choices else None
 
 
-TEXT_STATUSES = frozenset({"image_bio_low_confidence", "image_bio_owner_unresolved", "segment_name_needs_review"})
-EMAIL_STATUS = "image_bio_email_conflict"
-TEXT_DECISIONS_FILE = "image_bio_reviews.json"
-EMAIL_DECISIONS_FILE = "image_bio_email_reviews.json"
-
-
 def text_review_complete(audit_path: str | Path, items: list[dict]) -> bool:
     """Every OCR line under review has a nonempty decision bound to the same original line."""
     if not items:
@@ -632,8 +631,8 @@ def make_review_server(audit_path: str | Path, port: int = 8765):
     items = {item["id"]: item for item in collect_review_items(audit_path)}
     email_items = {item["id"]: item for item in collect_email_conflict_items(audit_path)}
     html = render_review_page(list(items.values()), list(email_items.values())).encode("utf-8")
-    decisions_path = audit_path.parent / "image_bio_reviews.json"
-    email_decisions_path = audit_path.parent / "image_bio_email_reviews.json"
+    decisions_path = audit_path.parent / TEXT_DECISIONS_FILE
+    email_decisions_path = audit_path.parent / EMAIL_DECISIONS_FILE
     save_lock = Lock()
 
     class Handler(BaseHTTPRequestHandler):

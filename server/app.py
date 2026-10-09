@@ -30,7 +30,7 @@ if __package__:
     from .image_table_routes import router as image_table_router
     from .task_image_review import (task_review_audit, review_items, prepare_review_resume,
                                     legacy_review_audits)
-    from . import html_email_review, name_review, identity_review, media_kind_review, review_registry
+    from . import html_email_review, name_review, identity_review, media_kind_review, review_registry, image_bio_review
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
@@ -40,6 +40,7 @@ else:
     from task_image_review import (task_review_audit, review_items, prepare_review_resume,
                                    legacy_review_audits)
     import html_email_review
+    import image_bio_review
     import review_registry
     import name_review
     import identity_review
@@ -524,7 +525,7 @@ async def save_task_ocr_review(task_id: str, payload: OcrReviewRequest, request:
         item = next((item for item in review_items(audit)[0] if item['id'] == payload.id), None)
         if item is None:
             raise HTTPException(status_code=404, detail='复核证据不存在')
-        save_review_decision(audit.parent / 'image_bio_reviews.json', item, payload.verified_text)
+        save_review_decision(audit.parent / image_bio_review.TEXT_DECISIONS_FILE, item, payload.verified_text)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据无效') from exc
     return Response(status_code=204)
@@ -537,7 +538,7 @@ async def save_task_email_review(task_id: str, payload: EmailReviewRequest, requ
         item = next((item for item in review_items(audit)[1] if item['id'] == payload.id), None)
         if item is None:
             raise HTTPException(status_code=404, detail='复核证据不存在')
-        save_email_decision(audit.parent / 'image_bio_email_reviews.json', item,
+        save_email_decision(audit.parent / image_bio_review.EMAIL_DECISIONS_FILE, item,
                             payload.selected_email)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='邮箱选择无效') from exc
@@ -741,7 +742,7 @@ async def save_legacy_ocr_review(audit_key: str, payload: OcrReviewRequest, requ
         item = next((item for item in review_items(audit)[0] if item['id'] == payload.id), None)
         if item is None:
             raise HTTPException(status_code=404, detail='复核证据不存在')
-        save_review_decision(audit.parent / 'image_bio_reviews.json', item, payload.verified_text)
+        save_review_decision(audit.parent / image_bio_review.TEXT_DECISIONS_FILE, item, payload.verified_text)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据无效') from exc
     return Response(status_code=204)
@@ -754,7 +755,7 @@ async def save_legacy_email_review(audit_key: str, payload: EmailReviewRequest, 
         item = next((item for item in review_items(audit)[1] if item['id'] == payload.id), None)
         if item is None:
             raise HTTPException(status_code=404, detail='复核证据不存在')
-        save_email_decision(audit.parent / 'image_bio_email_reviews.json', item,
+        save_email_decision(audit.parent / image_bio_review.EMAIL_DECISIONS_FILE, item,
                             payload.selected_email)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='邮箱选择无效') from exc
