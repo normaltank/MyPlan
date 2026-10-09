@@ -8,7 +8,8 @@ import fitz
 import pytest
 from PIL import Image
 
-from server.image_biography import audit_profile_media, fetch_browser_asset, media_references, scan_media
+from server.image_biography import (MAX_PROFILE_IMAGE_BYTES, audit_profile_media, browser_asset_size,
+                                    fetch_browser_asset, media_references, scan_media)
 
 
 def _png() -> bytes:
@@ -149,6 +150,83 @@ async def test_image_the_browser_proved_gone_and_unsized_is_not_fetched(tmp_path
     assert result["unpublished_media"] == [{"profile_url": url, "media_url": spacer,
                                             "status": "image_gone_without_display_area"}]
     assert [item["status"] for item in result["unresolved"]] == ["image_bio_asset_failed"]
+
+
+@pytest.mark.asyncio
+async def test_image_declared_over_size_cap_is_recorded_and_not_fetched(tmp_path):
+    url = "https://faculty.example.edu/p/1"
+    html = ('<article><h1>张富有</h1><p>教授</p><img src="/artwork.jpg"><img src="/cv.png">'
+            '<img src="/unsized.png"></article>')
+    sizes = {"https://faculty.example.edu/artwork.jpg": MAX_PROFILE_IMAGE_BYTES + 1,
+             "https://faculty.example.edu/cv.png": MAX_PROFILE_IMAGE_BYTES}
+    fetched = []
+
+    async def loader(asset_url):
+        fetched.append(asset_url)
+        return _png()
+
+    async def declared(asset_url):
+        return sizes.get(asset_url)
+
+    result = await audit_profile_media({url: html}, {url: {"张富有"}}, tmp_path,
+                                       fetch_asset=loader, asset_size=declared,
+                                       ocr_engine=lambda _: ([], None))
+    assert fetched == ["https://faculty.example.edu/cv.png", "https://faculty.example.edu/unsized.png"]
+    assert result["oversized_media"] == [{"profile_url": url,
+                                          "media_url": "https://faculty.example.edu/artwork.jpg",
+                                          "status": "image_over_size_cap",
+                                          "declared_bytes": MAX_PROFILE_IMAGE_BYTES + 1}]
+    assert result["unresolved"] == []
+
+
+@pytest.mark.asyncio
+async def test_size_cap_does_not_apply_to_pdf(tmp_path):
+    url = "https://faculty.example.edu/p/1"
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), "张富有 教授 简历")
+    pdf = document.tobytes()
+    asked = []
+
+    async def declared(asset_url):
+        asked.append(asset_url)
+        return MAX_PROFILE_IMAGE_BYTES * 3
+
+    async def loader(_asset_url):
+        return pdf
+
+    result = await audit_profile_media({url: '<article><h1>张富有</h1><object data="/cv.pdf"></object></article>'},
+                                       {url: {"张富有"}}, tmp_path, fetch_asset=loader, asset_size=declared)
+    assert asked == []
+    assert result["oversized_media"] == []
+    assert len(result["evidence"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_browser_asset_size_reads_declared_length_and_raises_when_unanswered():
+    class Response:
+        def __init__(self, ok, headers):
+            self.ok, self.headers = ok, headers
+
+    class Request:
+        def __init__(self, response):
+            self.response = response
+
+        async def head(self, _url, **_kwargs):
+            if isinstance(self.response, Exception):
+                raise self.response
+            return self.response
+
+    class Context:
+        def __init__(self, response):
+            self.request = Request(response)
+
+    image = "https://faculty.example.edu/a.jpg"
+    assert await browser_asset_size(Context(Response(True, {"content-length": "18832293"})), image) == 18832293
+    assert await browser_asset_size(Context(Response(True, {})), image) is None
+    assert await browser_asset_size(Context(Response(False, {"content-length": "5"})), image) is None
+    assert await browser_asset_size(Context(Response(True, {"content-length": "abc"})), image) is None
+    with pytest.raises(TimeoutError):
+        await browser_asset_size(Context(TimeoutError("head")), image)
 
 
 @pytest.mark.asyncio
