@@ -507,9 +507,9 @@ def _batch_fetch_profiles_via_native_chrome(urls: list[str], batch_size: int = 8
     chrome_exe = _native_chrome_executable()
     if chrome_exe is None:
         return {}
-    from server.site_limits import per_site_interval, wait_site_turn
-    if per_site_interval() > 0:
-        batch_size = 1  # tabs of one launch all load at once; keep the site's pace
+    from server.site_limits import site_is_paced, wait_site_turn
+    if any(site_is_paced(url) for url in urls):
+        batch_size = 1  # tabs of one launch all load at once; keep a paced site's pace
     results: dict[str, str] = {}
     for i in range(0, len(urls), batch_size):
         chunk = urls[i:i + batch_size]

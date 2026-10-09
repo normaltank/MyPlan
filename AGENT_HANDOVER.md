@@ -89,12 +89,12 @@
 - 个人页正文证明：`profile_structure.verify_profile_container` 里，正文容器内已在 HTML 里的 `<img>` 还在下载时不再算 `network_not_idle`，记为 `pending_content_image_count`；图片请求的起止也不算网络活动变化（`RequestTracker.image_activity`）。图片由 `image_biography.audit_profile_media` 单独下载和检查。没有 `<img>` 对应的图片请求、脚本和 fetch/XHR 仍然阻断。
 - 补缺计划去重：`agent_worker._harvest_with_repair` 用 `_capture_plan_key`（去掉等于计划默认值的分支 `source_kind`）和本任务采集过的每一份计划比，相同就停（`repair_plan_unchanged`）。
 
-### 10. 对官网的请求节奏和“IP 被冻结”页（10-09）
+### 10. 官网限流：平时全速，被冻结过的站点才放慢（10-09）
 
-- 起因：badr 10-09 实采时官网回了“检测到您的IP在短时间内发起多次请求……每秒不能多于1个页面请求……IP临时冻结为10分钟”。原来的按站点限流（`site_slot`，同站同时最多 8 个详情页）只管 worker 进程里同时开着的个人页，不管每秒发多少；侦察分支各是独立的 MCP 进程，素材 HEAD+GET、重试、人数核对、本机 Chrome 兜底（一次开 8 个标签）都不受限。
-- 现在：同一大学站点（`site_key`，`cs.x.edu.cn` 与 `law.x.edu.cn` 算一个）上每次请求开始前先领号，号与号间隔 `HARVEST_PER_SITE_INTERVAL_SECONDS`（默认 1 秒，`0` 关闭）。号记在 `server/outputs/site-clock.sqlite3`（`HARVEST_SITE_CLOCK_DB`），所有进程共用。入口在 `server/site_limits.py` 的 `site_turn` / `wait_site_turn`，由 `server/browser_context.py` 统一调用：`IsolatedPage.goto/reload/go_back/go_forward`、`IsolatedLocator.click`、`IsolatedBrowserContext.request` 的 get/head/fetch（`PoliteRequest`）。页面加载时浏览器自己带出的 CSS、JS、图片和页内 XHR 不领号（和普通访客一样）。新代码打开官网必须走 `new_browser_context` 给的上下文，不要直接用 Playwright 原始 context。
-- 冻结页：`IsolatedPage.content()` 和素材 GET 读到短页面（可见文字 ≤1500 字）且是限流/封 IP 提示（`site_limits.rate_limit_notice`，只判访问状态，不碰教师文字），或 HTTP 429、带 Retry-After 的 503，就记下这个站点冻结到何时（提示里写了几分钟就按几分钟，否则 Retry-After，否则 10 分钟；限 1–60 分钟），抛 `SiteRateLimited`。所有进程对该站点的下一个号都排到冻结结束之后，所以原有的重试会等冻结过去再开，冻结页不会被当成个人页或名录内容。重试用完仍失败的，照旧记 `profile_navigation_failed` / `browser_navigation_failed`（access 组），错误文字写 `site_rate_limited`。
-- 离线回放（`case_replay`）用 `new_browser_context(..., polite=False)`，请求不出本机，不领号；测试在 `tests/conftest.py` 把间隔设成 0。
+- 起因：badr 10-09 实采淮北师范大学时官网回了“检测到您的IP在短时间内发起多次请求……每秒不能多于1个页面请求……IP临时冻结为10分钟”。到 10-09 为止只有这一所大学拦过。原来的按站点限流（`site_slot`，同站同时最多 8 个详情页）只管 worker 进程里同时开着的个人页，不管每秒发多少；冻结提示页还会被当成页面内容读。
+- 规则（badr 10-09：不要全局放慢）：平时不限速。某站点回了限流/封 IP 提示页（`site_limits.rate_limit_notice`：可见文字 ≤1500 字的短页面里出现 CC 攻击、请求过于频繁、IP 冻结等字样，只判访问状态，不碰教师文字）、HTTP 429 或带 Retry-After 的 503，就把整个大学站点（`site_key`，`cs.x.edu.cn` 与 `law.x.edu.cn` 算一个）冻结到提示写的时长（没写按 Retry-After，再没有按 10 分钟；限 1–60 分钟），抛 `SiteRateLimited`。冻结期间所有进程对这个大学的所有请求都等；冻结过后这个大学的页面请求（打开、点击翻页）共用一个节拍，每秒最多一个（`FROZEN_SITE_INTERVAL`），记在库里，以后的批次也照此。图片、PDF 原件不排节拍，只等冻结。原有重试等冻结过去再开；重试用完仍失败的，照旧记 `profile_navigation_failed` / `browser_navigation_failed`（access 组），错误文字写 `site_rate_limited`。
+- 实现：冻结和节拍记在 `server/outputs/site-clock.sqlite3`（`HARVEST_SITE_CLOCK_DB`），worker、各侦察 MCP 进程、IDE 批量工具共用；删掉这个文件就忘掉所有冻结过的站点。入口在 `server/site_limits.py` 的 `site_turn` / `wait_site_turn` / `check_document` / `check_response`，由 `server/browser_context.py` 统一调用：`IsolatedPage.goto/reload/go_back/go_forward/content`、`IsolatedLocator.click`、`IsolatedBrowserContext.request` 的 get/head/fetch（`PoliteRequest`）。新代码打开官网必须走 `new_browser_context` 给的上下文。本机 Chrome 兜底对冻结过的站点一次只开一个页面。`HARVEST_PER_SITE_INTERVAL_SECONDS` 可另给所有站点按主机名设节拍（默认 0，不设）。
+- 离线回放（`case_replay`）用 `new_browser_context(..., polite=False)`，请求不出本机。
 
 ---
 

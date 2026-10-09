@@ -28,7 +28,7 @@ _ISOLATED = Path(tempfile.mkdtemp(prefix="myplan-tests-"))
 atexit.register(shutil.rmtree, _ISOLATED, ignore_errors=True)
 os.environ["HARVEST_TASK_DB"] = str(_ISOLATED / "queue" / "tasks.db")
 os.environ["FACULTY_RECON_EVIDENCE_ROOT"] = str(_ISOLATED / "recon-evidence")
-# Local fixture servers are not official sites: no per-site pacing by default
-# (tests of the pacing set it themselves), and the shared site clock lives here.
+# The shared site clock (freezes recorded after a rate-limit notice) lives here,
+# and no operator-configured pace leaks into fixture runs.
 os.environ["HARVEST_SITE_CLOCK_DB"] = str(_ISOLATED / "site-clock.sqlite3")
 os.environ["HARVEST_PER_SITE_INTERVAL_SECONDS"] = "0"

@@ -27,25 +27,45 @@ FREEZE_NOTICE = ("<html><body>111.198.54.4，检测到您的IP在短时间内发
 @pytest.fixture
 def clock(tmp_path, monkeypatch):
     monkeypatch.setenv("HARVEST_SITE_CLOCK_DB", str(tmp_path / "clock.sqlite3"))
-    monkeypatch.setenv("HARVEST_PER_SITE_INTERVAL_SECONDS", "1")
+    monkeypatch.delenv("HARVEST_PER_SITE_INTERVAL_SECONDS", raising=False)  # the shipped default
     return tmp_path / "clock.sqlite3"
 
 
-def test_starts_on_one_university_site_are_spaced(clock):
+def test_configured_pace_spaces_page_starts_per_host(clock, monkeypatch):
+    monkeypatch.setenv("HARVEST_PER_SITE_INTERVAL_SECONDS", "1")
     now = 1000.0
     assert reserve_site_turn("https://cs.x.edu.cn/a", now=now) == 0
-    assert reserve_site_turn("https://law.x.edu.cn/b", now=now) == 1  # same university site
+    assert reserve_site_turn("https://cs.x.edu.cn/b", now=now) == 1
     assert reserve_site_turn("https://cs.x.edu.cn/c", now=now) == 2
-    assert reserve_site_turn("https://www.y.edu.cn/", now=now) == 0  # another site is independent
-    assert reserve_site_turn("https://cs.x.edu.cn/d", now=now + 10) == 0  # idle site: no wait
+    # Another college's subdomain keeps its own pace, so a batch is not serialised.
+    assert reserve_site_turn("https://law.x.edu.cn/b", now=now) == 0
+    assert reserve_site_turn("https://cs.x.edu.cn/d", now=now + 10) == 0  # idle host: no wait
 
 
-def test_pacing_can_be_switched_off(clock, monkeypatch):
+def test_by_default_only_sites_that_froze_us_are_paced(clock):
+    assert [reserve_site_turn("https://cs.x.edu.cn/a", now=5.0) for _ in range(2)] == [0, 0]
+    later = freeze_site("https://cs.x.edu.cn/a", 60, "test") + 1
+    assert [reserve_site_turn("https://cs.x.edu.cn/a", now=later) for _ in range(2)] == [0, 1]
+
+
+def test_media_originals_are_not_paced(clock):
+    assert [reserve_site_turn("https://cs.x.edu.cn/p.jpg", paced=False, now=5.0) for _ in range(3)] == [0, 0, 0]
+
+
+def test_after_a_freeze_the_university_shares_one_pace(clock):
+    until = freeze_site("https://cs.x.edu.cn/a", 60, "test")
+    later = until + 1
+    assert reserve_site_turn("https://cs.x.edu.cn/a", now=later) == 0
+    assert reserve_site_turn("https://law.x.edu.cn/b", now=later) == 1  # learned: one server-wide firewall
+
+
+def test_explicit_zero_means_no_configured_pace(clock, monkeypatch):
     monkeypatch.setenv("HARVEST_PER_SITE_INTERVAL_SECONDS", "0")
     assert [reserve_site_turn("https://cs.x.edu.cn/a", now=5.0) for _ in range(3)] == [0, 0, 0]
 
 
 def test_separate_processes_share_one_pace(clock):
+    freeze_site("https://a.z.edu.cn/", 60, "test")  # a site that froze us: paced from then on
     script = ("import sys,time; from server.site_limits import reserve_site_turn\n"
               "now=float(sys.argv[1]); print(' '.join(str(now+reserve_site_turn('https://a.z.edu.cn/', now=now))"
               " for _ in range(3)))")
@@ -126,8 +146,8 @@ class _RawContext:
 def turns(monkeypatch):
     seen = []
 
-    async def fake_turn(url):
-        seen.append(url)
+    async def fake_turn(url, paced=True):
+        seen.append(url if paced else ("unpaced", url))
     monkeypatch.setattr("server.browser_context.site_turn", fake_turn)
     return seen
 
@@ -164,7 +184,7 @@ async def test_notice_page_is_never_returned_as_content(turns, clock):
 
 
 @pytest.mark.asyncio
-async def test_asset_requests_wait_and_429_pauses_the_site(turns, clock):
+async def test_asset_requests_wait_out_freezes_and_429_pauses_the_site(turns, clock):
     class _Api:
         async def get(self, url, **_):
             return _RawResponse(url, 429, {"retry-after": "90"})
@@ -176,8 +196,8 @@ async def test_asset_requests_wait_and_429_pauses_the_site(turns, clock):
     assert (await request.head("https://cs.x.edu.cn/p.jpg")).status == 200
     with pytest.raises(SiteRateLimited):
         await request.get("https://cs.x.edu.cn/p.jpg")
-    assert turns == ["https://cs.x.edu.cn/p.jpg"] * 2
-    assert reserve_site_turn("https://cs.x.edu.cn/") > 80
+    assert turns == [("unpaced", "https://cs.x.edu.cn/p.jpg")] * 2
+    assert reserve_site_turn("https://www.x.edu.cn/") > 80  # the freeze holds the whole site
 
 
 @pytest.mark.asyncio
@@ -209,7 +229,7 @@ async def test_profile_capture_pauses_on_a_notice_and_then_reads_the_real_page(c
 
 @pytest.mark.browser
 @pytest.mark.asyncio
-async def test_real_browser_pages_on_one_site_keep_the_pace(clock, monkeypatch):
+async def test_real_browser_pages_on_one_host_keep_the_pace(clock, monkeypatch):
     from playwright.async_api import async_playwright
 
     from server.browser_context import new_browser_context
@@ -228,11 +248,11 @@ async def test_real_browser_pages_on_one_site_keep_the_pace(clock, monkeypatch):
 
             async def open_one(index):
                 page = await context.new_page()
-                await page.goto(f"https://cs{index % 2}.pace.edu.cn/{index}.htm")
+                await page.goto(f"https://cs.pace.edu.cn/{index}.htm")
                 await page.close()
             await asyncio.gather(*(open_one(index) for index in range(4)))
         finally:
             await browser.close()
-    # Four document requests on one site cannot start within less than three intervals.
+    # Four document requests on one host cannot start within less than three intervals.
     assert len(starts) == 4
     assert max(starts) - min(starts) >= 1.1

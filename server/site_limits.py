@@ -6,9 +6,8 @@ colleges still start at once; only the pages opened against the same site at
 the same moment are bounded here. ``HARVEST_PER_SITE_CONCURRENCY=0`` disables
 the limit.
 
-Every request start on one site is also paced (about one per second) and a
-site that answers with a rate-limit notice is paused for every process; see
-``site_turn`` below. ``HARVEST_PER_SITE_INTERVAL_SECONDS=0`` disables pacing.
+A site that answers with a rate-limit notice is paused for every process and
+then paced (about one page request per second); see ``site_turn`` below.
 """
 from __future__ import annotations
 
@@ -78,10 +77,22 @@ def site_slot(url: str) -> Any:
 
 # ── Request pacing and site freezes, shared by every process ────────────────
 # The concurrency slot above only bounds pages open at once inside the worker.
-# A site counts requests per second from our IP, across recon sessions (each a
-# separate MCP process), the worker and the IDE batch tool, so the pace is kept
-# in one small SQLite table every process reserves its turn from.
-DEFAULT_PER_SITE_INTERVAL = 1.0
+# A site counts page requests per second from our IP, across recon sessions
+# (each a separate MCP process), the worker and the IDE batch tool, so the pace
+# is kept in one small SQLite table every process reserves its turn from.
+#
+# Adaptive by default (badr 10-09: only one university has ever objected):
+# - sites run at full speed until one answers with a rate-limit notice;
+# - that freeze is recorded for the whole university site (we cannot tell
+#   whether its firewall guards one host or the server); every request to it
+#   waits until the freeze ends;
+# - from then on its page requests (navigations, clicks) share one pace of
+#   ``FROZEN_SITE_INTERVAL``, kept in the table for later runs too;
+# - media originals (images, PDFs) are never paced, only held during a freeze.
+# ``HARVEST_PER_SITE_INTERVAL_SECONDS`` sets a pace per host for every site
+# as well (default 0: off).
+DEFAULT_PER_SITE_INTERVAL = 0.0
+FROZEN_SITE_INTERVAL = 1.0
 _INTERVAL_ENV = "HARVEST_PER_SITE_INTERVAL_SECONDS"
 _CLOCK_ENV = "HARVEST_SITE_CLOCK_DB"
 _DEFAULT_CLOCK = Path(__file__).resolve().parent / "outputs" / "site-clock.sqlite3"
@@ -118,48 +129,76 @@ def per_site_interval() -> float:
         return DEFAULT_PER_SITE_INTERVAL
 
 
+def _host(url: str) -> str | None:
+    try:
+        return (urlsplit(url).hostname or "").lower().rstrip(".") or None
+    except ValueError:
+        return None
+
+
 def _clock() -> sqlite3.Connection:
     path = Path(os.environ.get(_CLOCK_ENV) or _DEFAULT_CLOCK)
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=30, isolation_level=None)
-    connection.execute("CREATE TABLE IF NOT EXISTS site_clock (site TEXT PRIMARY KEY, "
-                       "next_at REAL NOT NULL DEFAULT 0, frozen_until REAL NOT NULL DEFAULT 0, "
-                       "reason TEXT)")
+    # Pace rows are keyed by host (or by site once shared); freeze rows by site.
+    connection.execute("CREATE TABLE IF NOT EXISTS pace (key TEXT PRIMARY KEY, next_at REAL NOT NULL)")
+    connection.execute("CREATE TABLE IF NOT EXISTS freeze (site TEXT PRIMARY KEY, "
+                       "frozen_until REAL NOT NULL, shared INTEGER NOT NULL DEFAULT 1, reason TEXT)")
     return connection
 
 
-def reserve_site_turn(url: str, *, now: float | None = None) -> float:
-    """Reserve the next request start for the URL's site; return seconds to wait.
+def reserve_site_turn(url: str, *, paced: bool = True, now: float | None = None) -> float:
+    """Reserve the next request start for the URL; return seconds to wait.
 
-    Starts on one site are spaced by the interval across all processes, and no
-    start is given before a recorded freeze ends.
+    Page requests (``paced``) on a site that froze us before share one pace
+    across all processes (plus any configured per-host pace). No request,
+    paced or not, starts before the site's recorded freeze ends.
     """
-    key = site_key(url)
-    if key is None:
+    site, host = site_key(url), _host(url)
+    if site is None or host is None:
         return 0.0
-    interval = per_site_interval()
+    interval = per_site_interval() if paced else 0.0
     connection = _clock()
     try:
         connection.execute("BEGIN IMMEDIATE")
         current = time.time() if now is None else now
-        row = connection.execute("SELECT next_at, frozen_until FROM site_clock WHERE site = ?",
-                                 (key,)).fetchone()
-        next_at, frozen_until = row or (0.0, 0.0)
-        turn = max(current, frozen_until, next_at if interval > 0 else current)
-        connection.execute("INSERT INTO site_clock (site, next_at) VALUES (?, ?) "
-                           "ON CONFLICT(site) DO UPDATE SET next_at = excluded.next_at",
-                           (key, turn + interval))
+        row = connection.execute("SELECT frozen_until, shared FROM freeze WHERE site = ?", (site,)).fetchone()
+        frozen_until, shared = row or (0.0, 0)
+        turn = max(current, frozen_until)
+        if paced and shared:
+            # A site that froze us before is always paced.
+            interval = max(interval, FROZEN_SITE_INTERVAL)
+        if interval > 0:
+            key = site if shared else host
+            pace = connection.execute("SELECT next_at FROM pace WHERE key = ?", (key,)).fetchone()
+            turn = max(turn, pace[0] if pace else 0.0)
+            connection.execute("INSERT INTO pace (key, next_at) VALUES (?, ?) "
+                               "ON CONFLICT(key) DO UPDATE SET next_at = excluded.next_at",
+                               (key, turn + interval))
         connection.execute("COMMIT")
         return turn - current
     finally:
         connection.close()
 
 
-async def site_turn(url: str) -> None:
-    """Wait for this site's next request turn (call before the request, outside its timeout)."""
-    delay = await asyncio.to_thread(reserve_site_turn, url)
+async def site_turn(url: str, *, paced: bool = True) -> None:
+    """Wait for the URL's next request turn (call before the request, outside its timeout)."""
+    delay = await asyncio.to_thread(reserve_site_turn, url, paced=paced)
     if delay > 0:
         await asyncio.sleep(delay)
+
+
+def site_is_paced(url: str) -> bool:
+    """Whether page requests to the URL are paced (configured pace or an earlier freeze)."""
+    site = site_key(url)
+    if per_site_interval() > 0 or site is None:
+        return per_site_interval() > 0
+    connection = _clock()
+    try:
+        return connection.execute("SELECT 1 FROM freeze WHERE site = ? AND shared = 1",
+                                  (site,)).fetchone() is not None
+    finally:
+        connection.close()
 
 
 def wait_site_turn(url: str) -> None:
@@ -169,17 +208,20 @@ def wait_site_turn(url: str) -> None:
 
 
 def freeze_site(url: str, seconds: float, reason: str) -> float:
-    """Stop every process from starting requests on the site for ``seconds``."""
-    key = site_key(url)
+    """Stop every process from starting requests on the URL's site for ``seconds``.
+
+    The site's hosts share one pace from now on, including in later runs.
+    """
+    site = site_key(url)
     until = time.time() + min(max(seconds, FREEZE_BOUNDS[0]), FREEZE_BOUNDS[1])
-    if key is None:
+    if site is None:
         return until
     connection = _clock()
     try:
-        connection.execute("INSERT INTO site_clock (site, frozen_until, reason) VALUES (?, ?, ?) "
+        connection.execute("INSERT INTO freeze (site, frozen_until, shared, reason) VALUES (?, ?, 1, ?) "
                            "ON CONFLICT(site) DO UPDATE SET frozen_until = MAX(frozen_until, "
-                           "excluded.frozen_until), reason = excluded.reason", (key, until, reason))
-        row = connection.execute("SELECT frozen_until FROM site_clock WHERE site = ?", (key,)).fetchone()
+                           "excluded.frozen_until), shared = 1, reason = excluded.reason", (site, until, reason))
+        row = connection.execute("SELECT frozen_until FROM freeze WHERE site = ?", (site,)).fetchone()
         return row[0] if row else until
     finally:
         connection.close()

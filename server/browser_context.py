@@ -8,9 +8,9 @@ CSS locator count/click remain Playwright's utility-world implementations.
 
 The same wrappers are where every production request to an official site
 starts, so they also keep the per-site pace (``server.site_limits``): page
-navigations, clicks and the context's direct asset requests wait for the
-site's turn first, and a rate-limit answer pauses the site instead of being
-read as page content.
+navigations and clicks wait for the host's turn, the context's direct asset
+requests wait out a site freeze, and a rate-limit answer pauses the site
+instead of being read as page content.
 """
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ class IsolatedLocator:
 
 
 class PoliteRequest:
-    """The context's APIRequestContext (media originals, HEAD size checks), paced per site."""
+    """The context's APIRequestContext (media originals, HEAD size checks): held during a site freeze."""
 
     def __init__(self, request: Any):
         self._request = request
@@ -144,7 +144,8 @@ class PoliteRequest:
         return getattr(self._request, name)
 
     async def _send(self, method: str, url: str, **kwargs: Any) -> Any:
-        await site_turn(url)
+        # Static originals are not paced like pages, but wait out a site freeze.
+        await site_turn(url, paced=False)
         response = await getattr(self._request, method)(url, **kwargs)
         headers = getattr(response, "headers", None) or {}
         check_response(url, response.status, headers)
