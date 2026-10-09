@@ -20,23 +20,25 @@
 
 #15（名单串页角色行教师进复核，`server/name_list.py` 的 `name_list_role_line`）与 #16（查询串里写 `.pdf` 的附件识别为 PDF，`server/image_biography.py` 的 `media_references`）也在 10-02 之后合并。
 
-### 2. 人工复核：7 个模块
+### 2. 人工复核：学院级 7 种在 `review_registry` 登记，大学级 1 种单独
 
-单个学院的复核由 `server/task_image_review.py` 汇总：`IMAGE_REVIEW_STATUSES` 决定哪些审计项算待复核，`review_complete` 逐种判断是否复核完，`carry_review_decisions` 把各决策文件带到恢复后的新 attempt 目录。复核页是 `server/app.py` 的 `/review/task/{task_id}`，各类提交走 `/api/task/{task_id}/review/<种类>`。决策文件都在该 attempt 的审计文件旁边。
+单个学院的复核种类只在 `server/review_registry.py` 的 `KINDS` 登记（E 包，PR 见 CHANGELOG 2026-10-09）：每种写明状态码、收集函数、完成判定和决策文件。复核页是否出现（`has_review`）、重试前是否复核完（`review_complete`）、恢复时带哪些决策文件（`DECISION_FILES`，由 `server/task_image_review.py` 的 `carry_review_decisions` 使用）都只遍历这张表。**加一种学院复核 = 写模块 + 在 `KINDS` 加一项 + 复核页一个区块和保存接口**，不要再到别处手写状态码或文件名。每种复核的完成判定必须自己核对“每个被标记的问题都有可复核项”，`tests/test_review_registry.py` 对每种逐一检查；不属于任何种类的问题不挡重试，由重跑审计决定。复核页是 `server/app.py` 的 `/review/task/{task_id}`，各类提交走 `/api/task/{task_id}/review/<种类>`（表格在 `server/image_table_routes.py`）。
 
-| 模块 | 处理的状态码（定义处） | 决策文件 |
-| --- | --- | --- |
-| `server/image_bio_review.py`（简介图 OCR 纠字） | `image_bio_low_confidence`、`image_bio_owner_unresolved`、`segment_name_needs_review`（目前只写在 `task_image_review.py`） | `image_bio_reviews.json` |
-| `server/image_bio_review.py`（简介图邮箱冲突） | `image_bio_email_conflict`（同上） | `image_bio_email_reviews.json` |
-| `server/name_review.py`（生僻姓、角色行姓名） | `name_review.STATUS` = `rare_surname_needs_review` | `name_review.DECISIONS_FILE` = `name_reviews.json` |
-| `server/identity_review.py`（学院内同名多主页） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
-| `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个） | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
-| `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`，且 `kind == "image"` | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
-| `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生；`task_image_review.py` 直接引用，`tests/test_review_status_registry.py` 核对与 recovery_policy 一致） | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
+决策文件都在该 attempt 的审计文件旁边，格式统一为 `{"schema": 1, "decisions": [...]}`，读写只走 `server/review_store.py`（`rows` / `load` / `put`，原子写入）；每种决定的字段和是否仍然有效由各自模块判断。
 
-大学级复核另走一套：`server/university_identity_review.py`（跨学院同名），决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，不用 JSON，也不经过 `task_image_review.py`。
+| 登记名 | 模块 | 状态码（定义处） | 决策文件 |
+| --- | --- | --- | --- |
+| `image_bio_text` | `server/image_bio_review.py`（简介图 OCR 纠字） | `image_bio_review.TEXT_STATUSES`：`image_bio_low_confidence`、`image_bio_owner_unresolved`、`segment_name_needs_review` | `image_bio_review.TEXT_DECISIONS_FILE` = `image_bio_reviews.json` |
+| `image_bio_email` | `server/image_bio_review.py`（简介图邮箱冲突） | `image_bio_review.EMAIL_STATUS` = `image_bio_email_conflict`；没有可复核项（找不到原图证据）的冲突不算复核完 | `image_bio_review.EMAIL_DECISIONS_FILE` = `image_bio_email_reviews.json` |
+| `name` | `server/name_review.py`（生僻姓、角色行姓名） | `name_review.STATUS` = `rare_surname_needs_review` | `name_review.DECISIONS_FILE` = `name_reviews.json` |
+| `identity` | `server/identity_review.py`（学院内同名多主页，仅管理员） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
+| `html_email` | `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个）；只有带教师姓名的才要裁决，旧审计缺证据时只能重跑生成 | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
+| `media_kind` | `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`；`kind == "image"` 才进复核页，PDF 的始终挡重试 | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
+| `image_table` | `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生）；有表格证据即需复核完 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
 
-已知问题（见 `docs/review-backlog.md` 的 2026-10-08 代码对齐条目）：每加一种复核要改 `task_image_review.py` 的状态集合、`review_complete` 和 `carry_review_decisions` 三处（`table_*` 状态码已在 PR #29 收成一份）。
+`tests/test_review_status_registry.py` 核对登记表的状态码都在 recovery_policy 的 review 组里。
+
+大学级复核不在登记表里：`server/university_identity_review.py`（跨学院同名）按批次和学校聚合，决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，卡的是大学发布，不是学院重试。
 
 ### 3. 失败去向只在一处定义
 

@@ -3,7 +3,7 @@ import ast
 from pathlib import Path
 
 from server import (html_email_review, identity_review, image_table_review, media_kind_review, name_review,
-                    recovery_policy, task_image_review)
+                    recovery_policy, review_registry, task_image_review)
 
 ROSTER = Path(__file__).resolve().parents[1] / "server" / "image_table_roster.py"
 # Field names and exclusion markers in the roster that share the prefix but are not issue codes.
@@ -23,7 +23,7 @@ def table_literals(path):
 
 def test_every_declared_review_status_is_a_review_code():
     declared = {name_review.STATUS, identity_review.STATUS, media_kind_review.STATUS,
-                *html_email_review.STATUSES, *image_table_review.STATUSES, *task_image_review.IMAGE_REVIEW_STATUSES}
+                *html_email_review.STATUSES, *image_table_review.STATUSES, *review_registry.STATUSES}
     assert declared - review_codes() == set()
 
 
@@ -33,8 +33,8 @@ def test_table_review_statuses_match_recovery_policy():
 
 
 def test_task_review_takes_table_statuses_from_the_table_module():
-    assert image_table_review.STATUSES <= task_image_review.IMAGE_REVIEW_STATUSES
-    assert table_literals(task_image_review.__file__) == set()
+    assert image_table_review.STATUSES <= review_registry.STATUSES
+    assert table_literals(task_image_review.__file__) == table_literals(review_registry.__file__) == set()
 
 
 def test_every_table_status_the_roster_raises_is_registered():

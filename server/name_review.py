@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
 from typing import Any
+
+from server import review_store
 
 STATUS = "rare_surname_needs_review"
 DECISIONS_FILE = "name_reviews.json"
@@ -44,12 +44,10 @@ def load_decisions(path: str | Path | None) -> dict[str, dict[str, Any]]:
     if path is None:
         return {}
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        rows = payload["decisions"] if payload.get("schema") == 1 else []
-        return {row["id"]: row for row in rows
+        return {row["id"]: row for row in review_store.rows(path)
                 if row.get("verdict") in VERDICTS
                 and (row["verdict"] == "not_person" or _valid_name(row.get("verified_name")))}
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError):
         return {}
 
 
@@ -64,31 +62,11 @@ def save_decision(path: str | Path, item: dict[str, Any], verdict: str,
         raise ValueError("verdict must be person or not_person")
     if verdict == "person" and not _valid_name(verified_name):
         raise ValueError("a confirmed name must be one nonempty line of at most 40 characters")
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        current = json.loads(path.read_text(encoding="utf-8"))
-        decisions = current["decisions"] if current.get("schema") == 1 else []
-    except (OSError, ValueError, KeyError, TypeError):
-        decisions = []
     decision = {key: item[key] for key in ("id", "url", "profile_url", "name")}
     decision.update(verdict=verdict, reviewed_at=time.time())
     if verdict == "person":
         decision["verified_name"] = verified_name.strip()
-    decisions = [row for row in decisions if row.get("id") != item["id"]]
-    decisions.append(decision)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile("w", dir=path.parent, suffix=".tmp", encoding="utf-8",
-                                         delete=False) as output:
-            temporary = Path(output.name)
-            json.dump({"schema": 1, "decisions": decisions}, output, ensure_ascii=False, indent=2)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    review_store.put(path, decision)
     return decision
 
 
