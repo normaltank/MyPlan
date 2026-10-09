@@ -51,7 +51,7 @@ import uuid
 from server.segmented_roster import (_LABELS, _SPLIT, OcrName, Segment, SegmentRecord, _name_like, _unique,
                                      admit_ocr_name, choose_email, heading_shape, text_name)
 from server.faculty_extractor import find_emails
-from server.name_list import _rare_name
+from server.name_list import _list_items, _rare_name
 
 KIND = "pdf_roster"
 # Same floor as the image biography audit and its review page.
@@ -293,6 +293,7 @@ class TableRow:
     section: int                # index into TableLayout.sections
     lines: list[LayoutLine]
     cell_roles: dict[str, str] = field(default_factory=dict)
+    cell_bbox: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -301,6 +302,98 @@ class TableLayout:
     sections: list[dict]
     issues: list[dict]
     skipped: Counter
+    kind: str = "table"
+
+
+def rank_grid_layout(original: bytes, lines: list[LayoutLine]) -> TableLayout | None:
+    """Ruled one-person cells under merged rank headings, not text-line guesses.
+
+    Native cell rectangles keep wrapped names together. Each occupied cell is
+    accounted for by the existing name-review gate. Mixed group titles remain
+    provenance and cannot become an invented individual title.
+    """
+    import pymupdf
+    from server.titles import TITLE_KEYWORDS
+
+    # The native library's install suggestion is not protocol output.
+    quiet = getattr(pymupdf, "no_recommend_layout", None)
+    if callable(quiet):
+        quiet()
+    result = TableLayout([], [], [], Counter(), kind="rank_grid")
+    usable = [line for line in lines if not line.rotated and line.source == "pdf_text_layer"
+              and line.excluded in (None, "table_section_heading")]
+    with pymupdf.open(stream=original, filetype="pdf") as document:
+        for page in document:
+            candidates = []
+            for table in page.find_tables(strategy="lines").tables:
+                if table.col_count < 2:
+                    continue
+                cells = []
+                section = None
+                valid = True
+                for row in table.rows:
+                    boxes = list(dict.fromkeys(tuple(box) for box in row.cells if box))
+                    occupied = []
+                    for box in boxes:
+                        owned = [line for line in usable if line.page == page.number+1
+                                 and box[0] < _center(line) < box[2]
+                                 and box[1] < (line.bbox[1]+line.bbox[3])/2 < box[3]]
+                        if owned:
+                            occupied.append((box, owned))
+                    if not occupied:
+                        continue
+                    box, owned = occupied[0]
+                    merged = (len(occupied) == 1 and abs(box[0]-table.bbox[0]) < 1
+                              and abs(box[2]-table.bbox[2]) < 1)
+                    if merged:
+                        heading = " ".join(line.text for line in sorted(owned, key=lambda line: line.bbox[1]))
+                        parts = re.split(r"[/／]", re.sub(r"\s+", "", heading))
+                        if not parts or not all(part in TITLE_KEYWORDS for part in parts):
+                            valid = False
+                            break
+                        section = {"heading": heading, "header": [NAME_HEADER], "page": page.number+1,
+                                   "rows": 0, "layout": "rank_grid", "heading_bbox": list(box),
+                                   "rank_parts": parts}
+                        cells.append((section, []))
+                    elif section is None:
+                        valid = False
+                        break
+                    else:
+                        cells[-1][1].extend(occupied)
+                if valid and cells and any(owned for _, owned in cells):
+                    candidates.append((table, cells))
+            if not candidates:
+                return None
+            assigned = set()
+            for table, sections in candidates:
+                # Small raster names inside a ruled cell are still roster content.
+                # The page-wide image-area guard cannot prove these cells were read.
+                for image in page.get_image_info():
+                    raster = pymupdf.Rect(image['bbox'])
+                    if raster.intersects(pymupdf.Rect(table.bbox)):
+                        result.issues.append({'status': 'pdf_roster_raster_unread', 'page': page.number+1,
+                                              'bbox': list(raster), 'layout': 'rank_grid'})
+                for section, cells in sections:
+                    result.sections.append(section)
+                    section_id = len(result.sections)-1
+                    for box, owned in cells:
+                        text = " ".join(line.text for line in sorted(owned, key=lambda line: (line.bbox[1],line.bbox[0])))
+                        values = {NAME_HEADER: text}
+                        if len(section['rank_parts']) == 1:
+                            values[TITLE_HEADER] = section['rank_parts'][0]
+                        section['rows'] += 1
+                        result.rows.append(TableRow(len(result.rows)+1, page.number+1, values, section_id, owned,
+                                                    cell_bbox=box))
+                        assigned.update(id(line) for line in owned)
+                    assigned.update(id(line) for line in usable if line.page == page.number+1
+                                    and section['heading_bbox'][0] < _center(line) < section['heading_bbox'][2]
+                                    and section['heading_bbox'][1] < (line.bbox[1]+line.bbox[3])/2 < section['heading_bbox'][3])
+            for line in usable:
+                if line.page == page.number+1 and id(line) not in assigned:
+                    # A native cell finder is not allowed to silently omit text.
+                    result.issues.append({"status": "pdf_roster_table_row_unassigned", "page": line.page,
+                                          "cells": 1, "bbox": list(line.bbox)})
+    return result if result.rows else None
 
 
 def table_layout(lines: list[LayoutLine], *, allowed_sources=("pdf_text_layer",),
@@ -404,22 +497,46 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
     accounted: dict[int, str] = {}
     for row in rows:
         cell = row.cells[NAME_HEADER]
+        if table.kind == 'rank_grid':
+            tokens = [token for token in _SPLIT.split(cell) if token]
+            explicit_members = len(tokens) > 1 and re.search(r'[、，,;；|/]', cell)
+            # Reuse the list reader's padded-name boundary: two/three isolated
+            # Han glyphs may be one name; four can already contain two people.
+            # Unknown full tokens must not be concatenated into a guessed name.
+            items = _list_items(cell)
+            ambiguous_tokens = len(tokens) > 1 and (len(items) != 1 or len(items[0].split()) > 1)
+            if explicit_members or ambiguous_tokens:
+                unresolved.append({**source, 'status': 'pdf_roster_table_row_unassigned',
+                                   'page': row.page, 'cells': 1, 'reason': 'ambiguous_members_in_grid_cell',
+                                   'bbox': list(row.cell_bbox)})
+                accounted[row.number] = 'unresolved'
+                continue
         title = row.cells.get(TITLE_HEADER, "").strip() or title_default
         evidence = {"section": table.sections[row.section]["heading"], "cells": row.cells, "page": row.page,
                     "bboxes": [[round(value, 2) for value in line.bbox] for line in row.lines]}
         if any(line.cell_id for line in row.lines):
             evidence["cell_ids"] = [line.cell_id for line in row.lines if line.cell_id]
+        if table.kind == 'rank_grid':
+            evidence.update(layout='rank_grid', grid_cell=list(row.cell_bbox))
         item = {**source, "segment": row.number, "pages": [row.page]}
         # The column header says 姓名, so a rare surname there is a name too
         # (badr 2026-10-09); an unreadable cell still goes to a person.
-        name = ((_name_like(re.sub(r"\s+", "", cell)) or _rare_name(cell))
-                if re.fullmatch(r"[\u4e00-\u9fff·•\s]+", cell) else None)
-        basis = "pdf_table_name_column"
+        compact = re.sub(r'\s+', '', cell)
+        name = ((_name_like(compact) or (_rare_name(cell) if table.kind == 'table' else None))
+            if re.fullmatch(r"[\u4e00-\u9fff·•\s]+", cell) else None)
+        basis = "pdf_rank_grid_cell" if table.kind == "rank_grid" else "pdf_table_name_column"
         if name is None:
             # The column says this is a name; a person confirms what it reads.
+            context = " | ".join(f"{key}：{value}" for key, value in row.cells.items())
+            reason = 'pdf_table_name_cell'
+            if table.kind == 'rank_grid':
+                # This grid has no literal name header. Rare/unknown values
+                # require a decision bound to the exact original and cell.
+                reason = 'pdf_rank_grid_name_cell'
+                context += ' | ' + json.dumps({'pdf_sha256': sha256,
+                    'page': row.page, 'cell': list(row.cell_bbox)}, sort_keys=True)
             candidate = FacultyCandidate(name=cell, url=page_url, title=title,
-                                         card_context=" | ".join(f"{key}：{value}" for key, value in row.cells.items()),
-                                         name_review_reason="pdf_table_name_cell")
+                                         card_context=context, name_review_reason=reason)
             review = name_review.pending_item(page_url, candidate)
             decision = name_decisions.get(review["id"])
             if decision is None:
@@ -458,12 +575,14 @@ def reconcile_pdf(original: bytes, scanned: dict, reviewed: set[tuple[int, int]]
     """Records, review items and structure-only observation for one PDF original."""
     lines, page_issues = layout_lines(original, scanned, reviewed)
     table = table_layout(lines)
+    if table is None:
+        table = rank_grid_layout(original, lines)
     if table is not None:
         found = reconcile_table(table, page_url=page_url, media_url=media_url, sha256=sha256,
                                 title_default=title_default, name_decisions=name_decisions or {})
         unresolved = [{"url": page_url, "media_url": media_url, **issue} for issue in page_issues]
         unresolved += found["unresolved"]
-        observation = {"url": page_url, "kind": KIND, "layout": "table", "media_url": media_url,
+        observation = {"url": page_url, "kind": KIND, "layout": table.kind, "media_url": media_url,
                        "sha256": sha256, "page_count": scanned["page_count"],
                        "pages_with_text_layer": scanned.get("pages_with_text_layer", 0),
                        "pages_ocrd": scanned.get("pages_ocrd", 0),

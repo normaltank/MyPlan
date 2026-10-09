@@ -416,6 +416,16 @@ class BrowserScout:
             value["pagination"] = without_banner_arrows(await self.page.content(), arguments["card_selector"],
                 await self.page.evaluate("selector => __facultyRecon.pagination('body',0,12,false,selector)",
                                          arguments["card_selector"]))
+            from server.pager_evidence import terminal_pagers, without_terminal_pagers
+            terminal = await terminal_pagers(self.page, arguments['card_selector'])
+            current_cards = await self.page.locator(arguments['card_selector']).evaluate_all(
+                "nodes => nodes.map(n=>n.outerHTML)")
+            if cards != current_cards or value['url'] != self.page.url:
+                return {**self.text_result({'url': self.page.url, 'status': 'roster_changed_during_verification',
+                    'retry': 'Verify the current roster again; the forward click changed its source.'}),
+                    'isError': True}
+            value['pagination'] = without_terminal_pagers(
+                await self.page.content(), value['pagination'], terminal, arguments['card_selector'])
             if "empty_state_selector" in arguments or "roster_container_selector" in arguments:
                 from server.empty_roster import verify_empty_roster
                 branch = {**arguments, "url": self.page.url, "single_page": True}

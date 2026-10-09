@@ -14,6 +14,7 @@ class RequestTracker:
     navigation_observed: bool = False
     failures: int = 0
     failed_requests: list[tuple[str, str, int | None]] = field(default_factory=list)
+    script_errors: int = 0
     document_response: Any = None  # latest main-frame navigation response
 
 
@@ -42,6 +43,7 @@ def install_request_tracking(page: Any) -> RequestTracker:
                 tracker.navigation_observed = True
                 tracker.failures = 0
                 tracker.failed_requests.clear()
+                tracker.script_errors = 0
                 # A request of the previous document cannot change this one. One
                 # that never reported back (集美诚毅管理系, 10-09) otherwise kept
                 # every later page in this tab from ever being idle.
@@ -84,6 +86,7 @@ def install_request_tracking(page: Any) -> RequestTracker:
         page.on("requestfinished", finished)
         page.on("requestfailed", failed)
         page.on("response", response_received)
+        page.on("pageerror", lambda _error: setattr(tracker, "script_errors", tracker.script_errors + 1))
         setattr(page, "_faculty_request_tracking", tracker)
         tracker.available = True
     except Exception:
