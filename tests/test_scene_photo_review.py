@@ -105,4 +105,3 @@ def test_photo_decision_cannot_settle_another_profile_or_changed_asset(tmp_path)
     (tmp_path / 'scene.png').write_bytes(b'changed')
     with pytest.raises(ValueError, match='original changed'):
         review_complete(audit)
-
