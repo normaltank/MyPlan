@@ -17,7 +17,7 @@ import time
 
 from PIL import Image
 
-from server import review_store
+from server import media_kind_review, review_store
 
 TEXT_STATUSES = frozenset({"image_bio_low_confidence", "image_bio_owner_unresolved", "segment_name_needs_review"})
 EMAIL_STATUS = "image_bio_email_conflict"
@@ -109,6 +109,9 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
                 rescan_path.write_text(json.dumps(refreshed, ensure_ascii=False, indent=2),
                                        encoding="utf-8")
             scanned = refreshed
+        # The irrelevant verdict covers the whole image, so the reviewer sees all of it, not one line.
+        preview = (_whole_preview(original)
+                   if evidence["kind"] == "image" and evidence.get("profile_url") else None)
         owner_headers = {(page['page'], index) for page, index in [
             (page, index) for page in scanned['pages'] for index, _ in enumerate(page['lines'])][:5]}
         for page in scanned["pages"]:
@@ -122,6 +125,8 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
                 result.append({
                     "id": _item_id(media_url, digest, page_number, line_index, line["text"]),
                     "media_url": media_url, "source_sha256": digest,
+                    "profile_url": evidence.get("profile_url"), "kind": evidence["kind"],
+                    **({"original_preview": preview} if preview else {}),
                     "page": page_number, "line_index": line_index,
                     "ocr_text": line["text"], "ocr_text_sha256": _text_digest(line["text"]),
                     "confidence": line["confidence"],
@@ -131,7 +136,39 @@ def collect_review_items(audit_path: str | Path, *, confidence_floor: float = .8
                 })
     result.extend(_segment_name_items(audit, root, {(item["media_url"], item["page"], item["line_index"])
                                                     for item in result}))
+    for item in result:
+        item["saved_irrelevant"] = irrelevant_settles(root, item)
     return result
+
+
+def _whole_preview(original: bytes) -> bytes | None:
+    """The entire single-frame original as PNG; None when a frame could hide other content."""
+    with Image.open(BytesIO(original)) as image:
+        if getattr(image, "n_frames", 1) != 1:
+            return None
+        image = image.convert("RGB")
+        image.thumbnail((1600, 1600))
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def irrelevant_allowed(item: dict) -> bool:
+    """A profile image shown whole can be judged irrelevant; a roster's name line or a PDF page cannot.
+
+    Dropping a roster image or a PDF attachment would drop teachers or a whole resume, which only a
+    rerun of the source, not a reviewer, may decide.
+    """
+    return (item.get("purpose") != "segment_name" and item.get("kind") == "image"
+            and isinstance(item.get("profile_url"), str) and bool(item["profile_url"])
+            and bool(item.get("original_preview")))
+
+
+def irrelevant_settles(root: Path, item: dict) -> bool:
+    """This exact original image was judged to carry nothing about the teacher."""
+    return irrelevant_allowed(item) and media_kind_review.irrelevant_confirmed(
+        Path(root) / media_kind_review.DECISIONS_FILE, item["profile_url"], item["media_url"],
+        item["source_sha256"])
 
 
 def _segment_name_items(audit: dict, root: Path, listed: set) -> list[dict]:
@@ -312,6 +349,9 @@ def _html_email_cards(items: list[dict]) -> str:
     return "".join(cards)
 
 
+_IRRELEVANT_SAVED = "已判定为无关图片；重新采集时不采这张图的文字（仅限同一原图）"
+
+
 def render_review_page(items: list[dict], email_items: list[dict] | None = None, *,
                        decision_url: str = '/decision',
                        email_decision_url: str = '/email-decision',
@@ -322,31 +362,47 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                        identity_decision_url: str = '',
                        html_email_items: list[dict] | None = None,
                        html_email_decision_url: str = '', media_kind_items: list[dict] | None = None,
-                       media_kind_decision_url: str = '') -> str:
+                       media_kind_decision_url: str = '', irrelevant_decision_url: str = '') -> str:
     cards = []
+    previewed = set()
     for item in items:
         crop = base64.b64encode(item["crop_bytes"]).decode("ascii")
+        irrelevant = bool(irrelevant_decision_url) and irrelevant_allowed(item)
+        media = (media_kind_review.evidence_id(item["profile_url"], item["media_url"], item["source_sha256"])
+                 if irrelevant else "")
+        whole = ""
+        if media and media not in previewed:
+            previewed.add(media)
+            whole = ('<details><summary>判无关图片前，先看整张原图</summary>'
+                     '<img alt="整张原图" src="data:image/png;base64,'
+                     + base64.b64encode(item["original_preview"]).decode("ascii") + '"></details>')
         cards.append(
-            '<section class="card" data-id="' + escape(item["id"]) + '">'
+            '<section class="card" data-id="' + escape(item["id"]) + '"'
+            + (' data-media="' + media + '"' if media else '') + '>'
             '<p class="meta">' + ('姓名行（请核对并改正为原图中的姓名） · ' if item.get("purpose") == "segment_name" else '')
             + ('图文归属（只按原图核对标题或姓名，不可推测） · ' if item.get("purpose") == "image_owner" else '')
             + '第 ' + str(item["page"]) + ' 页 · 置信度 '
             + f'{item["confidence"]:.2f}' + '</p>'
             '<img alt="待核对的原图局部" src="data:image/png;base64,' + crop + '">'
             '<label>OCR 原文<textarea rows="2">' + escape(item["ocr_text"]) + '</textarea></label>'
-            '<button type="button">确认这行文字</button><p class="status" role="status"></p>'
+            + whole + '<div class="actions"><button type="button">确认这行文字</button>'
+            + ('<button type="button" class="secondary irrelevant">无关图片（书法、签名、装饰等），不采这张图</button>'
+               if irrelevant else '')
+            + '</div><p class="status" role="status">'
+            + (_IRRELEVANT_SAVED if irrelevant and item.get("saved_irrelevant") else '') + '</p>'
             '</section>')
     body = "\n".join(cards)
     for item in media_kind_items or []:
         preview = base64.b64encode(item['preview_bytes']).decode('ascii')
-        status = {'photo': '已确认纯人物照片', 'unreadable': '包含文字或无法确定，仍保持阻断'}.get(
-            item.get('saved_verdict'), '')
+        status = {'photo': '已确认纯人物照片', 'irrelevant': _IRRELEVANT_SAVED,
+                  'unreadable': '包含文字或无法确定，仍保持阻断'}.get(item.get('saved_verdict'), '')
         body += ('<section class="card media-kind-card" data-id="' + escape(item['id']) + '">'
             '<h2>原图类型复核</h2><p>程序无法判断这是照片还是未读出的简历。请检查整张原图：'
             '只有纯人物照片、没有履历或其他文字时才能确认照片。含文字、扫描件或无法判断时保持阻断。</p>'
             '<p>来源：' + _page_link(item['profile_url']) + '</p>'
             '<img alt="需要判断类型的完整原图" src="data:image/png;base64,' + preview + '">'
             '<button type="button" data-verdict="photo">确认纯人物照片，无履历文字</button> '
+            '<button type="button" data-verdict="irrelevant" class="secondary">无关图片（书法、签名、装饰等），不采这张图</button> '
             '<button type="button" data-verdict="unreadable">含文字或无法判断，保持阻断</button>'
             '<p class="status" role="status">' + status + '</p></section>')
     email_cards = []
@@ -384,6 +440,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     identity_js = json.dumps(identity_decision_url).replace('<', '\\u003c')
     html_email_js = json.dumps(html_email_decision_url).replace('<', '\\u003c')
     media_kind_js = json.dumps(media_kind_decision_url).replace('<', '\\u003c')
+    irrelevant_js = json.dumps(irrelevant_decision_url).replace('<', '\\u003c')
     retry_js = json.dumps(retry_url).replace('<', '\\u003c')
     csrf_js = json.dumps(csrf_token).replace('<', '\\u003c')
     footer = ''
@@ -439,7 +496,8 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
             "body:JSON.stringify({id:card.dataset.id,verdict})});"
             "if(!response.ok)throw await failure(response);"
-            "status.textContent=verdict==='photo'?'已确认纯人物照片；重新采集时校验原件':'保持阻断，请处理原图文字';}"
+            "status.textContent=verdict==='photo'?'已确认纯人物照片；重新采集时校验原件':"
+            "verdict==='irrelevant'?" + json.dumps(_IRRELEVANT_SAVED) + ":'保持阻断，请处理原图文字';}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
             "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card):not(.media-kind-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
@@ -448,6 +506,16 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "body:JSON.stringify({id:card.dataset.id,verified_text})});"
             "if(!response.ok)throw await failure(response);status.textContent='已保存复核决定';}"
             "catch(error){status.textContent='保存失败：'+error.message;}}});"
+            "document.querySelectorAll('.card[data-media] button.irrelevant').forEach(button=>button.onclick=async()=>{"
+            "const card=button.closest('.card');"
+            "try{const response=await fetch(" + irrelevant_js + ",{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
+            "body:JSON.stringify({id:card.dataset.id})});"
+            "if(!response.ok)throw await failure(response);"
+            # Every line card of the same image is settled by the one verdict.
+            "document.querySelectorAll('.card[data-media=\"'+card.dataset.media+'\"] .status')"
+            ".forEach(status=>status.textContent=" + json.dumps(_IRRELEVANT_SAVED) + ");}"
+            "catch(error){card.querySelector('.status').textContent='保存失败：'+error.message;}});"
             "document.querySelectorAll('.email-card').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
             "const selected_email=card.querySelector('input:checked')?.value;"
@@ -598,11 +666,15 @@ def resolve_email_conflict(path: str | Path, item_id: str, choices: list[str]) -
 
 
 def text_review_complete(audit_path: str | Path, items: list[dict]) -> bool:
-    """Every OCR line under review has a nonempty decision bound to the same original line."""
+    """Every OCR line under review has a nonempty decision bound to the same original line,
+    or its image was judged irrelevant."""
     if not items:
         return False
-    decisions = review_store.load(Path(audit_path).parent / TEXT_DECISIONS_FILE)
+    root = Path(audit_path).parent
+    decisions = review_store.load(root / TEXT_DECISIONS_FILE)
     for item in items:
+        if irrelevant_settles(root, item):
+            continue
         decision = decisions.get(item["id"], {})
         if (any(decision.get(key) != item[key] for key in
                 ("media_url", "source_sha256", "page", "line_index", "ocr_text_sha256"))

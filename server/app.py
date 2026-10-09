@@ -206,6 +206,10 @@ class MediaKindReviewRequest(BaseModel):
     verdict: str
 
 
+class IrrelevantMediaRequest(BaseModel):
+    id: str
+
+
 class HtmlEmailReviewRequest(BaseModel):
     id: str
     verdict: str
@@ -422,7 +426,8 @@ async def task_image_review_page(task_id: str, request: Request):
         name_items=items['name'], name_decision_url=f'/api/task/{task_id}/review/name',
         identity_items=items['identity'], identity_decision_url=f'/api/task/{task_id}/review/identity',
         html_email_items=items['html_email'], html_email_decision_url=f'/api/task/{task_id}/review/html-email',
-        media_kind_items=items['media_kind'], media_kind_decision_url=f'/api/task/{task_id}/review/media-kind')
+        media_kind_items=items['media_kind'], media_kind_decision_url=f'/api/task/{task_id}/review/media-kind',
+        irrelevant_decision_url=f'/api/task/{task_id}/review/irrelevant-media')
     if json.loads(audit.read_text(encoding="utf-8")).get("image_table_evidence"):
         rendered = rendered.replace("</html>", '<p><a href="/review/task/' + escape(task_id)
                                     + '/table">图片表格逐格复核</a></p></html>')
@@ -475,6 +480,25 @@ async def save_task_media_kind_review(task_id: str, payload: MediaKindReviewRequ
                                        item, payload.verdict, _user(request).id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='原图类型复核无效') from exc
+    return Response(status_code=204)
+
+
+@app.post('/api/task/{task_id}/review/irrelevant-media', status_code=204)
+async def save_task_irrelevant_media_review(task_id: str, payload: IrrelevantMediaRequest, request: Request):
+    """From an OCR line card: the whole original image carries nothing about the teacher."""
+    _, audit = _review_task(task_id, request)
+    try:
+        # The same line id covers every profile page that shows this exact original.
+        items = [item for item in review_items(audit)[0] if item['id'] == payload.id]
+        if not items:
+            raise HTTPException(status_code=404, detail='复核证据不存在')
+        if not all(image_bio_review.irrelevant_allowed(item) for item in items):
+            raise ValueError('only a profile image can be judged irrelevant')
+        for item in items:
+            media_kind_review.save_decision(audit.parent / media_kind_review.DECISIONS_FILE,
+                                           item, media_kind_review.IRRELEVANT, _user(request).id)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail='只有个人页上的图片可以判为无关图片') from exc
     return Response(status_code=204)
 
 

@@ -160,3 +160,108 @@ async def test_media_decision_retry_carries_exact_evidence(tmp_path, monkeypatch
     carry_review_decisions(attempt.parent, target)
     assert media_kind_review.photo_confirmed(target / media_kind_review.DECISIONS_FILE,
         item["profile_url"], item["media_url"], item["source_sha256"])
+
+
+def ocr_lines(lines):
+    def ocr(_data, use_det=True, use_cls=True, use_rec=True):
+        return [([[5, 5 + index * 40], [150, 5 + index * 40], [150, 30 + index * 40], [5, 30 + index * 40]],
+                 value, confidence) for index, (value, confidence) in enumerate(lines)], None
+    return ocr
+
+
+async def artwork_image(tmp_path, *, lines, pixel="white", decisions=None):
+    data = BytesIO()
+    Image.new("RGB", (400, 600), pixel).save(data, format="PNG")
+    async def fetch(_url):
+        return data.getvalue()
+    return await audit_profile_media(
+        {"https://faculty.example.edu/p": '<article><img src="/art.png"></article>'},
+        {"https://faculty.example.edu/p": {"张富有"}}, tmp_path / "media",
+        fetch_asset=fetch, ocr_engine=ocr_lines(lines), media_kind_decisions_path=decisions)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lines, status", [
+    # A signature line OCR could not read on the teacher's own page.
+    ((("张富有 教授", .99), ("完整学习经历与任职信息以及研究方向", .98), ("无字", .55)), "image_bio_low_confidence"),
+    # Calligraphy whose characters name nobody on the page.
+    (tuple((ch * 30, .9) for ch in "幼学壮行"), "image_bio_owner_unresolved"),
+])
+async def test_irrelevant_image_settles_ocr_review_and_drops_only_that_original(tmp_path, lines, status):
+    from server.image_bio_review import collect_review_items, text_review_complete
+    first = await artwork_image(tmp_path, lines=lines)
+    assert [issue["status"] for issue in first["unresolved"]] == [status]
+    audit = save_audit(tmp_path, first)
+    items = collect_review_items(audit)
+    assert items and not review_complete(audit) and not text_review_complete(audit, items)
+    decisions = tmp_path / media_kind_review.DECISIONS_FILE
+    media_kind_review.save_decision(decisions, items[0], media_kind_review.IRRELEVANT, 1)
+    # One verdict covers every line card of the image.
+    assert all(item["saved_irrelevant"] for item in collect_review_items(audit))
+    assert review_complete(audit)
+    saved = json.loads(decisions.read_text(encoding="utf-8"))["decisions"]
+    assert [row["verdict"] for row in saved] == ["irrelevant"]
+    final = await artwork_image(tmp_path, lines=lines, decisions=decisions)
+    assert final["unresolved"] == [] and final["biographies"] == {} and final["assigned_biographies"] == {}
+    assert final["evidence"][0]["media_kind_review"] == "irrelevant"
+    changed = await artwork_image(tmp_path, lines=lines, pixel="#eeeeee", decisions=decisions)
+    assert [issue["status"] for issue in changed["unresolved"]] == [status]
+
+
+def test_irrelevant_verdict_is_refused_for_roster_name_lines_and_pdf_pages():
+    from server.image_bio_review import irrelevant_allowed
+    base = {"profile_url": "https://faculty.example.edu/p", "kind": "image", "original_preview": b"png"}
+    assert irrelevant_allowed(base)
+    assert not irrelevant_allowed({**base, "purpose": "segment_name"})
+    assert not irrelevant_allowed({**base, "kind": "pdf"})
+    assert not irrelevant_allowed({**base, "profile_url": None})
+    # Without the whole image on the page (e.g. an animated GIF) a line crop cannot justify it.
+    assert not irrelevant_allowed({**base, "original_preview": None})
+
+
+@pytest.mark.asyncio
+async def test_irrelevant_verdict_settles_an_ambiguous_media_kind_item(tmp_path):
+    audit = save_audit(tmp_path, await ambiguous_image(tmp_path))
+    item = media_kind_review.collect_items(audit)[0]
+    decisions = tmp_path / media_kind_review.DECISIONS_FILE
+    media_kind_review.save_decision(decisions, item, "irrelevant", 1)
+    assert review_complete(audit)
+    final = await ambiguous_image(tmp_path, decisions=decisions)
+    assert final["unresolved"] == [] and final["evidence"][0]["media_kind_review"] == "irrelevant"
+    with pytest.raises(ValueError):
+        media_kind_review.save_decision(decisions, item, "irrelevant", 0)
+    with pytest.raises(ValueError):
+        media_kind_review.save_decision(decisions, {**item, "profile_url": ""}, "irrelevant", 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_irrelevant_button_settles_every_card_of_the_image_in_browser(tmp_path):
+    from playwright.async_api import async_playwright
+    from server.image_bio_review import collect_review_items, render_review_page
+    lines = (("张富有 教授", .99), ("完整学习经历与任职信息以及研究方向", .5), ("无字", .55))
+    audit = save_audit(tmp_path, await artwork_image(tmp_path, lines=lines))
+    items = collect_review_items(audit)
+    assert len(items) == 2
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            page = await browser.new_page()
+            errors, submitted = [], []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            async def response(route):
+                submitted.append((route.request.url, route.request.post_data_json))
+                await route.fulfill(status=204)
+            await page.route("https://review.example.edu/**", response)
+            await page.goto("about:blank")
+            await page.set_content(render_review_page(items, decision_url="https://review.example.edu/ocr",
+                irrelevant_decision_url="https://review.example.edu/irrelevant"))
+            await page.locator("button.irrelevant").first.click()
+            await page.locator(".card .status").nth(1).filter(has_text="已判定为无关图片").wait_for()
+            assert not errors
+            assert submitted == [("https://review.example.edu/irrelevant", {"id": items[0]["id"]})]
+            assert await page.locator(".card .status", has_text="已判定为无关图片").count() == 2
+            # The whole original is shown once per image, not once per line card.
+            assert await page.locator('img[alt="整张原图"]').count() == 1
+        finally:
+            await browser.close()

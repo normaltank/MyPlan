@@ -400,6 +400,13 @@ async def audit_profile_media(
                       "ocr_path": str(ocr_path), "page_count": scanned["page_count"],
                       "pages_ocrd": scanned["pages_ocrd"], "ocr_reused": reused}
             evidence.append(record)
+            from server.media_kind_review import irrelevant_confirmed
+            if ref.kind == "image" and irrelevant_confirmed(
+                    Path(media_kind_decisions_path) if media_kind_decisions_path else None,
+                    profile_url, ref.url, digest):
+                # A person judged this exact original to carry nothing about the teacher.
+                record["media_kind_review"] = "irrelevant"
+                continue
             from server.image_bio_review import apply_review_decisions
             reviewed = set()
             if review_decisions_path is not None:
