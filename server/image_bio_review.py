@@ -229,7 +229,9 @@ _REVIEW_CSS = (
     ".meta{color:var(--muted);font-size:13px}.status{font-size:13px;color:var(--ok)}.status:empty{display:none}"
     ".email-option{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 10px;padding:12px;"
     "border:1px solid var(--border);border-radius:var(--radius-sm);font-weight:400!important;cursor:pointer}"
-    ".email-option img,.email-option small{grid-column:2}"
+    # Every line after the radio sits beside it; quoted context must not fall into the radio's column.
+    ".email-option img,.email-option small,.email-option blockquote{grid-column:2}"
+    ".email-option:has(input:disabled){cursor:not-allowed;color:var(--muted)}"
     ".email-option:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}"
     "blockquote{margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-2)}"
     "#retry-review{height:44px;margin-top:20px;background:var(--ok)}#retry-review:hover{background:#065f46}"
