@@ -89,6 +89,13 @@
 - 个人页正文证明：`profile_structure.verify_profile_container` 里，正文容器内已在 HTML 里的 `<img>` 还在下载时不再算 `network_not_idle`，记为 `pending_content_image_count`；图片请求的起止也不算网络活动变化（`RequestTracker.image_activity`）。图片由 `image_biography.audit_profile_media` 单独下载和检查。没有 `<img>` 对应的图片请求、脚本和 fetch/XHR 仍然阻断。
 - 补缺计划去重：`agent_worker._harvest_with_repair` 用 `_capture_plan_key`（去掉等于计划默认值的分支 `source_kind`）和本任务采集过的每一份计划比，相同就停（`repair_plan_unchanged`）。
 
+### 10. 对官网的请求节奏和“IP 被冻结”页（10-09）
+
+- 起因：badr 10-09 实采时官网回了“检测到您的IP在短时间内发起多次请求……每秒不能多于1个页面请求……IP临时冻结为10分钟”。原来的按站点限流（`site_slot`，同站同时最多 8 个详情页）只管 worker 进程里同时开着的个人页，不管每秒发多少；侦察分支各是独立的 MCP 进程，素材 HEAD+GET、重试、人数核对、本机 Chrome 兜底（一次开 8 个标签）都不受限。
+- 现在：同一大学站点（`site_key`，`cs.x.edu.cn` 与 `law.x.edu.cn` 算一个）上每次请求开始前先领号，号与号间隔 `HARVEST_PER_SITE_INTERVAL_SECONDS`（默认 1 秒，`0` 关闭）。号记在 `server/outputs/site-clock.sqlite3`（`HARVEST_SITE_CLOCK_DB`），所有进程共用。入口在 `server/site_limits.py` 的 `site_turn` / `wait_site_turn`，由 `server/browser_context.py` 统一调用：`IsolatedPage.goto/reload/go_back/go_forward`、`IsolatedLocator.click`、`IsolatedBrowserContext.request` 的 get/head/fetch（`PoliteRequest`）。页面加载时浏览器自己带出的 CSS、JS、图片和页内 XHR 不领号（和普通访客一样）。新代码打开官网必须走 `new_browser_context` 给的上下文，不要直接用 Playwright 原始 context。
+- 冻结页：`IsolatedPage.content()` 和素材 GET 读到短页面（可见文字 ≤1500 字）且是限流/封 IP 提示（`site_limits.rate_limit_notice`，只判访问状态，不碰教师文字），或 HTTP 429、带 Retry-After 的 503，就记下这个站点冻结到何时（提示里写了几分钟就按几分钟，否则 Retry-After，否则 10 分钟；限 1–60 分钟），抛 `SiteRateLimited`。所有进程对该站点的下一个号都排到冻结结束之后，所以原有的重试会等冻结过去再开，冻结页不会被当成个人页或名录内容。重试用完仍失败的，照旧记 `profile_navigation_failed` / `browser_navigation_failed`（access 组），错误文字写 `site_rate_limited`。
+- 离线回放（`case_replay`）用 `new_browser_context(..., polite=False)`，请求不出本机，不领号；测试在 `tests/conftest.py` 把间隔设成 0。
+
 ---
 
 > **2026-10-02 文档治理与 Claude 派工**：根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，`CLAUDE.md` 为读取入口。OCR 修复及宪法已提交并同步 main（`4fe72c2`、`10370eb`）；服务是否加载仍按下方部署记录判断。用户指定在 [Claude Projects → MyPlan 主对话](https://claude.ai/code/project/chan_012KwoNrMicyn2LoBSKGmCan) 派工，现有两个项目内实现线程：多人 PDF 名录采集、HTML 邮箱歧义复核恢复；具体范围见 [任务规格](docs/implementation/2026-10-02-claude-assignment.md)，要求独立 PR，不自动合并／部署。此前误开的两个独立 Code 会话已显示 Idle，不再继续。PR #4 仅改项目说明，实际与 main 的 AGENTS.md 存在合并冲突，且有过期状态和额外确认要求；本轮只审阅，未修改或合并该 PR。

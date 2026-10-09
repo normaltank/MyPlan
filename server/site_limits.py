@@ -5,6 +5,10 @@ Colleges of one university usually live on one web server (``cs.x.edu.cn``,
 colleges still start at once; only the pages opened against the same site at
 the same moment are bounded here. ``HARVEST_PER_SITE_CONCURRENCY=0`` disables
 the limit.
+
+Every request start on one site is also paced (about one per second) and a
+site that answers with a rate-limit notice is paused for every process; see
+``site_turn`` below. ``HARVEST_PER_SITE_INTERVAL_SECONDS=0`` disables pacing.
 """
 from __future__ import annotations
 
@@ -12,7 +16,11 @@ import asyncio
 import contextlib
 import ipaddress
 import os
+import re
+import sqlite3
+import time
 import weakref
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -66,3 +74,157 @@ def site_slot(url: str) -> Any:
         current = (limit, asyncio.Semaphore(limit))
         semaphores[key] = current
     return current[1]
+
+
+# ── Request pacing and site freezes, shared by every process ────────────────
+# The concurrency slot above only bounds pages open at once inside the worker.
+# A site counts requests per second from our IP, across recon sessions (each a
+# separate MCP process), the worker and the IDE batch tool, so the pace is kept
+# in one small SQLite table every process reserves its turn from.
+DEFAULT_PER_SITE_INTERVAL = 1.0
+_INTERVAL_ENV = "HARVEST_PER_SITE_INTERVAL_SECONDS"
+_CLOCK_ENV = "HARVEST_SITE_CLOCK_DB"
+_DEFAULT_CLOCK = Path(__file__).resolve().parent / "outputs" / "site-clock.sqlite3"
+DEFAULT_FREEZE_SECONDS = 600.0
+FREEZE_BOUNDS = (60.0, 3600.0)
+# A site that answers with a rate-limit notice instead of the page. Matched only
+# on short documents, where the notice is the whole page; this classifies access
+# state and never filters teacher text.
+_NOTICE_MAX_TEXT = 1500
+_RATE_NOTICE = re.compile(
+    r"CC\s*攻击|(?:请求|访问)(?:过于|太过|太)?频繁|访问频率|(?:并发|请求)(?:数)?(?:超过|超出)"
+    r"|IP.{0,20}(?:冻结|封禁|封锁|拉黑|禁止访问|限制访问)"
+    r"|too\s+many\s+requests|rate[\s-]?limit(?:ed)?|temporarily\s+(?:blocked|banned)",
+    re.IGNORECASE)
+_NOTICE_DURATION = re.compile(r"(\d{1,4})\s*(分钟|秒|minutes?|mins?|seconds?|secs?)", re.IGNORECASE)
+
+
+class SiteRateLimited(RuntimeError):
+    """The site refused us for request rate; its turns are frozen until ``until``."""
+
+    def __init__(self, url: str, until: float, reason: str):
+        self.site, self.until, self.reason = site_key(url), until, reason
+        super().__init__(f"site_rate_limited {self.site}: {reason}; paused until "
+                         f"{time.strftime('%H:%M:%S', time.localtime(until))}")
+
+
+def per_site_interval() -> float:
+    raw = os.environ.get(_INTERVAL_ENV, "").strip()
+    if not raw:
+        return DEFAULT_PER_SITE_INTERVAL
+    try:
+        return max(float(raw), 0.0)
+    except ValueError:
+        return DEFAULT_PER_SITE_INTERVAL
+
+
+def _clock() -> sqlite3.Connection:
+    path = Path(os.environ.get(_CLOCK_ENV) or _DEFAULT_CLOCK)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path, timeout=30, isolation_level=None)
+    connection.execute("CREATE TABLE IF NOT EXISTS site_clock (site TEXT PRIMARY KEY, "
+                       "next_at REAL NOT NULL DEFAULT 0, frozen_until REAL NOT NULL DEFAULT 0, "
+                       "reason TEXT)")
+    return connection
+
+
+def reserve_site_turn(url: str, *, now: float | None = None) -> float:
+    """Reserve the next request start for the URL's site; return seconds to wait.
+
+    Starts on one site are spaced by the interval across all processes, and no
+    start is given before a recorded freeze ends.
+    """
+    key = site_key(url)
+    if key is None:
+        return 0.0
+    interval = per_site_interval()
+    connection = _clock()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        current = time.time() if now is None else now
+        row = connection.execute("SELECT next_at, frozen_until FROM site_clock WHERE site = ?",
+                                 (key,)).fetchone()
+        next_at, frozen_until = row or (0.0, 0.0)
+        turn = max(current, frozen_until, next_at if interval > 0 else current)
+        connection.execute("INSERT INTO site_clock (site, next_at) VALUES (?, ?) "
+                           "ON CONFLICT(site) DO UPDATE SET next_at = excluded.next_at",
+                           (key, turn + interval))
+        connection.execute("COMMIT")
+        return turn - current
+    finally:
+        connection.close()
+
+
+async def site_turn(url: str) -> None:
+    """Wait for this site's next request turn (call before the request, outside its timeout)."""
+    delay = await asyncio.to_thread(reserve_site_turn, url)
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+
+def wait_site_turn(url: str) -> None:
+    delay = reserve_site_turn(url)
+    if delay > 0:
+        time.sleep(delay)
+
+
+def freeze_site(url: str, seconds: float, reason: str) -> float:
+    """Stop every process from starting requests on the site for ``seconds``."""
+    key = site_key(url)
+    until = time.time() + min(max(seconds, FREEZE_BOUNDS[0]), FREEZE_BOUNDS[1])
+    if key is None:
+        return until
+    connection = _clock()
+    try:
+        connection.execute("INSERT INTO site_clock (site, frozen_until, reason) VALUES (?, ?, ?) "
+                           "ON CONFLICT(site) DO UPDATE SET frozen_until = MAX(frozen_until, "
+                           "excluded.frozen_until), reason = excluded.reason", (key, until, reason))
+        row = connection.execute("SELECT frozen_until FROM site_clock WHERE site = ?", (key,)).fetchone()
+        return row[0] if row else until
+    finally:
+        connection.close()
+
+
+def _visible_text(html: str) -> str | None:
+    if len(html) > 40 * _NOTICE_MAX_TEXT:
+        return None
+    text = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1\s*>|<[^>]+>", " ", html)
+    text = re.sub(r"&nbsp;|&#160;|\s+", " ", text).strip()
+    return text if len(text) <= _NOTICE_MAX_TEXT else None
+
+
+def rate_limit_notice(html: str) -> str | None:
+    """The notice text when a document is a rate-limit / IP-freeze page, else None."""
+    text = _visible_text(html or "")
+    return text if text and _RATE_NOTICE.search(text) else None
+
+
+def _notice_seconds(text: str) -> float:
+    match = _NOTICE_DURATION.search(text)
+    if not match:
+        return DEFAULT_FREEZE_SECONDS
+    value, unit = int(match.group(1)), match.group(2).lower()
+    return float(value * 60 if unit.startswith(("分", "min")) else value)
+
+
+def _retry_after(headers: dict[str, str] | None) -> float:
+    try:
+        return float((headers or {}).get("retry-after", ""))
+    except ValueError:
+        return DEFAULT_FREEZE_SECONDS
+
+
+def check_document(url: str, html: str) -> None:
+    """Raise SiteRateLimited (and freeze the site) when the page is a rate-limit notice."""
+    notice = rate_limit_notice(html)
+    if notice:
+        until = freeze_site(url, _notice_seconds(notice), "rate_limit_notice")
+        raise SiteRateLimited(url, until, f"rate-limit notice: {notice[:120]}")
+
+
+def check_response(url: str, status: int | None, headers: dict[str, str] | None = None) -> None:
+    """Raise SiteRateLimited for HTTP 429, or 503 carrying Retry-After."""
+    headers = {key.lower(): value for key, value in (headers or {}).items()}
+    if status == 429 or (status == 503 and "retry-after" in headers):
+        until = freeze_site(url, _retry_after(headers), f"HTTP {status}")
+        raise SiteRateLimited(url, until, f"HTTP {status}")

@@ -59,6 +59,7 @@ worker 常驻轮询 `server/tasks.db`；使用锁定依赖中的 Harness 可执�
 
 以下各项 2026-09-29 起默认开启，均可关闭。全部学院仍同时开工，以下几项只限制共享资源：
 - 按站点限流：同一大学站点（如 `cs.x.edu.cn` 与 `law.x.edu.cn` 同属 `x.edu.cn`）上，本 worker 所有学院同时打开的详情页合计不超过 8 个。环境变量 `HARVEST_PER_SITE_CONCURRENCY` 可调，设为 `0` 关闭。单院 `profile_concurrency` 仍然有效。
+- 按站点请求节拍（2026-10-09 起）：同一大学站点上，worker、各侦察会话和 IDE 批量工具的页面打开、点击、素材请求共用一个节拍，开始时间至少相隔 1 秒。环境变量 `HARVEST_PER_SITE_INTERVAL_SECONDS` 可调，设为 `0` 关闭；节拍记录在 `server/outputs/site-clock.sqlite3`（`HARVEST_SITE_CLOCK_DB` 可改）。官网回限流/封 IP 提示页、HTTP 429 或带 Retry-After 的 503 时，该站点暂停到提示的冻结时长结束（默认 10 分钟，限 1 到 60 分钟），再继续原有重试。同一大学学院多时总耗时会变长，单学院 45 分钟时限不变。
 - 内存保护：已有学院在跑、且可用物理内存低于 1024MB 时，worker 暂缓领取新工单，内存恢复后继续；第一个学院不受影响。参数 `--min-free-memory-mb`，`0` 关闭。
 - 侦察用量告警：单学院按实际用量分项核算的费用超过约 1 美元，时，只告警、不中断；默认 Token 与请求次数告警均关闭，按需显式开启。告警写入 worker 日志和任务目录的 `recon-usage-alert.json`，并随工单统计保存为 `recon_usage_alerts`。参数 `--recon-alert-cost-usd`、`--recon-alert-tokens`、`--recon-alert-calls`，`0` 关闭。需要硬性熔断时，仍使用上面的 `--max-recon-calls` 与 `--max-recon-tokens`。
 - 批量提交上限：单次最多 30 个学院（`server/config.json` 的 `max_batch_colleges`），按学院计数。同一学院的多行（每行一条师资链接）合并为一张工单；同一学院的学院主页前后不一致时整批拒绝。
