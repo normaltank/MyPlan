@@ -86,7 +86,13 @@ def test_two_colleagues_share_work_review_download_and_named_stats(tmp_path, mon
                 with queue._connect() as con:
                     con.execute("UPDATE tasks SET status='failed',error='审计未通过交付门禁' WHERE task_id=?", (a_id,))
                 alice.locator('#reviewBtn').wait_for(state='visible', timeout=10000)
-                assert bob.request.get(base + f'/review/task/{a_id}').status == 200
+                # A colleague opens the pasted review link before having a name.
+                colleague = browser.new_context().new_page()
+                colleague.goto(base + f'/review/task/{a_id}')
+                colleague.locator('#displayName').fill('员工丙')
+                colleague.locator('#signin button').click()
+                colleague.locator('h1', has_text='人工复核').wait_for()
+                assert colleague.url == base + f'/review/task/{a_id}'
                 alice.locator('#reviewBtn').click()
                 alice.locator('textarea').fill('人工核对后的文字')
                 alice.locator('.card button').click()
