@@ -12,12 +12,17 @@ from hashlib import sha256
 from html import escape
 from io import BytesIO
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
 
 from PIL import Image
+
+from server import review_store
+
+TEXT_STATUSES = frozenset({"image_bio_low_confidence", "image_bio_owner_unresolved", "segment_name_needs_review"})
+EMAIL_STATUS = "image_bio_email_conflict"
+TEXT_DECISIONS_FILE = "image_bio_reviews.json"
+EMAIL_DECISIONS_FILE = "image_bio_email_reviews.json"
 
 
 def _text_digest(text: str) -> str:
@@ -463,30 +468,10 @@ def save_review_decision(path: str | Path, item: dict, verified_text: str) -> di
     if (not isinstance(verified_text, str) or not verified_text.strip()
             or len(verified_text) > 3000 or "\n" in verified_text or "\r" in verified_text):
         raise ValueError("review text must be one nonempty line of at most 3000 characters")
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        current = json.loads(path.read_text(encoding="utf-8"))
-        decisions = current["decisions"] if current.get("schema") == 1 else []
-    except (OSError, ValueError, KeyError, TypeError):
-        decisions = []
     decision = {key: item[key] for key in ("id", "media_url", "source_sha256", "page",
                                            "line_index", "ocr_text_sha256")}
     decision.update(verified_text=verified_text, reviewed_at=time.time())
-    decisions = [row for row in decisions if row.get("id") != item["id"]]
-    decisions.append(decision)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile("w", dir=path.parent, suffix=".tmp", encoding="utf-8",
-                                         delete=False) as output:
-            temporary = Path(output.name)
-            json.dump({"schema": 1, "decisions": decisions}, output, ensure_ascii=False, indent=2)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    review_store.put(path, decision)
     return decision
 
 
@@ -494,12 +479,8 @@ def apply_review_decisions(scanned: dict, media_url: str, source_sha256: str,
                            decisions_path: str | Path | None) -> tuple[dict, set[tuple[int, int]]]:
     if decisions_path is None:
         return scanned, set()
-    try:
-        payload = json.loads(Path(decisions_path).read_text(encoding="utf-8"))
-        if payload.get("schema") != 1:
-            return scanned, set()
-        decisions = {row["id"]: row for row in payload["decisions"]}
-    except (OSError, ValueError, KeyError, TypeError):
+    decisions = review_store.load(decisions_path)
+    if not decisions:
         return scanned, set()
     adjusted = copy.deepcopy(scanned)
     reviewed: set[tuple[int, int]] = set()
@@ -548,7 +529,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
     root = audit_path.parent
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     issues = [item for item in audit.get("unresolved", [])
-              if item.get("status") == "image_bio_email_conflict"]
+              if item.get("status") == EMAIL_STATUS]
     if not issues:
         return []
     records_path = _inside(audit["records_path"], root)
@@ -575,7 +556,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
             if scanned.get("source_sha256") not in (None, item["sha256"]):
                 raise ValueError("email review OCR source SHA-256 mismatch")
             adjusted, _ = apply_review_decisions(
-                scanned, item["media_url"], item["sha256"], root / "image_bio_reviews.json")
+                scanned, item["media_url"], item["sha256"], root / TEXT_DECISIONS_FILE)
             image_parts.append(adjusted["text"].strip())
             for page in adjusted["pages"]:
                 for line in page["lines"]:
@@ -593,7 +574,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
             continue
         result.append({"id": email_conflict_id(profile_url, owner_name, image_bio,
                                                  evidence, existing, choices),
-                       "owner_name": owner_name, "choices": choices,
+                       "profile_url": profile_url, "owner_name": owner_name, "choices": choices,
                        "crops": [crops_by_email.get(choice) for choice in choices]})
     return result
 
@@ -601,43 +582,44 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
 def save_email_decision(path: str | Path, item: dict, selected_email: str) -> dict:
     if selected_email not in item["choices"]:
         raise ValueError("selected email is not a verified choice")
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        decisions = payload["decisions"] if payload.get("schema") == 1 else []
-    except (OSError, ValueError, KeyError, TypeError):
-        decisions = []
     decision = {"id": item["id"], "selected_email": selected_email,
                 "choices": item["choices"], "reviewed_at": time.time()}
-    decisions = [row for row in decisions if row.get("id") != item["id"]] + [decision]
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile("w", dir=path.parent, suffix=".tmp", encoding="utf-8",
-                                         delete=False) as output:
-            temporary = Path(output.name)
-            json.dump({"schema": 1, "decisions": decisions}, output, ensure_ascii=False, indent=2)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    review_store.put(path, decision)
     return decision
 
 
 def resolve_email_conflict(path: str | Path, item_id: str, choices: list[str]) -> str | None:
-    try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        if payload.get("schema") != 1:
-            return None
-        decision = next(row for row in payload["decisions"] if row.get("id") == item_id)
-        selected = decision.get("selected_email")
-        if decision.get("choices") != choices or selected not in choices:
-            return None
-        return selected
-    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+    decision = next((row for row in review_store.rows(path)
+                     if isinstance(row, dict) and row.get("id") == item_id), None)
+    if decision is None:
         return None
+    selected = decision.get("selected_email")
+    return selected if decision.get("choices") == choices and selected in choices else None
+
+
+def text_review_complete(audit_path: str | Path, items: list[dict]) -> bool:
+    """Every OCR line under review has a nonempty decision bound to the same original line."""
+    if not items:
+        return False
+    decisions = review_store.load(Path(audit_path).parent / TEXT_DECISIONS_FILE)
+    for item in items:
+        decision = decisions.get(item["id"], {})
+        if (any(decision.get(key) != item[key] for key in
+                ("media_url", "source_sha256", "page", "line_index", "ocr_text_sha256"))
+                or not isinstance(decision.get("verified_text"), str)
+                or not decision["verified_text"].strip()):
+            return False
+    return True
+
+
+def email_review_complete(audit_path: str | Path, audit: dict, items: list[dict]) -> bool:
+    """Every flagged conflict is on the page and has a choice; one without verified crops stays open."""
+    flagged = {(issue.get("url"), issue.get("name")) for issue in audit.get("unresolved", [])
+               if issue.get("status") == EMAIL_STATUS}
+    if not flagged or flagged - {(item["profile_url"], item["owner_name"]) for item in items}:
+        return False
+    path = Path(audit_path).parent / EMAIL_DECISIONS_FILE
+    return all(resolve_email_conflict(path, item["id"], item["choices"]) is not None for item in items)
 
 
 def make_review_server(audit_path: str | Path, port: int = 8765):
@@ -649,8 +631,8 @@ def make_review_server(audit_path: str | Path, port: int = 8765):
     items = {item["id"]: item for item in collect_review_items(audit_path)}
     email_items = {item["id"]: item for item in collect_email_conflict_items(audit_path)}
     html = render_review_page(list(items.values()), list(email_items.values())).encode("utf-8")
-    decisions_path = audit_path.parent / "image_bio_reviews.json"
-    email_decisions_path = audit_path.parent / "image_bio_email_reviews.json"
+    decisions_path = audit_path.parent / TEXT_DECISIONS_FILE
+    email_decisions_path = audit_path.parent / EMAIL_DECISIONS_FILE
     save_lock = Lock()
 
     class Handler(BaseHTTPRequestHandler):

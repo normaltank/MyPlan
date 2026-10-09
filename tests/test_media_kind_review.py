@@ -8,7 +8,8 @@ from PIL import Image
 
 from server import media_kind_review
 from server.image_biography import audit_profile_media
-from server.task_image_review import carry_review_decisions, has_image_review, review_complete
+from server.review_registry import has_review, review_complete
+from server.task_image_review import carry_review_decisions
 
 
 def test_unreadable_profile_image_is_routed_to_original_media_review(tmp_path):
@@ -17,7 +18,7 @@ def test_unreadable_profile_image_is_routed_to_original_media_review(tmp_path):
         {"status": "image_bio_ocr_incomplete", "kind": "image",
          "media_url": "https://faculty.example.edu/photo.jpg"}
     ]}), encoding="utf-8")
-    assert has_image_review(path)
+    assert has_review(path)
 
 
 def unread_lines(_data, use_det=True, use_cls=True, use_rec=True):
@@ -53,11 +54,11 @@ async def test_photo_decision_applies_only_to_same_profile_url_and_original(tmp_
     items = media_kind_review.collect_items(audit)
     assert len(items) == 1 and Image.open(BytesIO(items[0]["preview_bytes"])).size == (1000, 1500)
     decisions = tmp_path / media_kind_review.DECISIONS_FILE
-    assert not review_complete(audit, [], [])
+    assert not review_complete(audit)
     media_kind_review.save_decision(decisions, items[0], "unreadable", 1)
-    assert not review_complete(audit, [], [])
+    assert not review_complete(audit)
     media_kind_review.save_decision(decisions, items[0], "photo", 1)
-    assert review_complete(audit, [], [])
+    assert review_complete(audit)
     final = await ambiguous_image(tmp_path, decisions=decisions)
     assert final["unresolved"] == [] and final["biographies"] == {}
     assert final["evidence"][0]["media_kind_review"] == "photo"
@@ -86,8 +87,8 @@ def test_unreadable_pdf_stays_blocked_by_media_review(tmp_path):
     audit = tmp_path / "audit.json"
     audit.write_text(json.dumps({"unresolved": [{"status": "image_bio_ocr_incomplete",
         "kind": "pdf", "media_url": "https://faculty.example.edu/cv.pdf"}]}), encoding="utf-8")
-    assert not has_image_review(audit)
-    assert not review_complete(audit, [], [])
+    assert not has_review(audit)
+    assert not review_complete(audit)
 
 
 @pytest.mark.asyncio

@@ -108,18 +108,23 @@ def test_table_poster_mixing_and_non_http_plan_are_rejected():
 
 
 def test_table_review_does_not_hide_other_review_kinds(tmp_path, monkeypatch):
-    from server import image_table_review, task_image_review
+    from dataclasses import replace
+    from server import name_review, review_registry
     audit = tmp_path / "a_audit.json"
     audit.write_text(json.dumps({"image_table_evidence": [{"url": "u"}], "unresolved": [
         {"status": "table_full_image_review_missing"},
-        {"status": task_image_review.name_review.STATUS}]}), encoding="utf-8")
-    monkeypatch.setattr(image_table_review, "review_complete", lambda path: True)
-    pending = [{"id": "name-1"}]
-    assert not task_image_review.review_complete(audit, [], [], names=pending)
-    monkeypatch.setattr(task_image_review.name_review, "review_complete", lambda path, items: True)
-    assert task_image_review.review_complete(audit, [], [], names=pending)
+        {"status": name_review.STATUS}]}), encoding="utf-8")
+    decided = {"table": True, "name": False}
+    fakes = {"image_table": lambda path, audit, items: decided["table"],
+             "name": lambda path, audit, items: decided["name"]}
+    monkeypatch.setattr(review_registry, "KINDS", tuple(
+        replace(kind, collect=lambda path: [], complete=fakes[kind.name]) if kind.name in fakes else kind
+        for kind in review_registry.KINDS))
+    assert not review_registry.review_complete(audit)
+    decided["name"] = True
+    assert review_registry.review_complete(audit)
     audit.write_text(json.dumps({"image_table_evidence": [{"url": "u"}],
                                  "unresolved": [{"status": "table_cell_low_confidence"}]}), encoding="utf-8")
-    assert task_image_review.review_complete(audit, [], [])
-    monkeypatch.setattr(image_table_review, "review_complete", lambda path: False)
-    assert not task_image_review.review_complete(audit, [], [])
+    assert review_registry.review_complete(audit)
+    decided["table"] = False
+    assert not review_registry.review_complete(audit)

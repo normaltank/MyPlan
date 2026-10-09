@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
+
+from server import review_store
 
 DECISIONS_FILE = "media_kind_reviews.json"
 STATUS = "image_bio_ocr_incomplete"
@@ -18,11 +18,7 @@ def evidence_id(profile_url: str, media_url: str, source_sha256: str) -> str:
 
 
 def load_decisions(path: Path) -> dict:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return {item["id"]: item for item in payload["decisions"]} if payload.get("schema") == 1 else {}
-    except (OSError, ValueError, TypeError, KeyError):
-        return {}
+    return review_store.load(path)
 
 
 def photo_confirmed(path: Path | None, profile_url: str, media_url: str, source_sha256: str) -> bool:
@@ -77,20 +73,7 @@ def save_decision(path: Path, item: dict, verdict: str, reviewed_by: int) -> Non
     if decision["id"] != evidence_id(decision["profile_url"], decision["media_url"], decision["source_sha256"]):
         raise ValueError("invalid media evidence identity")
     decision.update(verdict=verdict, reviewed_by=reviewed_by, reviewed_at=time.time())
-    decisions = load_decisions(path)
-    decisions[item["id"]] = decision
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile("w", dir=path.parent, suffix=".tmp", encoding="utf-8",
-                                         delete=False) as output:
-            temporary = Path(output.name)
-            json.dump({"schema": 1, "decisions": list(decisions.values())}, output, ensure_ascii=False)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    review_store.put(path, decision)
 
 
 def review_complete(audit_path: Path, items: list[dict]) -> bool:

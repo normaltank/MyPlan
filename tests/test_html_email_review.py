@@ -17,7 +17,8 @@ from server import faculty_extractor, html_email_review
 from server.access_control import AccountStore
 from server.agent_queue import AgentTaskQueue
 from server.faculty_extractor import FacultyCandidate, FacultyHarvestPipeline
-from server.task_image_review import carry_review_decisions, review_complete
+from server.review_registry import review_complete
+from server.task_image_review import carry_review_decisions
 
 ROOT = "https://review.example.edu"
 PLAN = {"school": "样本大学", "college": "样本学院", "source_kind": "university_faculty_roster"}
@@ -87,9 +88,9 @@ async def test_two_labelled_addresses_block_then_reviewed_choice_resumes_deliver
         _decide(first, "task-1", report, "none")
     with pytest.raises(ValueError):
         _decide(first, "task-1", report, "select", "guess@example.edu")
-    assert review_complete(Path(report["audit_path"]), [], [], html_emails=[item]) is False
+    assert review_complete(Path(report["audit_path"])) is False
     _decide(first, "task-1", report, "select", "wangxiaolan@example.edu")
-    assert review_complete(Path(report["audit_path"]), [], [], html_emails=[item]) is True
+    assert review_complete(Path(report["audit_path"])) is True
 
     (task_root / "review-resume.json").write_text(json.dumps(
         {"task_id": "task-1", "audit_path": report["audit_path"]}), encoding="utf-8")
