@@ -173,10 +173,20 @@ async def test_unsized_image_gone_on_every_open_is_the_published_profile():
 
 
 @pytest.mark.asyncio
+async def test_icon_sized_image_gone_on_every_open_is_the_published_profile():
+    # 集美大学海洋文化与法律学院: a VSB editor's broken 22x22 'spacer.gif' in the body.
+    evidence, issues = await capture_with_missing_image(
+        '<img class="img_vsb_content" src="spacer.gif" width="22" height="22">')
+    assert not issues and evidence[URL]['confirmed']
+    assert evidence[URL]['unpublished_images'] == ['https://scope.example.edu/spacer.gif']
+
+
+@pytest.mark.asyncio
 async def test_missing_image_the_page_sizes_or_that_fails_transiently_still_blocks():
     for img, status, style in (('<img src="/spacer.gif">', 503, ''),
                                ('<img src="/spacer.gif">', 404, '<style>#text img{width:120px}</style>'),
-                               ('<img src="/spacer.gif" style="height:80px">', 404, '')):
+                               ('<img src="/spacer.gif" style="height:80px">', 404, ''),
+                               ('<img src="/spacer.gif" width="40" height="22">', 404, '')):
         evidence, issues = await capture_with_missing_image(img, status=status, style=style)
         negative = next(item['browser_evidence'] for item in issues
                         if item['status'] == 'profile_content_browser_unverified')

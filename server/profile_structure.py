@@ -76,11 +76,14 @@ def failed_resources(failed: list[tuple[str, str, int | None]]) -> list[tuple[st
 
 
 # An image inside the profile the server answers 404/410 on two opens is missing
-# for every reader. When the page gives it no room either, nothing was ever shown
-# there, so the profile as rendered is the profile as published (an editor's
-# leftover placeholder). A loaded 1x1 copy laid out in its place measures the
-# room: only the page's own sizing (attributes, CSS) makes it larger. A broken
-# image's own icon is the browser's, not the page's, so it is not measured.
+# for every reader. When the room the page gives it is no larger than an icon
+# (MAX_MISSING_ICON_PX square, badr 2026-10-09), it could never have shown a
+# line of a biography, so the profile as rendered is the profile as published
+# (an editor's leftover placeholder, a broken 22x22 'spacer.gif'). A loaded 1x1
+# copy laid out in its place measures the room: only the page's own sizing
+# (attributes, CSS) makes it larger. A broken image's own icon is the
+# browser's, not the page's, so it is not measured.
+MAX_MISSING_ICON_PX = 32
 _UNSIZED_IMAGES = """async args => {
   const root=document.querySelector(args.selector);
   if(!root) return args.urls.map(()=>false);
@@ -101,7 +104,7 @@ _UNSIZED_IMAGES = """async args => {
       try { await probe.decode(); } catch(error) { loaded=false; }
       const box=probe.getBoundingClientRect();
       probe.remove();
-      if(!loaded || box.width>1 || box.height>1) unsized=false;
+      if(!loaded || box.width>args.limit || box.height>args.limit) unsized=false;
     }
     result.push(unsized);
   }
@@ -341,7 +344,8 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                            if value and item[2] in _GONE and resource in recurring]
             # A body made only of images goes to image review instead.
             if gone_inside and _profile_text(html, selector, start_selector, page.url):
-                unsized = await page.evaluate(_UNSIZED_IMAGES, {'selector': selector, 'urls': gone_inside})
+                unsized = await page.evaluate(_UNSIZED_IMAGES, {'selector': selector, 'urls': gone_inside,
+                                                                  'limit': MAX_MISSING_ICON_PX})
                 unpublished_images = [url for url, value in zip(gone_inside, unsized) if value]
                 ignored += len(unpublished_images)
         # A permanently missing script or fetch/XHR (e.g. a visit counter) does
