@@ -28,10 +28,15 @@ def test_contact_field_recognizes_all_published_addresses(case):
         verified_profile_urls={url})
     records = result['sheet1_with_email'] + result['sheet2_no_email']
     assert len(records) == 1
-    if len(case['matches']) == 1:
-        assert records[0]['邮箱'] == case['matches'][0]
+    hosted = [em for em in case['matches'] if em.endswith('@example.edu')]
+    if len(case['matches']) == 1 or len(hosted) == 1:
+        # Several addresses of this person: the one on the university's domain
+        # (badr 2026-10-09), the others kept as audit evidence.
+        assert records[0]['邮箱'] == (case['matches'][0] if len(case['matches']) == 1 else hosted[0])
         assert result['is_conserved'] is True
         assert not result['unresolved']
+        if len(case['matches']) > 1:
+            assert result['email_alternates'][0]['others'] == [em for em in case['matches'] if em != hosted[0]]
     else:
         assert records[0]['邮箱'] == ''
         assert [issue['status'] for issue in result['unresolved']] == ['ambiguous_email_assignment']
@@ -52,7 +57,8 @@ def test_spacing_does_not_turn_a_qualified_public_contact_into_a_personal_label(
 
 def test_user_selected_first_published_email_releases_only_the_bound_conflict(tmp_path):
     case = CASES[-1]
-    url, name = case['主页'], case['姓名']
+    # Published on another organisation's site, the university domain does not decide.
+    url, name = 'https://profiles.example.org/p/7.htm', case['姓名']
     html = f'<article><h1>{name}</h1>{case["contact_html"]}</article>'
     candidate = FacultyCandidate(name, url)
     result = FacultyHarvestPipeline.harvest_candidates(

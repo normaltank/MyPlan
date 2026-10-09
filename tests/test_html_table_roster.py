@@ -209,3 +209,24 @@ async def test_batch_delivery_keeps_row_evidence_and_standard_dual_sheets(tmp_pa
     for sheet in workbook:
         assert [cell.value for cell in sheet[1]] == [
             "序号", "姓名", "职称", "邮箱", "学校", "学院", "采集人", "采集日期", "简介", "主页"]
+
+
+def test_rare_surname_in_the_labelled_name_column_is_a_name():
+    # badr 2026-10-09: the table itself says the cell is a 姓名.
+    plan, page = case_page("ahstu_dk", """
+        <table><tbody>
+        <tr class="firstRow"><td>序号</td><td>姓名</td><td>职称</td></tr>
+        <tr><td>1</td><td>闻爱友</td><td>教授</td></tr>
+        <tr><td>2</td><td>张三</td><td>讲师</td></tr></tbody></table>""")
+    result = reconcile_rosters([page], plan)
+    assert result.unresolved == []
+    assert sorted(person.name for person in result.candidates) == ["张三", "闻爱友"]
+
+
+def test_rare_surname_outside_a_labelled_name_column_still_needs_review():
+    plan, page = case_page("ahstu_dk", """
+        <table><tbody>
+        <tr><td>1</td><td>闻爱友</td><td>教授</td></tr>
+        <tr><td>2</td><td>张三</td><td>讲师</td></tr></tbody></table>""")
+    result = reconcile_rosters([page], plan)
+    assert [item["name"] for item in result.unresolved if item["status"] == "rare_surname_needs_review"] == ["闻爱友"]

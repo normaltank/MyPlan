@@ -1115,7 +1115,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                     if html:
                         state.save_page("profile", url, html, meta={"browser": "native_chrome"})
             profile_errors = [item for item in profile_errors if item["url"] not in recovered or not recovered.get(item["url"])]
-    from server.faculty_identity import resolve_broken_profile_aliases
+    from server.faculty_identity import resolve_broken_profile_aliases, resolve_duplicate_profile_aliases
     aliases = resolve_broken_profile_aliases(
         candidates, profile_html, profile_errors, profile_live_evidence,
         roster_reconciliation.profile_content_sources)
@@ -1125,6 +1125,12 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                                 "reason": "repeated_official_roster_link_and_unique_verified_identity",
                                 "source_rosters": len({item.get("roster_url") for item in
                                                        roster_reconciliation.profile_content_sources.get(dead, [])})})
+    duplicates = resolve_duplicate_profile_aliases(candidates, profile_html, profile_live_evidence, roster_urls)
+    for duplicate, kept in duplicates.items():
+        profile_aliases.append({"duplicate_url": duplicate, "verified_url": kept,
+                                "reason": "identical_verified_profile_body"})
+    aliases = {**aliases, **duplicates}
+    for dead in aliases:
         candidates = [candidate for candidate in candidates if candidate.url != dead]
         candidate_sources = {key: value for key, value in candidate_sources.items() if key[1] != dead}
         roster_reconciliation.profile_content_selectors.pop(dead, None)
@@ -1369,6 +1375,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "with_email": sum(bool(str(row.get("邮箱", "")).strip()) for row in records),
         "branches": branches, "roster_observations": roster_observations,
         "profile_aliases": profile_aliases,
+        "email_alternates": extraction.get("email_alternates", []),
         "identity_merges": identity_merges,
         "identity_review_items": identity_items, "identity_reviews": identity_reviews,
         "identity_review_path": str(decision_path), "identity_observations_path": str(observations_path),

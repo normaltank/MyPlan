@@ -74,6 +74,62 @@ DETAIL_MECC_AVAILABLE = True
 
 _DEFAULT_L1_EXECUTOR = None
 
+_PUBLIC_SECOND_LEVEL = {"edu", "ac", "com", "org", "net", "gov"}
+
+
+def _organisation_domain(host: str) -> str:
+    """'hxhgxy.sqnu.edu.cn' -> 'sqnu.edu.cn'; 'jszy.whu.edu.cn' -> 'whu.edu.cn'."""
+    labels = (host or "").lower().split(":")[0].split(".")
+    keep = 3 if len(labels) >= 3 and labels[-2] in _PUBLIC_SECOND_LEVEL and len(labels[-1]) == 2 else 2
+    return ".".join(labels[-keep:])
+
+
+def on_university_domain(email: str, page_url: str) -> bool:
+    """The address is hosted by the organisation that publishes the page."""
+    domain = email.lower().rpartition("@")[2]
+    org = _organisation_domain(urlparse(page_url).netloc)
+    return bool(org) and (domain == org or domain.endswith("." + org))
+
+
+def prefer_university_email(emails, page_url: str):
+    """Of several addresses that are all this person's, the one on the
+    university's own domain; None when that does not single one out."""
+    hosted = [em for em in emails if on_university_domain(em, page_url)]
+    return hosted[0] if len(hosted) == 1 else None
+
+
+def spells_other_person(email: str, own_name: str, text: str) -> bool:
+    """The address spells a name other than ``own_name`` that the text shows
+    (a co-author, a student, a secretary). A numeric address spells nobody."""
+    local = re.sub(r"[-_.]", "", email.lower().partition("@")[0])
+    if not local or local.isdigit():
+        return False
+    own = re.sub(r"\s+", "", own_name or "")
+    seen = set()
+    for run in re.findall(r"[\u4e00-\u9fff]{2,}", text or ""):
+        for size in (2, 3):
+            for start in range(len(run) - size + 1):
+                word = run[start:start + size]
+                if word in seen or word in own or own in word:
+                    continue
+                seen.add(word)
+                if name_prob(word) >= 0.5 and is_personal_email_for_scholar(email, word):
+                    return True
+    return False
+
+
+def owned_by_position(email: str, own_name: str, text: str) -> bool:
+    """badr 2026-10-09: inside a person's own verified content, the one address
+    shown there is theirs whatever its spelling, unless it spells someone else
+    named in that content, or is a bare abbreviation (zz@, jwc@) that reads as
+    an office rather than a person."""
+    local = re.sub(r"[-_.]", "", email.lower().partition("@")[0])
+    if not local.isdigit() and len(re.sub(r"\d", "", local)) <= 3 and not is_personal_email_for_scholar(
+            email, own_name):
+        return False
+    return not spells_other_person(email, own_name, text)
+
+
 def get_default_l1_executor():
     global _DEFAULT_L1_EXECUTOR
     if _DEFAULT_L1_EXECUTOR is None and L1_AVAILABLE:
@@ -452,15 +508,19 @@ class FacultyDirectoryExtractor:
                 title = select_title(explicit=explicit_title_candidates(context), card_title=title,
                                      body_title=resolve_title(context)).title
                 reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'
+                # A rare surname standing in a column the table itself labels
+                # 姓名 is a name (badr 2026-10-09); elsewhere a person confirms it.
+                labelled_name = name_scope is not card and rare_surname_name(name)
                 slots.append((FacultyCandidate(name, href or base_url, title, context, reason,
-                                                mailto_address_conflicts(card), table.get('evidence')), name_prob(name)))
-        trusted = sum(prob >= 0.5 for _, prob in slots)
-        linked = sum(person.url != base_url for person, _ in slots)
+                                                mailto_address_conflicts(card), table.get('evidence')),
+                              name_prob(name), labelled_name))
+        trusted = sum(prob >= 0.5 for _, prob, _ in slots)
+        linked = sum(person.url != base_url for person, _, _ in slots)
         found, review = [], []
-        for person, prob in slots:
+        for person, prob, labelled_name in slots:
             structural = (len(cards) >= 4 and trusted >= 3 and linked / len(cards) >= 0.8
                           and person.url != base_url and bool(re.fullmatch(r'[\u4e00-\u9fff]{2,4}', person.name)))
-            (found if prob >= 0.5 or structural else review).append(person)
+            (found if prob >= 0.5 or structural or labelled_name else review).append(person)
         return found, review
 
     @classmethod
@@ -1077,6 +1137,10 @@ class FacultyHarvestPipeline:
         dcm = DomainConventionModel() if DomainConventionModel is not None else None
 
         sheet1_with_email, sheet2_no_email, unresolved = [], [], []
+        # How an address was chosen when its spelling did not decide it, and
+        # the person's other addresses: audit evidence, not a blocker.
+        email_alternates: List[Dict[str, Any]] = []
+
         for cand in candidates:
             if cand.mailto_conflicts:
                 unresolved.append({'姓名': cand.name, '主页': cand.url,
@@ -1184,6 +1248,15 @@ class FacultyHarvestPipeline:
 
                 contacts = tuple(em for em in prof.contact_emails if usable(em)) if prof else ()
                 page_emails = [em for em in prof.emails if usable(em)] if prof else []
+                preferred = prefer_university_email(contacts, cand.url) if len(contacts) > 1 else None
+                if preferred and not email and preferred.lower() not in assigned_emails:
+                    # Several labelled addresses of this person: the university's own.
+                    email = preferred
+                    assigned_emails.add(email.lower())
+                    email_alternates.append({"姓名": cand.name, "主页": cand.url, "邮箱": email,
+                                             "others": [em for em in contacts if em != email],
+                                             "basis": "labelled_university_domain"})
+                    contacts = ()
                 if contacts:
                     if len(contacts) != 1 or (email and email.lower() != contacts[0].lower()):
                         unresolved.append({"姓名": cand.name, "主页": cand.url,
@@ -1208,11 +1281,33 @@ class FacultyHarvestPipeline:
                             assigned_emails.add(em.lower())
                             break
                     if page_emails and not email and not contacts:
-                        unresolved.append({"姓名": cand.name, "主页": cand.url,
-                                           "status": "ambiguous_email_assignment", "matches": page_emails})
+                        free = [em for em in dict.fromkeys(page_emails) if em.lower() not in assigned_emails]
+                        positional = ([em for em in free if owned_by_position(em, cand.name, prof.full_bio)]
+                                      if cand.url in (verified_profile_urls or ()) else [])
+                        chosen = (positional[0] if len(positional) == 1 and len(free) == 1
+                                  else prefer_university_email(positional, cand.url)
+                                  if len(positional) == len(free) else None)
+                        if chosen:
+                            email = chosen
+                            assigned_emails.add(email.lower())
+                            email_alternates.append({"姓名": cand.name, "主页": cand.url, "邮箱": email,
+                                                     "others": [em for em in free if em != email],
+                                                     "basis": "position_in_verified_profile"})
+                        else:
+                            unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                               "status": "ambiguous_email_assignment", "matches": page_emails})
                 if card_unowned and not email and len(unresolved) == issues_before:
-                    unresolved.append({"姓名": cand.name, "主页": cand.url,
-                                       "status": "ambiguous_email_assignment", "matches": card_unowned})
+                    # The one address in this person's own roster card is theirs by position.
+                    free = [em for em in card_unowned if em.lower() not in assigned_emails]
+                    if (len(free) == len(card_unowned) == 1
+                            and owned_by_position(free[0], cand.name, cand.card_context)):
+                        email = free[0]
+                        assigned_emails.add(email.lower())
+                        email_alternates.append({"姓名": cand.name, "主页": cand.url, "邮箱": email,
+                                                 "others": [], "basis": "position_in_roster_card"})
+                    else:
+                        unresolved.append({"姓名": cand.name, "主页": cand.url,
+                                           "status": "ambiguous_email_assignment", "matches": card_unowned})
 
                 if email and dcm is not None:
                     try:
@@ -1290,6 +1385,7 @@ class FacultyHarvestPipeline:
             # The sheets themselves balance; a caller may settle ``unresolved`` by evidence-bound review.
             "records_conserved": records_conserved,
             "delivery_ready": delivery_ready,
+            "email_alternates": email_alternates,
         }
 
     @classmethod
