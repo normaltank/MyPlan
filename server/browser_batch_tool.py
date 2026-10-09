@@ -1238,9 +1238,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                                "assigned_images": len(assigned_names)})
     for candidate in admitted:
         html = profile_html.get(candidate.url)
-        if (html and candidate.name not in BeautifulSoup(html, "html.parser")
-                .get_text(" ", strip=True).replace(" ", "")
-                and candidate.name not in media_audit["biographies"].get(candidate.url, "")):
+        name_key = re.sub(r"\s+", "", candidate.name)
+        page_key = re.sub(r"\s+", "", BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True))
+        image_key = re.sub(r"\s+", "", media_audit["biographies"].get(candidate.url, ""))
+        if html and name_key not in page_key and name_key not in image_key:
             unresolved.append({"url": candidate.url, "name": candidate.name,
                                "status": "profile_identity_not_found"})
     finish_stage("media_audit")

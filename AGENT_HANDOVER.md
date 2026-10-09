@@ -33,10 +33,12 @@
 | `name` | `server/name_review.py`（生僻姓、角色行姓名） | `name_review.STATUS` = `rare_surname_needs_review` | `name_review.DECISIONS_FILE` = `name_reviews.json` |
 | `identity` | `server/identity_review.py`（学院内同名多主页，仅管理员） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
 | `html_email` | `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个）；只有带教师姓名的才要裁决，旧审计缺证据时只能重跑生成 | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
-| `media_kind` | `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`；`kind == "image"` 才进复核页，PDF 的始终挡重试 | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
+| `media_kind` | `server/media_kind_review.py`（原图是非简历照片还是文字资料） | `media_kind_review.STATUSES`：`image_bio_ocr_incomplete`，以及从 `image_bio_review` 引用的归属/低置信状态；图片可整图确认照片用途或纠字，PDF 空页仍挡重试 | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
 | `image_table` | `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生）；有表格证据即需复核完 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
 
 `tests/test_review_status_registry.py` 核对登记表的状态码都在 recovery_policy 的 review 组里。
+
+2026-10-09 外国语学院复核循环修复：背景标牌文字的非简历照片由 `media_kind_review` 的原件绑定决定处理，`image_bio_review.text_review_complete` 排除已确认照片并检查图片标题纠字是否能唯一归属；`image_biography` 取回原件再应用决定。个人页身份比较在 `browser_batch_tool.run_plan` 对姓名与页面文本一致处理空白。原件、原文和其它失败门禁保留，见[诊断](docs/audits/2026-10-09-foreign-language-review-loop.md)。
 
 大学级复核不在登记表里：`server/university_identity_review.py`（跨学院同名）按批次和学校聚合，决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，卡的是大学发布，不是学院重试。
 
