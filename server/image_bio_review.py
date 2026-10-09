@@ -229,7 +229,9 @@ _REVIEW_CSS = (
     ".meta{color:var(--muted);font-size:13px}.status{font-size:13px;color:var(--ok)}.status:empty{display:none}"
     ".email-option{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 10px;padding:12px;"
     "border:1px solid var(--border);border-radius:var(--radius-sm);font-weight:400!important;cursor:pointer}"
-    ".email-option img,.email-option small{grid-column:2}"
+    # Every line after the radio sits beside it; quoted context must not fall into the radio's column.
+    ".email-option img,.email-option small,.email-option blockquote{grid-column:2}"
+    ".email-option:has(input:disabled){cursor:not-allowed;color:var(--muted)}"
     ".email-option:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}"
     "blockquote{margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-2)}"
     "#retry-review{height:44px;margin-top:20px;background:var(--ok)}#retry-review:hover{background:#065f46}"
@@ -264,6 +266,32 @@ def _name_cards(name_items: list[dict]) -> list[str]:
             '<button type="button" data-verdict="not_person" class="secondary">不是教师姓名</button></div>'
             '<p class="status" role="status"></p></section>')
     return cards
+
+
+_PROFILE_PAGE_SAVED = {"roster_only": "已保存：按名录收录，简介留空", "not_teacher": "已保存：不收这位"}
+
+
+def _profile_page_cards(items: list[dict]) -> str:
+    cards = []
+    for item in items:
+        roster_only = ('<button type="button" data-verdict="roster_only">链接不是本人页，按名录收录、简介留空</button>'
+                       if item.get("roster_url") else '')
+        cards.append(
+            '<section class="card profile-page-card" data-id="' + escape(item["id"]) + '">'
+            '<h2>个人页上找不到本人：' + escape(item["name"]) + '</h2>'
+            '<p class="meta">'
+            + ('名录页 ' + _page_link(item["roster_url"]) + ' · ' if item.get("roster_url") else '')
+            + '名录链接 ' + _page_link(item["url"]) + '</p>'
+            '<p>名录卡片原文：</p><blockquote>' + escape(item.get("card_text", "")[:300]) + '</blockquote>'
+            '<p>链接打开的页面文字（没有出现这个名字）：</p><blockquote>'
+            + escape(item.get("page_text", "")) + '</blockquote>'
+            '<p>请打开链接核对。页面是失效、无权访问或别的内容时，可按名录收录；名字不是本院教师就不收。'
+            '页面文字变了要重新判。</p>'
+            '<div class="actions">' + roster_only
+            + '<button type="button" data-verdict="not_teacher" class="secondary">不是本院教师，不收</button></div>'
+            '<p class="status" role="status">' + escape(_PROFILE_PAGE_SAVED.get(item.get("saved_verdict", ""), ""))
+            + '</p></section>')
+    return "".join(cards)
 
 
 def _identity_cards(items: list[dict]) -> str:
@@ -362,7 +390,9 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                        identity_decision_url: str = '',
                        html_email_items: list[dict] | None = None,
                        html_email_decision_url: str = '', media_kind_items: list[dict] | None = None,
-                       media_kind_decision_url: str = '', irrelevant_decision_url: str = '') -> str:
+                       media_kind_decision_url: str = '', irrelevant_decision_url: str = '',
+                       profile_page_items: list[dict] | None = None,
+                       profile_page_decision_url: str = '') -> str:
     cards = []
     previewed = set()
     for item in items:
@@ -430,6 +460,8 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     if name_cards:
         body += ('<h2>姓名待确认</h2><p>这些名字的姓不在常用姓氏表里，或是外籍译名等程序认不出的名字，'
                  '也可能是普通词语。请打开名录页核对。</p>' + "\n".join(name_cards))
+    if profile_page_items:
+        body += '<h2>个人页上找不到本人</h2>' + _profile_page_cards(profile_page_items)
     if not body and not identity_items:
         body = '<p>当前没有需要人工复核的图片文字、邮箱或姓名。</p>'
     if identity_items:
@@ -441,6 +473,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     html_email_js = json.dumps(html_email_decision_url).replace('<', '\\u003c')
     media_kind_js = json.dumps(media_kind_decision_url).replace('<', '\\u003c')
     irrelevant_js = json.dumps(irrelevant_decision_url).replace('<', '\\u003c')
+    profile_page_js = json.dumps(profile_page_decision_url).replace('<', '\\u003c')
     retry_js = json.dumps(retry_url).replace('<', '\\u003c')
     csrf_js = json.dumps(csrf_token).replace('<', '\\u003c')
     footer = ''
@@ -489,6 +522,15 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "if(!response.ok)throw await failure(response);"
             "status.textContent=verdict==='none'?'已确认无个人邮箱':'已保存邮箱：'+selected_email;}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
+            "document.querySelectorAll('.profile-page-card').forEach(card=>{"
+            "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
+            "const status=card.querySelector('.status');const verdict=button.dataset.verdict;"
+            "try{const response=await fetch(" + profile_page_js + ",{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
+            "body:JSON.stringify({id:card.dataset.id,verdict})});"
+            "if(!response.ok)throw await failure(response);"
+            "status.textContent=" + json.dumps(_PROFILE_PAGE_SAVED) + "[verdict];}"
+            "catch(error){status.textContent='保存失败：'+error.message;}});});"
             "document.querySelectorAll('.media-kind-card').forEach(card=>{"
             "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
             "const status=card.querySelector('.status');const verdict=button.dataset.verdict;"
@@ -499,7 +541,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "status.textContent=verdict==='photo'?'已确认纯人物照片；重新采集时校验原件':"
             "verdict==='irrelevant'?" + json.dumps(_IRRELEVANT_SAVED) + ":'保持阻断，请处理原图文字';}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
-            "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card):not(.media-kind-card)').forEach(card=>{"
+            "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card):not(.media-kind-card):not(.profile-page-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
             "const verified_text=card.querySelector('textarea').value;"
             "try{const response=await fetch(" + decision_js + ",{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"

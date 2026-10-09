@@ -29,7 +29,8 @@ if __package__:
     from .image_table_routes import router as image_table_router
     from .task_image_review import (task_review_audit, review_items, prepare_review_resume,
                                     legacy_review_audits)
-    from . import html_email_review, name_review, identity_review, media_kind_review, review_registry, image_bio_review
+    from . import (html_email_review, name_review, identity_review, media_kind_review, review_registry, image_bio_review,
+                   profile_page_review)
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
@@ -44,6 +45,7 @@ else:
     import name_review
     import identity_review
     import media_kind_review
+    import profile_page_review
     from image_bio_review import (render_review_page, save_review_decision,
                                   save_email_decision)
 
@@ -214,6 +216,11 @@ class HtmlEmailReviewRequest(BaseModel):
     id: str
     verdict: str
     selected_email: str = ''
+
+
+class ProfilePageReviewRequest(BaseModel):
+    id: str
+    verdict: str
 
 
 class NameReviewRequest(BaseModel):
@@ -410,7 +417,10 @@ async def task_image_review_page(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
         items = review_registry.collect(audit, 'image_bio_text', 'image_bio_email', 'name', 'identity',
-                                        'html_email', 'media_kind')
+                                        'html_email', 'media_kind', 'profile_page')
+        page_decisions = profile_page_review.load_decisions(audit.parent / profile_page_review.DECISIONS_FILE)
+        for item in items['profile_page']:
+            item['saved_verdict'] = page_decisions.get(item['id'], {}).get('verdict', '')
         saved = identity_review.load_decisions(audit.parent / identity_review.DECISIONS_FILE)
         for item in items['identity']:
             decision = saved.get(item['id'], {})
@@ -427,7 +437,9 @@ async def task_image_review_page(task_id: str, request: Request):
         identity_items=items['identity'], identity_decision_url=f'/api/task/{task_id}/review/identity',
         html_email_items=items['html_email'], html_email_decision_url=f'/api/task/{task_id}/review/html-email',
         media_kind_items=items['media_kind'], media_kind_decision_url=f'/api/task/{task_id}/review/media-kind',
-        irrelevant_decision_url=f'/api/task/{task_id}/review/irrelevant-media')
+        irrelevant_decision_url=f'/api/task/{task_id}/review/irrelevant-media',
+        profile_page_items=items['profile_page'],
+        profile_page_decision_url=f'/api/task/{task_id}/review/profile-page')
     if json.loads(audit.read_text(encoding="utf-8")).get("image_table_evidence"):
         rendered = rendered.replace("</html>", '<p><a href="/review/task/' + escape(task_id)
                                     + '/table">图片表格逐格复核</a></p></html>')
@@ -531,6 +543,19 @@ async def save_task_name_review(task_id: str, payload: NameReviewRequest, reques
     return Response(status_code=204)
 
 
+@app.post('/api/task/{task_id}/review/profile-page', status_code=204)
+async def save_task_profile_page_review(task_id: str, payload: ProfilePageReviewRequest, request: Request):
+    _, audit = _review_task(task_id, request)
+    try:
+        item = next((item for item in profile_page_review.collect_items(audit) if item['id'] == payload.id), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail='个人页证据不存在或已变化')
+        profile_page_review.save_decision(audit.parent / profile_page_review.DECISIONS_FILE, item, payload.verdict)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail='个人页复核无效') from exc
+    return Response(status_code=204)
+
+
 @app.post('/api/task/{task_id}/review/identity', status_code=204)
 async def save_task_identity_review(task_id: str, payload: IdentityReviewRequest, request: Request):
     _, audit = _review_task(task_id, request)
@@ -558,6 +583,14 @@ async def retry_task_after_image_review(task_id: str, request: Request):
     if not agent_queue.retry_failed_review_task(task_id):
         raise HTTPException(status_code=409, detail='工单状态已变化，请刷新页面')
     return {'status': 'queued', 'task_id': task_id}
+
+
+@app.post('/api/task/{task_id}/no-faculty')
+async def mark_task_no_faculty(task_id: str, request: Request):
+    """A person checked the college site and found no faculty roster."""
+    if not agent_queue.mark_no_faculty(task_id, _user(request).id):
+        raise HTTPException(status_code=409, detail='只有已结束的学院工单可以判为无师资，请刷新页面')
+    return {'status': 'completed', 'task_id': task_id}
 
 
 def _university_review_url(batch_id: str | None, school: str) -> str:

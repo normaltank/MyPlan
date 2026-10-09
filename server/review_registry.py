@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from server import (html_email_review, identity_review, image_bio_review, image_table_review, media_kind_review,
-                    name_review)
+                    name_review, profile_page_review)
 from server.image_table_roster import REVIEW_FILE as IMAGE_TABLE_REVIEW_FILE
 
 
@@ -76,6 +76,10 @@ KINDS: tuple[ReviewKind, ...] = (
         html_email_review.collect_items, html_email_review.review_complete,
         # Only a teacher-bound conflict has a decision to make.
         triggered=html_email_review.has_pending, rerun_only=html_email_review.evidence_missing),
+    ReviewKind(
+        "profile_page", frozenset({profile_page_review.STATUS}), (profile_page_review.DECISIONS_FILE,),
+        profile_page_review.collect_items,
+        lambda path, audit, items: profile_page_review.review_complete(path, items)),
     ReviewKind(
         "image_table", image_table_review.STATUSES, (IMAGE_TABLE_REVIEW_FILE,),
         image_table_review.items,

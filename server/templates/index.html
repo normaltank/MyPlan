@@ -121,6 +121,8 @@
         .subtask-school { color: var(--muted); font-size: 12px; white-space: nowrap; }
         .subtask-actions { display: flex; align-items: center; gap: 6px; flex: none; }
         .subtask-actions a { font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+        .subtask-actions .no-faculty { font: inherit; font-size: 12.5px; color: var(--muted); background: none;
+                                       border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
 
         .log { max-height: 300px; overflow-y: auto; padding: 4px 14px; border: 1px solid var(--border);
                border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted); font-size: 13px; }
@@ -814,16 +816,48 @@
         }
 
         // A failed college keeps status 'failed'; its recorded codes say what it waits on.
-        const FAILURE_LABELS = {review: '待人工复核', structure: '待结构处理', access: '访问未成功，可重试',
-                                recon: '侦察未完成', failed: '失败'};
+        const FAILURE_LABELS = {review: '待人工复核', maintenance: '需维护处理', structure: '待结构处理',
+                                access: '访问未成功，可重试', recon: '侦察未完成', failed: '失败'};
+        // A review code with no review page to settle it waits on maintenance, not on a reviewer.
+        function failureKind(task) {
+            const kind = task.failure_disposition || 'failed';
+            return kind === 'review' && !task.review_url ? 'maintenance' : kind;
+        }
         function failureLabel(task) {
             if (task.source_review_required) return ['来源范围待核验', 'warn'];
-            const kind = task.failure_disposition || 'failed';
+            const kind = failureKind(task);
             return [FAILURE_LABELS[kind] || '失败', kind === 'failed' ? 'danger' : 'warn'];
         }
 
+        document.addEventListener('click', async event => {
+            const button = event.target.closest('button.no-faculty');
+            if (!button) return;
+            if (!confirm(`确认「${button.dataset.college}」官网没有专任教师名录？\n判定后按 0 人完成，之前采到的人不进大学表。`)) return;
+            button.disabled = true;
+            try {
+                const response = await fetch(`/api/task/${encodeURIComponent(button.dataset.task)}/no-faculty`,
+                    {method: 'POST', headers: {'X-CSRF-Token': csrfToken}});
+                if (!response.ok) {
+                    const body = await response.json().catch(() => ({}));
+                    throw new Error(body.detail || `HTTP ${response.status}`);
+                }
+                button.textContent = '已判为无师资';
+            } catch (error) {
+                button.disabled = false;
+                alert('未能保存：' + error.message);
+            }
+        });
+
+        function failureCounts(batch) {
+            const failed = (batch.subtasks || []).filter(st => st.status === 'failed');
+            if (!failed.length) return batch.failure_dispositions;
+            const counts = {};
+            for (const st of failed) counts[failureKind(st)] = (counts[failureKind(st)] || 0) + 1;
+            return counts;
+        }
+
         function failureBreakdown(counts) {
-            return ['review', 'structure', 'access', 'recon', 'failed'].filter(kind => counts?.[kind])
+            return ['review', 'maintenance', 'structure', 'access', 'recon', 'failed'].filter(kind => counts?.[kind])
                 .map(kind => `${FAILURE_LABELS[kind]} ${counts[kind]} 个`).join('，');
         }
 
@@ -834,15 +868,19 @@
                 tone = st.counts_basis ? 'warn' : 'success';
                 text = st.counts_basis ? `待复核 (${st.stats?.total || 0}条观察)` : `完成 (${st.stats?.total || 0}人)`;
                 if (!st.counts_basis && st.stats?.cross_check?.status === 'difference') { tone = 'warn'; text += ' · 人数有差额待确认'; }
+                if (st.stats?.no_faculty) { tone = 'neutral'; text = '无师资（人工判定）'; }
             }
             if (st.status === 'failed') [text, tone] = failureLabel(st);
             const download = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download title="下载该学院的双 Sheet Excel">${icon('download')}表格</a>` : '';
             const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>`
                 : st.university_review_url ? `<a href="${escapeHtml(st.university_review_url)}">${icon('review')}同名复核</a>` : '';
+            // A person who checked the site can close a college that publishes no faculty roster.
+            const noFaculty = (st.status === 'failed' || (st.status === 'completed' && !st.stats?.no_faculty))
+                ? `<button type="button" class="no-faculty" data-task="${escapeHtml(st.task_id)}" data-college="${escapeHtml(st.college)}" title="官网没有师资栏目时用：按 0 人完成">判为无师资</button>` : '';
             return `
                 <div class="subtask">
                     <div class="subtask-name"><span class="subtask-college">${escapeHtml(st.college)}</span><span class="subtask-school">${escapeHtml(st.school)}</span></div>
-                    <div class="subtask-actions"><span class="pill pill-dot" data-tone="${tone}"${busy ? ' data-busy' : ''}>${text}</span>${download}${review}</div>
+                    <div class="subtask-actions"><span class="pill pill-dot" data-tone="${tone}"${busy ? ' data-busy' : ''}>${text}</span>${download}${review}${noFaculty}</div>
                 </div>`;
         }
 
@@ -933,7 +971,7 @@
                         const terminal = batch.terminal_failed_colleges || 0;
                         setBadge(terminal ? '任务异常' : '待处理', terminal ? 'danger' : 'warn');
                         setResultTone(terminal ? 'danger' : false);
-                        document.getElementById('statSummary').innerText = `完成 ${batch.completed_colleges} 个学院；${failureBreakdown(batch.failure_dispositions) || `${batch.failed_colleges || 0} 个学院未通过`}。逐院状态见下方列表；待人工复核的学院可点“人工复核”。`;
+                        document.getElementById('statSummary').innerText = `完成 ${batch.completed_colleges} 个学院；${failureBreakdown(failureCounts(batch)) || `${batch.failed_colleges || 0} 个学院未通过`}。逐院状态见下方列表；待人工复核的学院可点“人工复核”。`;
                         document.getElementById('downloadBtn').classList.add('hidden');
                         document.getElementById('resultArea').classList.remove('hidden');
                         unlockUI();

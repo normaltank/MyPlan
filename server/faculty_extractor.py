@@ -64,6 +64,19 @@ _INTRODUCED_NAME = re.compile(
     r"^([\u4e00-\u9fff]{2,4}?)(" + "|".join(map(re.escape, TITLE_KEYWORDS))
     + r")(?:个人简介|简介|介绍|个人主页|主页)$")
 
+# '钟俊华 讲师 (金融学)': text in brackets annotates the person before it
+# (subject, role, '兼任'); _clean_name already drops it from a whole label.
+_BRACKETED = re.compile(r"[（(][^（()）]*[）)]")
+
+
+def _annotation_token(token: str, text: str) -> bool:
+    """The token's first occurrence, the one a leading token is read from, is
+    inside a bracketed annotation (a summary may repeat the word later)."""
+    compact = re.sub(r"\s+", "", text)
+    first = compact.find(token)
+    return first >= 0 and any(m.start() < first and first + len(token) < m.end()
+                              for m in _BRACKETED.finditer(compact))
+
 # One definition of "this address spells this teacher" and of address reading
 # for every path (profile pages, shared pages, roster cards, OCR biographies).
 from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,  # noqa: E402,F401
@@ -502,10 +515,13 @@ class FacultyDirectoryExtractor:
                 if raw:
                     href = first_href([anchor], base_url)
                     labels.append((raw, href))
-                    labels.extend((token, href) for token in primary_tokens([anchor]))
+                    labels.extend((token, href) for token in primary_tokens([anchor])
+                                  if not _annotation_token(token, raw))
+            scope_text = name_scope.get_text(' ', strip=True)
             if name_scope is not card:
-                labels.append((name_scope.get_text(' ', strip=True), None))
-            labels.extend((token, None) for token in primary_tokens([name_scope]))
+                labels.append((scope_text, None))
+            labels.extend((token, None) for token in primary_tokens([name_scope])
+                          if not _annotation_token(token, scope_text))
             # One table cell may split a name across inline runs ('<span>杨</span>
             # <span>曼</span>'); its leaf strings alone expose only the surname.
             labels.extend((cell.get_text(' ', strip=True), None)

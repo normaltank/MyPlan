@@ -950,6 +950,18 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
     return unresolved
 
 
+def page_names_person(name: str, html: str, image_biography: str = "") -> bool:
+    """The profile page (or its image biography) carries the roster name.
+
+    Both sides are compared without whitespace: the page may space a Chinese
+    name ('林  静'), and a Latin name keeps the spaces between its words
+    ('KHASKHELI MUHAMMAD BILAWAL').
+    """
+    compact = re.sub(r"\s+", "", name)
+    page = re.sub(r"\s+", "", BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
+    return compact in page or compact in re.sub(r"\s+", "", image_biography)
+
+
 async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str | Path, *, state=None) -> dict[str, Any]:
     """Capture a Subagent-selected college plan using an existing browser context."""
     started = time.perf_counter()
@@ -1139,6 +1151,19 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         profile_errors = [item for item in profile_errors if item.get("url") not in aliases]
         unresolved = [item for item in unresolved if item.get("url") not in aliases
                       or item.get("status") != "profile_content_selector_conflict"]
+    # A person said a page that never names its roster teacher is not that
+    # teacher's page: collect from the roster, or leave the name out.
+    from server import profile_page_review
+    candidates, candidate_sources, released, profile_page_reviews = profile_page_review.apply_decisions(
+        candidates, candidate_sources, profile_html,
+        profile_page_review.load_decisions(out / profile_page_review.DECISIONS_FILE))
+    for url in released:
+        roster_reconciliation.profile_content_selectors.pop(url, None)
+        profile_html.pop(url, None)
+        profile_live_evidence.pop(url, None)
+    if released:
+        profile_errors = [item for item in profile_errors if item.get("url") not in released]
+        unresolved = [item for item in unresolved if item.get("url") not in released]
     unresolved.extend(profile_errors)
     restored_profiles = sum(url in cached_profile_urls and (
         not roster_reconciliation.profile_content_selectors.get(url)
@@ -1252,9 +1277,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                                "assigned_images": len(assigned_names)})
     for candidate in admitted:
         html = profile_html.get(candidate.url)
-        if (html and candidate.name not in BeautifulSoup(html, "html.parser")
-                .get_text(" ", strip=True).replace(" ", "")
-                and candidate.name not in media_audit["biographies"].get(candidate.url, "")):
+        if html and not page_names_person(candidate.name, html,
+                                          media_audit["biographies"].get(candidate.url, "")):
             unresolved.append({"url": candidate.url, "name": candidate.name,
                                "status": "profile_identity_not_found"})
     finish_stage("media_audit")
@@ -1389,6 +1413,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "with_email": sum(bool(str(row.get("邮箱", "")).strip()) for row in records),
         "branches": branches, "roster_observations": roster_observations,
         "profile_aliases": profile_aliases,
+        "profile_page_reviews": profile_page_reviews,
         "email_alternates": extraction.get("email_alternates", []),
         "identity_merges": identity_merges,
         "identity_review_items": identity_items, "identity_reviews": identity_reviews,
