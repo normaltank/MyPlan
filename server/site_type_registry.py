@@ -179,3 +179,43 @@ class SiteTypeRegistry:
         return {"failed_tasks": total, "types": [dict(row) for row in rows],
                 "historical_failure_events": historic,
                 "historical_types": [dict(row) for row in history_rows]}
+
+
+def record_audit_shapes(audit_path: str | Path, registry: SiteTypeRegistry) -> list[int]:
+    """Register observed supported shapes from local, hash-bound audit evidence.
+
+    The producer uses only structure counts, not names, titles, emails or text.
+    This never approves a plan, rewrites task state or marks a type accepted.
+    """
+    audit = json.loads(Path(audit_path).read_text(encoding='utf-8'))
+    evidence = {item['media_url']: item for item in audit.get('pdf_roster_evidence', [])}
+    ids = []
+    for item in audit.get('roster_observations', []):
+        if item.get('kind') != 'pdf_roster' or item.get('layout') != 'rank_grid':
+            continue
+        source = evidence.get(item.get('media_url'))
+        if source is None:
+            raise ValueError('rank-grid audit is missing its original evidence')
+        path = Path(source['original_path'])
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != source.get('sha256') or digest != item.get('sha256'):
+            raise ValueError('rank-grid evidence changed since the audit')
+        features = {key: item[key] for key in ('page_count', 'pages_with_text_layer',
+                   'pages_ocrd', 'records_detected', 'records_admitted') if key in item}
+        if any(type(value) is not int or value < 0 for value in features.values()):
+            raise ValueError('shape features must be structure counts')
+        features['section_count'] = len(item.get('sections', []))
+        ids.append(registry.record(school=audit['school'], college=audit['college'],
+            entry_url=audit.get('entry_url') or item['url'], branch_url=item['url'],
+            shape_code='pdf_rank_grouped_name_grid', features=features, evidence_path=path))
+    return ids
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Register observed shapes from a saved audit')
+    parser.add_argument('--audit', required=True)
+    parser.add_argument('--db', required=True, help='Explicit registry path; no implicit production database')
+    args = parser.parse_args()
+    print(json.dumps({'observation_ids': record_audit_shapes(args.audit, SiteTypeRegistry(args.db)),
+                      'status': 'observed'}, ensure_ascii=False))
