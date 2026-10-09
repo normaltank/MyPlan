@@ -39,6 +39,7 @@
 
 **2026-10-08 代码对齐追加**：来源是多 agent 代码一致性检查和[对齐执行方案](/mnt/project-files/reviews/code-alignment/2026-10-08-对齐执行方案.md)（项目共享目录）。A 交接文档、B 姓名规则合并、C 表格状态码单一来源、D 邮箱工具去重各有线程和 PR 在做，不在这里重复；下面是排在后面的三项。
 
-- [ ] **E 人工复核登记表（先出方案，C 合并后开）**：7 个复核模块各有一套 load_decisions、save_decision、collect_items、review_complete 和决策文件，由 `server/task_image_review.py` 的 `review_complete` 手工串联，每加一种复核要改 3 到 4 处，Codex 那次复核卡死就出在串联逻辑上。方案要写清 7 种复核逐一怎么接入、用数据库的 `university_identity_review` 是否纳入、已有决策文件格式是否保持不变（建议不变）、分几个 PR 迁移、风险与回退。属于结构调整，badr 批准方案后才实现。
+- [x] **E 人工复核登记表**（2026-10-09，未部署）：学院级七种复核在 `server/review_registry.py` 登记一次，决策文件读写合成 `server/review_store.py`，见 CHANGELOG。跨学院同名复核不纳入。
+- [ ] **姓名、图片简介复核决定补记复核人**：这两种决定不记 `reviewed_by`，其他几种记。补记属于改变证据要求，未在 E 包里做。
 - [ ] **F 照片与简历图的两套判据（可选，只做分析）**：`server/image_biography.py` 里整页几乎无文字的图按 OCR 检测到的文字行数判断（PR #24），带少量场景文字的图仍按颜色 `page_appearance` 判断。用案例库已有图片说明颜色分支还拦住哪些情况、能否统一到文字行，按分析结果再决定改不改。
 - [ ] **G `server/browser_batch_tool.py` 体量**：约 1560 行，按分支类型 if 分派，目前还能维护，不单独开工；以后加新的分支类型时再按类型拆开。
