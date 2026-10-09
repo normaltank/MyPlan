@@ -393,6 +393,22 @@ def _apply_name_decisions(
     return awaiting
 
 
+def roster_card_reading(html: str, url: str, card_selector: str) -> dict[str, int] | None:
+    """What the harvest's own card check would say of this page, as counts only.
+
+    The recon gate reads it when a plan is submitted, so a roster whose cards the
+    harvest cannot read is sent back to the scout instead of failing after capture
+    (集美大学海洋文化与法律学院, 10-09: 59 rows, a 导师 column, 3 people read).
+    None when the harvest would not report a card mismatch.
+    """
+    result = reconcile_rosters([CapturedRosterPage(url, html, {"card_selector": card_selector})],
+                               {"source_kind": "university_faculty_roster"})
+    mismatch = next((item for item in result.unresolved if item.get("status") == "roster_card_mismatch"), None)
+    if mismatch is None:
+        return None
+    return {"visible_cards": mismatch["visible_cards"], "extracted_candidates": mismatch["extracted_candidates"]}
+
+
 def reconcile_rosters(
     captured: Iterable[CapturedRosterPage],
     plan: dict[str, Any],

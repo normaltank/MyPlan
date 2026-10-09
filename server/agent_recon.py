@@ -713,6 +713,15 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                                               "Open the next page (its nextUrl, or browser_click the next_selector) "
                                               "and browser_verify the same card_selector there with cards > 0; on "
                                               "the last page, nextDisabled true also proves the end.")})
+        if matching and (mismatch := matching[-1][1].get("card_mismatch")):
+            # The harvest compares the same cards with the people it reads and
+            # stops on a difference; settle it here, while the scout can still act.
+            issues.append({"status": "roster_card_mismatch", "url": branch["url"], "selector": selector,
+                           **_gate_detail("cards_not_read", {key: mismatch.get(key) for key in (
+                               "visible_cards", "extracted_candidates")},
+                               "The harvest reads extracted_candidates people from visible_cards cards with this "
+                               "card_selector. Verify a card_selector whose every card is one person the harvest "
+                               "reads, or leave this page out if it is not a roster of this college's teachers.")})
         samples = list(dict.fromkeys(url for _, result, _ in matching
                        for url in result.get("linkedSamples", result.get("profileSamples", []))
                        if _is_structure_url(url) and resolve(url) != resolve(branch["url"])))[:2]
