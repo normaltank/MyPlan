@@ -1163,9 +1163,23 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         profile_live_evidence, roster_reconciliation.profile_content_sources)
     unresolved.extend(scope_issues)
     finish_stage("profile_capture_and_scope")
-    from server.image_biography import audit_profile_media, fetch_browser_asset, media_references
+    from server.image_biography import (audit_profile_media, browser_asset_size, fetch_browser_asset,
+                                        media_references)
     async def fetch_original_media(url: str) -> bytes:
         return await fetch_browser_asset(browser_context, url)
+
+    head_failed_hosts: set[str] = set()
+
+    async def declared_media_size(url: str) -> int | None:
+        # A host that leaves HEAD unanswered would cost the wait on every image.
+        host = urlparse(url).netloc
+        if host in head_failed_hosts:
+            return None
+        try:
+            return await browser_asset_size(browser_context, url)
+        except Exception:
+            head_failed_hosts.add(host)
+            return None
 
     pdf_roster_urls = set()
     roster_pdf_pages = {item["url"] for item in roster_reconciliation.pdf_rosters}
@@ -1199,7 +1213,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         known_names={candidate.name for candidate in candidates},
         review_decisions_path=out / "image_bio_reviews.json",
         media_kind_decisions_path=out / "media_kind_reviews.json",
-        cache_dir=ocr_cache_dir,
+        cache_dir=ocr_cache_dir, asset_size=declared_media_size,
         unpublished_media={url: set((evidence.get("profile_content_browser_evidence") or {})
                                     .get("unpublished_images") or ())
                            for url, evidence in profile_scope_evidence.items()})
@@ -1382,6 +1396,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "html_email_review_items": html_email_items, "html_email_reviews": html_email_reviews,
         "image_biography_evidence": media_audit["evidence"] + pdf_reading["evidence"],
         "unpublished_media": media_audit["unpublished_media"],
+        "oversized_media": media_audit["oversized_media"],
         "segment_name_evidence": segment_naming["evidence"] + pdf_reading["name_evidence"],
         "pdf_roster_evidence": pdf_reading["evidence"],
         "image_table_evidence": table_reading["evidence"],

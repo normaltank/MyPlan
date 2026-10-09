@@ -50,6 +50,11 @@ def page_appearance(data: bytes) -> dict:
     return {"document_like": light >= 0.4 and coloured <= 0.10,
             "light_share": round(light, 3), "coloured_share": round(coloured, 3)}
 
+# Every resume image found in the case library is under 3.5 MB; artwork
+# originals on art-school pages run to tens of MB. An image the server
+# declares larger than this is recorded and not downloaded.
+MAX_PROFILE_IMAGE_BYTES = 10_000_000
+
 # A biography page has several lines of text; a portrait has none. Below this
 # many unread lines a page-shaped image is a picture, as with read lines.
 UNREAD_PAGE_LINES = 3
@@ -255,6 +260,19 @@ async def fetch_browser_asset(browser_context, url: str) -> bytes:
     raise AssertionError("unreachable")
 
 
+async def browser_asset_size(browser_context, url: str) -> int | None:
+    """The size a server declares for a resource, or None when it declares none.
+
+    A HEAD request that fails or times out raises, so the caller can stop
+    asking a host that does not answer.
+    """
+    response = await browser_context.request.head(url, timeout=10000)
+    try:
+        return int(response.headers.get("content-length", "")) if response.ok else None
+    except ValueError:
+        return None
+
+
 async def audit_profile_media(
     profile_html: dict[str, str], owners: dict[str, set[str]], output_dir: str | Path,
     *, fetch_asset: Callable[[str], Awaitable[bytes]], ocr_engine=None,
@@ -263,6 +281,7 @@ async def audit_profile_media(
     media_kind_decisions_path: str | Path | None = None,
     cache_dir: str | Path | None = None,
     unpublished_media: dict[str, set[str]] | None = None,
+    asset_size: Callable[[str], Awaitable[int | None]] | None = None,
 ) -> dict:
     """Retain original assets, transcribe locally, and resolve only unique owners.
 
@@ -270,6 +289,9 @@ async def audit_profile_media(
     it must never be included in the model's reconnaissance plan.
     ``unpublished_media`` names, per profile, images the browser proof found
     gone on two opens with no room on the page; nothing was shown there to read.
+    ``asset_size`` reads a size the server declares; an image declared over
+    ``MAX_PROFILE_IMAGE_BYTES`` is listed in ``oversized_media`` unread. A
+    profile whose only content is such an image still fails the image-only check.
     """
     out = Path(output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -278,6 +300,7 @@ async def audit_profile_media(
     unresolved: list[dict] = []
     evidence: list[dict] = []
     skipped: list[dict] = []
+    oversized: list[dict] = []
     shared_ocr_engine = ocr_engine
 
     def read_cache(path: Path, digest: str, kind: str) -> dict | None:
@@ -317,6 +340,12 @@ async def audit_profile_media(
                 skipped.append({"profile_url": profile_url, "media_url": ref.url,
                                 "status": "image_gone_without_display_area"})
                 continue
+            if ref.kind == "image" and asset_size is not None:
+                declared = await asset_size(ref.url)
+                if declared is not None and declared > MAX_PROFILE_IMAGE_BYTES:
+                    oversized.append({"profile_url": profile_url, "media_url": ref.url,
+                                      "status": "image_over_size_cap", "declared_bytes": declared})
+                    continue
             source = {"profile_url": profile_url, "media_url": ref.url,
                       "kind": ref.kind, "position": ref.position}
             try:
@@ -456,4 +485,5 @@ async def audit_profile_media(
                 biographies[profile_url] = "\n\n".join(parts)
     assigned = {key: "\n\n".join(parts) for key, parts in assigned_parts.items()}
     return {"biographies": biographies, "assigned_biographies": assigned,
-            "unresolved": unresolved, "evidence": evidence, "unpublished_media": skipped}
+            "unresolved": unresolved, "evidence": evidence, "unpublished_media": skipped,
+            "oversized_media": oversized}

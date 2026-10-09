@@ -68,6 +68,12 @@
 - 仍然保留的边界在 `server/app.py` 的 `access_gate`：未填姓名一律 401；写操作要 CSRF 令牌和同源；worker 续租、同步和认领只认本机直连（`_local_request`，带转发头的请求算远程）。
 - 每日统计 `/api/reports/daily`：顶部是自己的数，下面按姓名列出当天有工作的人；历史工单带 `submitted_by`。
 
+### 8. 个人页图片的大小上限：超过 10 MB 的不下载（badr 10-09）
+
+- 美术类学院个人页放几十张几十 MB 的作品原图。`server/image_biography.py` 的 `audit_profile_media` 下载每张图之前，先用 `browser_asset_size`（HEAD 请求读 `Content-Length`）问服务器文件多大；超过 `MAX_PROFILE_IMAGE_BYTES`（10 MB）的不下载（HEAD 出错或超时的主机，本次采集里不再问，直接下载）、不 OCR，记在结果的 `oversized_media`（状态 `image_over_size_cap`，带 `declared_bytes`），写进覆盖账本同名字段，不进人工复核。
+- 依据：案例库里能认出主人的简历图 288 张，最大 3.3 MB。服务器不报大小的图照旧下载；PDF 不设上限。
+- 不会悄悄漏：个人页正文没有字、只有被跳过的图时，原有的 `image_bio_unreadable_profile` 照样拦下；名录卡片图、分段名录图被跳过时，对应的 `roster_card_mismatch`、`segment_image_bio_unassigned` 也照样留着。
+
 ---
 
 > **2026-10-02 文档治理与 Claude 派工**：根目录 [CONSTITUTION.md](CONSTITUTION.md) 集中稳定原则与变更权限；`AGENTS.md` 保留作业规则，`CLAUDE.md` 为读取入口。OCR 修复及宪法已提交并同步 main（`4fe72c2`、`10370eb`）；服务是否加载仍按下方部署记录判断。用户指定在 [Claude Projects → MyPlan 主对话](https://claude.ai/code/project/chan_012KwoNrMicyn2LoBSKGmCan) 派工，现有两个项目内实现线程：多人 PDF 名录采集、HTML 邮箱歧义复核恢复；具体范围见 [任务规格](docs/implementation/2026-10-02-claude-assignment.md)，要求独立 PR，不自动合并／部署。此前误开的两个独立 Code 会话已显示 Idle，不再继续。PR #4 仅改项目说明，实际与 main 的 AGENTS.md 存在合并冲突，且有过期状态和额外确认要求；本轮只审阅，未修改或合并该 PR。
