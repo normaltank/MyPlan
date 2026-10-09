@@ -16,10 +16,10 @@ web_app = load_web_app()
 from server.agent_queue import agent_queue
 from server.access_control import AccountStore
 from fastapi.testclient import TestClient
-AccountStore(agent_queue.db_path).create_user('admin','Administrator','correct horse battery staple','admin')
+AccountStore(agent_queue.db_path).sign_in('admin')
 task = agent_queue.submit_task('测试大学', '测试学院', 'https://example.edu')
 client = TestClient(web_app)
-assert client.post('/api/auth/login', json={'username':'admin','password':'correct horse battery staple'}).status_code == 200
+assert client.post('/api/auth/name', json={'display_name': 'admin'}).status_code == 200
 response = client.get('/api/task/' + task.task_id)
 assert response.status_code == 200, response.text
 '''

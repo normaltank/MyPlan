@@ -25,6 +25,18 @@ def port_is_open(port: int) -> bool:
         connection.settimeout(0.5)
         return connection.connect_ex(("127.0.0.1", port)) == 0
 
+def lan_address() -> str | None:
+    """This PC's address on the office network, for the colleagues' link."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            # UDP connect only picks the outgoing interface; nothing is sent.
+            probe.connect(("10.255.255.255", 1))
+            address = probe.getsockname()[0]
+        except OSError:
+            return None
+    return None if address.startswith("127.") or address == "0.0.0.0" else address
+
+
 def main():
     # Also support launching this file directly from server/.
     project_root = str(Path(__file__).resolve().parent.parent)
@@ -38,13 +50,21 @@ def main():
     print("      [Playwright 无头浏览器 + DOM 同构子树聚类 + CS 原理自适应抽取]")
     print("=" * 70)
     print()
+    host = cfg.get("host", "127.0.0.1")
+    port = cfg.get("port", 8000)
+    lan = lan_address() if host == "0.0.0.0" else None
     print(f" [✓] 本机访问地址:    {address}")
-    print(" [★] 多员工访问:  请先通过 HTTPS 反向代理发布服务")
+    if lan:
+        print(f" [★] 同事访问地址:    http://{lan}:{port}")
+    elif host == "0.0.0.0":
+        print(" [★] 同事访问地址:    未找到本机局域网地址，请用 ipconfig 查看")
+    else:
+        print(" [★] 当前只允许本机访问（server/config.json 的 host 为 127.0.0.1）")
     print()
     print("=" * 70)
     print(" [使用提示]")
-    print(f" 1. 本机访问：{address}；首次打开时按页面提示创建管理员。")
-    print(f" 2. 员工远程访问须由服务器 HTTPS 入口转发到本机 {address}。")
+    print(" 1. 打开网页时填写姓名即可，工单和每日统计按姓名记录。")
+    print(" 2. 首次启动时 Windows 若询问是否允许网络访问，只勾选“专用网络”。")
     print("=" * 70)
     print()
     print("正在自动唤起默认浏览器并启动后台服务...")
@@ -58,8 +78,6 @@ def main():
 
     # 导入并启动 FastAPI
     app = load_web_app()
-    host = cfg.get("host", "127.0.0.1")
-    port = cfg.get("port", 8000)
     
     if port_is_open(port):
         print(f"端口 {port} 已有服务；请先关闭旧的网页服务窗口，再重新启动。")

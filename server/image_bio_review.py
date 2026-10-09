@@ -229,7 +229,7 @@ def _name_cards(name_items: list[dict]) -> list[str]:
     return cards
 
 
-def _identity_cards(items: list[dict], allowed: bool) -> str:
+def _identity_cards(items: list[dict]) -> str:
     cards = []
     for item in items:
         observations = item['observations']
@@ -258,7 +258,7 @@ def _identity_cards(items: list[dict], allowed: bool) -> str:
             + escape(item['name']) + '</h2><p>不同网址不能证明是不同教师。同一人合并时，邮箱、职称与主页取主来源；'
             + '各来源的完整简介都保留，原始观察另存审计。</p>' + ''.join(sources)
             + '<label>全部合并时使用的主来源<select class="primary">' + options + '</select></label>'
-            + (buttons if allowed else '<p>请管理员核对来源并确认身份。</p>')
+            + buttons
             + '<p class="status" role="status">' + status + '</p></section>')
     return ''.join(cards)
 
@@ -297,7 +297,7 @@ def _html_email_cards(items: list[dict]) -> str:
             buttons += ('<button type="button" data-verdict="none" class="secondary">'
                         '确认此教师无个人邮箱</button>')
         if not buttons:
-            buttons = '<p>没有可归属的候选地址，也没有证明无个人邮箱的依据；请管理员核对来源。</p>'
+            buttons = '<p>没有可归属的候选地址，也没有证明无个人邮箱的依据；请维护人员核对来源。</p>'
         status = {"select": "已保存邮箱：" + item.get("saved_email", ""), "none": "已确认无个人邮箱"}.get(
             item.get("saved_verdict", ""), "")
         cards.append('<section class="card html-email-card" data-id="' + escape(item["id"]) + '">'
@@ -319,7 +319,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
                        return_url: str = '/',
                        name_items: list[dict] | None = None,
                        name_decision_url: str = '', identity_items: list[dict] | None = None,
-                       identity_decision_url: str = '', can_review_identity: bool = True,
+                       identity_decision_url: str = '',
                        html_email_items: list[dict] | None = None,
                        html_email_decision_url: str = '', media_kind_items: list[dict] | None = None,
                        media_kind_decision_url: str = '') -> str:
@@ -377,7 +377,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
     if not body and not identity_items:
         body = '<p>当前没有需要人工复核的图片文字、邮箱或姓名。</p>'
     if identity_items:
-        body += '<h2>来源身份</h2>' + _identity_cards(identity_items, can_review_identity)
+        body += '<h2>来源身份</h2>' + _identity_cards(identity_items)
     decision_js = json.dumps(decision_url).replace('<', '\\u003c')
     email_js = json.dumps(email_decision_url).replace('<', '\\u003c')
     name_js = json.dumps(name_decision_url).replace('<', '\\u003c')

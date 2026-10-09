@@ -138,11 +138,11 @@ def test_batch_api_asks_before_queueing_suspicious_rows(tmp_path, monkeypatch):
     from server.access_control import AccountStore
     queue = AgentTaskQueue(tmp_path / "tasks.db", legacy_json_path=None)
     store = AccountStore(queue.db_path)
-    store.create_user("alice", "Alice", "alice password 12345", "employee")
+    store.sign_in("alice")
     monkeypatch.setattr(web, "agent_queue", queue)
     monkeypatch.setattr(web, "account_store", store)
     client = TestClient(web.app)
-    client.post("/api/auth/login", json={"username": "alice", "password": "alice password 12345"})
+    client.post("/api/auth/name", json={"display_name": "alice"})
     headers = {"X-CSRF-Token": client.get("/api/auth/me").json()["csrf_token"]}
     assert "第四列师资链接可选" in client.get("/").text
     response = client.post("/api/collect_batch", json={"items_text": ROWS}, headers=headers)

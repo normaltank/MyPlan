@@ -119,7 +119,7 @@ async def test_media_review_buttons_execute_in_browser_without_ocr_handler_colli
 
 
 @pytest.mark.asyncio
-async def test_owner_scoped_media_decision_retry_carries_exact_evidence(tmp_path, monkeypatch):
+async def test_media_decision_retry_carries_exact_evidence(tmp_path, monkeypatch):
     from server import app as web
     from server.access_control import AccountStore
     from server.agent_queue import AgentTaskQueue
@@ -127,8 +127,8 @@ async def test_owner_scoped_media_decision_retry_carries_exact_evidence(tmp_path
     from fastapi.testclient import TestClient
     queue = AgentTaskQueue(tmp_path / "queue.db")
     store = AccountStore(queue.db_path)
-    user = store.create_user("alice", "Alice", "alice password 12345")
-    store.create_user("bob", "Bob", "bob password 12345")
+    user = store.sign_in("alice")
+    store.sign_in("bob")
     task = queue.submit_task("测试大学", "测试学院", "https://faculty.example.edu/", owner_user_id=user.id)
     out = tmp_path / "outputs"
     attempt = out / "tasks" / task.task_id / "attempt-1"
@@ -142,8 +142,8 @@ async def test_owner_scoped_media_decision_retry_carries_exact_evidence(tmp_path
     monkeypatch.setattr(web, "agent_queue", queue)
     monkeypatch.setattr(web, "account_store", store)
     monkeypatch.setattr(web, "OUTPUT_DIR", str(out))
-    owner, csrf = _client(store, "alice", "alice password 12345")
-    other, other_csrf = _client(store, "bob", "bob password 12345")
+    owner, csrf = _client(store, "alice")
+    other, _ = _client(store, "bob")
     page = owner.get(f"/review/task/{task.task_id}")
     assert page.status_code == 200 and "原图类型复核" in page.text
     assert "纯人物照片" in page.text and "data:image/png;base64," in page.text
@@ -151,7 +151,7 @@ async def test_owner_scoped_media_decision_retry_carries_exact_evidence(tmp_path
     url = f"/api/task/{task.task_id}/review/media-kind"
     decision = {"id": item["id"], "verdict": "photo"}
     assert TestClient(web.app).post(url, json=decision).status_code == 401
-    assert other.post(url, json=decision, headers={"X-CSRF-Token": other_csrf}).status_code == 404
+    assert other.post(url, json=decision, headers={"X-CSRF-Token": csrf}).status_code == 403
     assert owner.post(url, json=decision).status_code == 403
     assert owner.post(url, json=decision, headers={"X-CSRF-Token": csrf}).status_code == 204
     retry = owner.post(f"/api/task/{task.task_id}/review/retry", headers={"X-CSRF-Token": csrf})

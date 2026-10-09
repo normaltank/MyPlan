@@ -204,9 +204,8 @@ def test_address_spelling_a_colleague_cannot_be_given_to_the_card_owner(tmp_path
 def _web_fixture(tmp_path, monkeypatch, audit_payload):
     queue = AgentTaskQueue(tmp_path / "tasks.db")
     store = AccountStore(queue.db_path)
-    store.create_user("admin", "Admin", "admin password 12345", "admin")
-    alice = store.create_user("alice", "Alice", "alice password 12345")
-    store.create_user("bob", "Bob", "bob password 12345")
+    alice = store.sign_in("alice")
+    store.sign_in("bob")
     task = queue.submit_task("样本大学", "样本学院", ROOT, owner_user_id=alice.id)
     attempt = tmp_path / "outputs" / "tasks" / task.task_id / "attempt-1"
     attempt.mkdir(parents=True)
@@ -221,9 +220,9 @@ def _web_fixture(tmp_path, monkeypatch, audit_payload):
     return queue, task, audit
 
 
-def _client(name, password):
+def _client(name):
     client = TestClient(web.app)
-    assert client.post("/api/auth/login", json={"username": name, "password": password}).status_code == 200
+    assert client.post("/api/auth/name", json={"display_name": name}).status_code == 200
     return client, {"X-CSRF-Token": client.get("/api/auth/me").json()["csrf_token"]}
 
 
@@ -237,15 +236,15 @@ def _saved_conflict_audit():
     return {"unresolved": [issue], "html_email_review_items": items}
 
 
-def test_web_review_is_owner_scoped_evidence_bound_and_resumes_one_task(tmp_path, monkeypatch):
+def test_web_review_is_shared_evidence_bound_and_resumes_one_task(tmp_path, monkeypatch):
     queue, task, audit = _web_fixture(tmp_path, monkeypatch, _saved_conflict_audit())
-    owner, headers = _client("alice", "alice password 12345")
-    other, other_headers = _client("bob", "bob password 12345")
+    owner, headers = _client("alice")
+    other, _ = _client("bob")
     page_url = f"/review/task/{task.task_id}"
     save_url = f"/api/task/{task.task_id}/review/html-email"
     retry_url = f"/api/task/{task.task_id}/review/retry"
     assert TestClient(web.app).get(page_url).status_code == 401
-    assert other.get(page_url).status_code == 404
+    assert other.get(page_url).status_code == 200
     page = owner.get(page_url)
     assert page.status_code == 200 and "邮箱归属复核：王晓岚" in page.text
     assert "邮箱：sunny2008@qq.com" in page.text and "<script>alert" not in page.text
@@ -253,7 +252,7 @@ def test_web_review_is_owner_scoped_evidence_bound_and_resumes_one_task(tmp_path
     assert owner.get(f"/api/task/{task.task_id}").json()["review_url"] == page_url
     item_id = html_email_review.collect_items(audit)[0]["id"]
     choice = {"id": item_id, "verdict": "select", "selected_email": "wangxiaolan@example.edu"}
-    assert other.post(save_url, json=choice, headers=other_headers).status_code == 404
+    assert other.post(save_url, json=choice, headers=headers).status_code == 403
     assert owner.post(save_url, json=choice).status_code == 403
     assert owner.post(save_url, json={**choice, "selected_email": "typed@example.edu"},
                       headers=headers).status_code == 409
@@ -285,7 +284,7 @@ def test_tampered_evidence_is_rejected(tmp_path, monkeypatch):
         {"email": "typed@example.edu", "selectable": True, "reasons": [], "spells_teacher": False,
          "spells_others": [], "card_context": [], "page_context": []})
     _, task, _ = _web_fixture(tmp_path, monkeypatch, payload)
-    owner, _ = _client("alice", "alice password 12345")
+    owner, _ = _client("alice")
     assert owner.get(f"/review/task/{task.task_id}").status_code == 409
 
 
@@ -293,7 +292,7 @@ def test_old_audit_without_evidence_can_only_rerun_to_regenerate_it(tmp_path, mo
     issue = {"姓名": "王晓岚", "主页": ROOT + "/person", "status": "ambiguous_email_assignment",
              "matches": ["sunny2008@qq.com", "wangxiaolan@example.edu"]}
     queue, task, audit = _web_fixture(tmp_path, monkeypatch, {"unresolved": [issue]})
-    owner, headers = _client("alice", "alice password 12345")
+    owner, headers = _client("alice")
     assert owner.get(f"/review/task/{task.task_id}").status_code == 200
     assert owner.post(f"/api/task/{task.task_id}/review/retry", headers=headers).status_code == 200
     assert queue.get_task(task.task_id).status == "queued"
@@ -303,7 +302,7 @@ def test_new_audit_with_unreviewable_conflict_cannot_be_released(tmp_path, monke
     issue = {"姓名": "王晓岚", "主页": ROOT + "/person", "status": "ambiguous_email_assignment",
              "matches": ["sunny2008@qq.com"]}
     _, task, _ = _web_fixture(tmp_path, monkeypatch, {"unresolved": [issue], "html_email_review_items": []})
-    owner, headers = _client("alice", "alice password 12345")
+    owner, headers = _client("alice")
     assert owner.post(f"/api/task/{task.task_id}/review/retry", headers=headers).status_code == 409
 
 

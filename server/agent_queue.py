@@ -631,7 +631,7 @@ class AgentTaskQueue:
                 (*params, limit, offset)).fetchall()
             requests = []
             for group in groups:
-                rows = con.execute('SELECT task_id,mode,school,status FROM tasks WHERE batch_id=? '
+                rows = con.execute('SELECT task_id,mode,school,status,owner_user_id FROM tasks WHERE batch_id=? '
                     "AND task_type='harvest'" + (" AND owner_user_id=?" if owner_user_id is not None else "")
                     + " ORDER BY created_at,task_id",
                     (group['batch_id'], owner_user_id) if owner_user_id is not None
@@ -640,6 +640,7 @@ class AgentTaskQueue:
                 requests.append({'id': rows[0]['task_id'] if single else group['batch_id'],
                     'kind': 'task' if single else 'batch', 'created_at': group['created_at'],
                     'schools': sorted({row['school'] for row in rows}), 'total_colleges': len(rows),
+                    'owner_user_id': rows[0]['owner_user_id'],
                     'active': any(row['status'] in {'queued', 'running', 'compiling'} for row in rows)})
         return requests
 

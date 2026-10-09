@@ -106,7 +106,7 @@ async def local_page(browser, *, storage=None, active=False, hold_old=None, acti
             await request.fulfill(body=html, content_type='text/html; charset=utf-8')
             return
         values = {'/api/queue/stats': {'queued': 0, 'running': 0, 'completed': 22, 'failed': 0},
-                  '/api/auth/me': {'id': 1, 'username': 'tester', 'display_name': '测试员工', 'role': 'employee', 'csrf_token': 'test'},
+                  '/api/auth/me': {'id': 1, 'display_name': '测试员工', 'csrf_token': 'test'},
                   '/api/reports/daily': {'submitted_colleges': 0, 'completed_colleges': 0,
                                          'delivered_record_rows': 0, 'failed_colleges': 0},
                   '/api/worker/status': {'online': True, 'online_count': 1},
@@ -302,12 +302,12 @@ async def test_review_retry_shows_the_server_message_not_raw_json():
 
 @pytest.mark.asyncio
 @pytest.mark.browser
-async def test_admin_statistics_table_does_not_widen_the_phone_page():
+async def test_daily_statistics_table_does_not_widen_the_phone_page():
     """A wide no-wrap table scrolls inside its own box, not the whole page."""
     html = await web.serve_ui()
     employee = {'display_name': '信息工程学院采集组张敏老师', 'submitted_colleges': 12,
                 'completed_colleges': 10, 'delivered_record_rows': 12345, 'failed_colleges': 2}
-    values = {'/api/auth/me': {'id': 9, 'username': 'admin', 'display_name': '管理员', 'role': 'admin', 'csrf_token': 't'},
+    values = {'/api/auth/me': {'id': 9, 'display_name': '员工甲', 'csrf_token': 't'},
               '/api/queue/stats': {'queued': 0, 'running': 0, 'completed': 0, 'failed': 0},
               '/api/worker/status': {'online': True, 'online_count': 1},
               '/api/reports/daily': {'submitted_colleges': 12, 'completed_colleges': 10,

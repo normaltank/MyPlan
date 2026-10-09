@@ -12,7 +12,7 @@
 | #18 | HTML 表格名录：带标签的姓名列不按岗位过滤，备注格与分节标题随候选人和覆盖证据保留；一行多个“姓名”列时每人都收 | `server/faculty_extractor.py`、`server/harvest_workflow.py`、`server/browser_batch_tool.py` |
 | #19 | 零散修复：卡片原文写入审计 `eligibility[].roster_context`；完整拉丁字母姓名；个人页 404/410 的 fetch/XHR 按结构核验放行；“邮 箱”字间空白 | `server/harvest_eligibility.py`、`Opus/iso_mining.py`、`server/profile_structure.py`、`server/detail_mecc.py`；说明见 `docs/implementation/2026-10-08-misc-case-fixes.md` |
 | #20 | IDE 批量工具拒绝计划里的 `verified_candidates`、`poster_reviews`（模型录入的人名），与服务器侦察一致 | `server/browser_batch_tool.py`、`server/harvest_coverage.py`、`server/harvest_eligibility.py` |
-| #21 | 跨学院同名的大学级复核入口（L1）：大学汇总先阻断，管理员判“不同教师”或“证据不足” | `server/university_identity_review.py`、`server/university_delivery.py`、`server/app.py`（`/review/university/{batch_id}`） |
+| #21 | 跨学院同名的大学级复核入口（L1）：大学汇总先阻断，由人判“不同教师”或“证据不足”（10-09 起任何填了姓名的人都可判） | `server/university_identity_review.py`、`server/university_delivery.py`、`server/app.py`（`/review/university/{batch_id}`） |
 | #22 | 整图表格名录（`kind=image_table`）：按格线切格、逐格本地 OCR，复用 PDF 表格规则；逐格复核页 | `server/image_table_roster.py`（读取）、`server/image_table_browser.py`（浏览器核验）、`server/image_table_review.py`（复核）、`server/image_table_routes.py`（路由）、`server/templates/image_table_review.html` |
 | #23 | 失败学院按“失败去向”显示和计数，数据库状态仍是 `failed`，不新增状态 | `server/recovery_policy.py` 的 `failure_disposition`；`server/agent_queue.py` 同名包装、`server/app.py`、`server/templates/index.html` |
 | #24 | 同模板名录页只侦察一次（模板指纹看子结构集合）；侦察门禁复用采集端横幅箭头规则；个人页失效模板资源重开再验；补缺反馈按 `profile_sources` 交给所有链接该个人页的分支，补缺须在报错页上证明；证件照按 OCR 检测行数判断；原图类型复核；翻页跳新页先等加载 | `server/recon_templates.py`、`server/agent_recon.py`、`server/browser_batch_tool.py`（`without_banner_arrows`、`profile_sources`）、`server/profile_structure.py`、`server/image_biography.py`、`server/media_kind_review.py` |
@@ -31,7 +31,7 @@
 | `image_bio_text` | `server/image_bio_review.py`（简介图 OCR 纠字） | `image_bio_review.TEXT_STATUSES`：`image_bio_low_confidence`、`image_bio_owner_unresolved`、`segment_name_needs_review` | `image_bio_review.TEXT_DECISIONS_FILE` = `image_bio_reviews.json` |
 | `image_bio_email` | `server/image_bio_review.py`（简介图邮箱冲突） | `image_bio_review.EMAIL_STATUS` = `image_bio_email_conflict`；没有可复核项（找不到原图证据）的冲突不算复核完 | `image_bio_review.EMAIL_DECISIONS_FILE` = `image_bio_email_reviews.json` |
 | `name` | `server/name_review.py`（生僻姓、角色行姓名） | `name_review.STATUS` = `rare_surname_needs_review` | `name_review.DECISIONS_FILE` = `name_reviews.json` |
-| `identity` | `server/identity_review.py`（学院内同名多主页，仅管理员） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
+| `identity` | `server/identity_review.py`（学院内同名多主页） | `identity_review.STATUS` = `distinct_profile_identity_unverified` | `identity_review.DECISIONS_FILE` = `identity_reviews.json` |
 | `html_email` | `server/html_email_review.py`（普通 HTML 邮箱歧义） | `html_email_review.STATUSES`（5 个）；只有带教师姓名的才要裁决，旧审计缺证据时只能重跑生成 | `html_email_review.DECISIONS_FILE` = `html_email_reviews.json` |
 | `media_kind` | `server/media_kind_review.py`（原图是照片还是含文字） | `media_kind_review.STATUS` = `image_bio_ocr_incomplete`；`kind == "image"` 才进复核页，PDF 的始终挡重试 | `media_kind_review.DECISIONS_FILE` = `media_kind_reviews.json` |
 | `image_table` | `server/image_table_review.py`（整图表格逐格纠字、整图人数） | `image_table_review.STATUSES`（13 个 `table_*`，由 `server/image_table_roster.py` 产生）；有表格证据即需复核完 | `image_table_roster.REVIEW_FILE` = `image_table_reviews.json` |
@@ -60,6 +60,13 @@
 ### 6. 改了代码，可交付学院是多了还是少了（案例库离线回放）
 
 - `server/case_replay.py`（`python -m server.case_replay <案例目录>`）用当前 `browser_batch_tool.run_plan` 重跑共享目录 `case-library/evidence/` 里保存的实网案例，请求只由保存的页面和原件应答，其余 404，不联网、不调模型。输出每个学院保存时与回放时的就绪、人数、未解决项，首行是就绪学院数。改采集代码的 PR 可以用它对比前后；用法和限制见 `docs/operations.md` 第 10 节。
+
+### 7. 谁能用网页：只填姓名，没有密码和管理员（badr 10-09）
+
+- 网页监听 `server/config.json` 的 `host`（现为 `0.0.0.0`），同事用 `http://<本机局域网 IP>:<端口>` 直接访问，不再要求 HTTPS 反向代理；启动时 `server/start_server.py` 的 `lan_address` 打印同事地址。
+- 身份只用来记“谁提交的、每天采了多少”：`server/access_control.py` 的 `AccountStore.sign_in` 按姓名找或建账号（同名即同一账号，旧账号按显示名称沿用），`/api/auth/name` 发 30 天会话 cookie。没有密码、角色判断或“各看各的”：所有填了姓名的人能看、复核、下载全部工单。`users.role`、`password_hash` 列只为兼容旧库保留，代码不再读。
+- 仍然保留的边界在 `server/app.py` 的 `access_gate`：未填姓名一律 401；写操作要 CSRF 令牌和同源；worker 续租、同步和认领只认本机直连（`_local_request`，带转发头的请求算远程）。
+- 每日统计 `/api/reports/daily`：顶部是自己的数，下面按姓名列出当天有工作的人；历史工单带 `submitted_by`。
 
 ---
 

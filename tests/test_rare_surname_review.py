@@ -182,8 +182,8 @@ def test_tampered_review_item_is_rejected(tmp_path):
 def test_name_review_through_the_web_and_retry(tmp_path, monkeypatch):
     queue = AgentTaskQueue(tmp_path / "tasks.db")
     store = AccountStore(queue.db_path)
-    alice = store.create_user("alice", "Alice", "alice password 12345")
-    store.create_user("bob", "Bob", "bob password 12345")
+    alice = store.sign_in("alice")
+    store.sign_in("bob")
     task = queue.submit_task("甲大学", "甲学院", "https://a.edu", owner_user_id=alice.id)
     item = _reconcile().unresolved[0]
     audit = _audit(tmp_path / "outputs", task, [item])
@@ -195,13 +195,13 @@ def test_name_review_through_the_web_and_retry(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "account_store", store)
     monkeypatch.setattr(web, "OUTPUT_DIR", str(tmp_path / "outputs"))
 
-    def login(name, password):
+    def login(name):
         client = TestClient(web.app)
-        assert client.post("/api/auth/login", json={"username": name, "password": password}).status_code == 200
+        assert client.post("/api/auth/name", json={"display_name": name}).status_code == 200
         return client, {"X-CSRF-Token": client.get("/api/auth/me").json()["csrf_token"]}
 
-    owner, headers = login("alice", "alice password 12345")
-    other, other_headers = login("bob", "bob password 12345")
+    owner, headers = login("alice")
+    other, _ = login("bob")
     page = owner.get(f"/review/task/{task.task_id}")
     assert page.status_code == 200 and "姓名待确认：阚文涛" in page.text
     assert owner.get(f"/api/task/{task.task_id}").json()["review_url"] == f"/review/task/{task.task_id}"
@@ -209,7 +209,7 @@ def test_name_review_through_the_web_and_retry(tmp_path, monkeypatch):
     retry = f"/api/task/{task.task_id}/review/retry"
     assert owner.post(retry, headers=headers).status_code == 409
     payload = {"id": item["id"], "verdict": "person", "verified_name": "阚文涛"}
-    assert other.post(url, json=payload, headers=other_headers).status_code == 404
+    assert other.post(url, json=payload, headers=headers).status_code == 403
     assert owner.post(url, json=payload).status_code == 403
     assert owner.post(url, json={**payload, "verdict": "maybe"}, headers=headers).status_code == 409
     assert owner.post(url, json=payload, headers=headers).status_code == 204

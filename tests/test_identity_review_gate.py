@@ -91,10 +91,10 @@ async def test_existing_ambiguous_version_is_hidden_and_not_downloadable(tmp_pat
     monkeypatch.setattr(web,'OUTPUT_DIR',str(root))
     from server.access_control import AccountStore
     accounts=AccountStore(queue.db_path)
-    accounts.create_user('admin','Administrator','correct horse battery staple','admin')
+    accounts.sign_in('admin')
     monkeypatch.setattr(web,'account_store',accounts)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app),base_url='http://testserver') as client:
-        login=await client.post('/api/auth/login',json={'username':'admin','password':'correct horse battery staple'})
+        login=await client.post('/api/auth/name',json={'display_name': 'admin'})
         assert login.status_code==200
         status=(await client.get('/api/task/'+tasks[0].task_id)).json()
         assert status['delivery_scope']['state']=='blocked' and not status['download_url']
