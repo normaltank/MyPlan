@@ -94,6 +94,10 @@ def test_name_page_then_shared_work_without_lease_leak(tmp_path, monkeypatch):
     anonymous = TestClient(web.app)
     assert '你是谁' in anonymous.get('/').text
     assert anonymous.get('/api/history').status_code == 401
+    assert anonymous.get('/api/history').json() == {'detail': '请先登录'}
+    # A pasted review link asks for the name instead of showing raw JSON.
+    pasted = anonymous.get('/review/task/some-task')
+    assert pasted.status_code == 401 and '你是谁' in pasted.text
     assert anonymous.post('/api/auth/name', json={'display_name': ''}).status_code == 422
     alice, alice_csrf = _signed_in('alice')
     bob, _ = _signed_in('bob')
@@ -151,7 +155,8 @@ def test_batch_and_download_are_shared_but_latest_is_your_own(tmp_path, monkeypa
     monkeypatch.setattr(queue, 'get_delivery_scope', lambda *_: {'state': 'ready'})
     url = '/download/versions/school/version/甲大学.xlsx'
     assert bob.get(url).status_code == 200
-    assert TestClient(web.app).get(url).status_code == 401
+    anonymous = TestClient(web.app).get(url)
+    assert anonymous.status_code == 401 and '你是谁' in anonymous.text
 
 
 def test_daily_report_lists_everyone_who_worked_that_day(tmp_path, monkeypatch):

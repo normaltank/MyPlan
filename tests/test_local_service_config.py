@@ -41,16 +41,17 @@ def test_invalid_local_port_is_rejected_before_launch(tmp_path, port):
 
 
 @pytest.mark.parametrize('host,lan,shown', [
-    ('0.0.0.0', '192.168.1.5', '同事访问地址:    http://192.168.1.5:18000'),
-    ('0.0.0.0', None, '未找到本机局域网地址'),
-    ('127.0.0.1', '192.168.1.5', '当前只允许本机访问'),
+    ('0.0.0.0', ['192.168.1.5'], '同事访问地址:    http://192.168.1.5:18000'),
+    ('0.0.0.0', ['192.168.1.5', '10.0.0.8'], '                      http://10.0.0.8:18000'),
+    ('0.0.0.0', [], '未找到本机局域网地址'),
+    ('127.0.0.1', ['192.168.1.5'], '当前只允许本机访问'),
 ])
 def test_web_launcher_uses_override_for_browser_listener_and_instructions(monkeypatch, capsys, host, lan, shown):
     from server import local_service_config, start_server
 
     monkeypatch.setattr(local_service_config, 'load_web_config', lambda: {'host': host, 'port': 18000})
     monkeypatch.setattr(local_service_config, 'local_web_url', lambda: 'http://127.0.0.1:18000')
-    monkeypatch.setattr(start_server, 'lan_address', lambda: lan)
+    monkeypatch.setattr(start_server, 'lan_addresses', lambda: lan)
     application = object()
     opened, listeners = [], []
     monkeypatch.setattr(start_server, 'load_web_app', lambda: application)
@@ -87,3 +88,19 @@ def test_sync_cli_uses_local_config_and_preserves_explicit_endpoint(monkeypatch,
     monkeypatch.setattr(browser_batch_sync, '_run_cli', capture)
     browser_batch_sync.main()
     assert endpoints == [explicit or 'http://127.0.0.1:18000']
+
+
+def test_colleague_address_skips_proxy_tun_and_host_only_adapters(monkeypatch):
+    from server import start_server
+
+    # badr's PC: Clash TUN 198.18.0.1 owns the default route, WSL has a host-only
+    # 172.27.48.1, and the Wi-Fi address is 192.168.101.81 (the only one with a gateway).
+    monkeypatch.setattr(start_server, '_gateway_addresses', lambda: ['198.18.0.1', '192.168.101.81'])
+    monkeypatch.setattr(start_server, '_host_addresses', lambda: ['198.18.0.1', '172.27.48.1', '192.168.101.81'])
+    assert start_server.lan_addresses() == ['192.168.101.81']
+
+    # Without gateway information every private address is offered, never the TUN or loopback one.
+    monkeypatch.setattr(start_server, '_gateway_addresses', lambda: None)
+    monkeypatch.setattr(start_server, '_host_addresses',
+                        lambda: ['198.18.0.1', '127.0.0.1', '172.27.48.1', '192.168.101.81', '172.27.48.1'])
+    assert start_server.lan_addresses() == ['172.27.48.1', '192.168.101.81']

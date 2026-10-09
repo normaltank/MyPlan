@@ -140,6 +140,12 @@ async def access_gate(request: Request, call_next):
         return response
     if path.startswith('/api/') or path.startswith('/download/') or path.startswith('/review/'):
         if user is None:
+            # A review or download link opened in a browser without a name yet
+            # (pasted from a colleague, or another address of this machine) asks
+            # for the name; the page reloads onto the same link afterwards.
+            if request.method in {'GET', 'HEAD'} and not path.startswith('/api/'):
+                return HTMLResponse(_name_page(), status_code=401,
+                                    headers={'Cache-Control': 'no-store'})
             return JSONResponse({'detail': '请先登录'}, status_code=401)
         if request.method not in {'GET', 'HEAD', 'OPTIONS'}:
             csrf = request.headers.get('X-CSRF-Token')
