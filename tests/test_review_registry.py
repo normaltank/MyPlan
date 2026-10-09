@@ -82,3 +82,17 @@ def test_shown_and_waiting_issues_keep_their_previous_meaning(tmp_path):
     old = _audit(tmp_path, [{"status": "ambiguous_shared_email", "姓名": "某", "主页": "https://x.edu/p"}])
     assert html_email_review.evidence_missing(json.loads(old.read_text(encoding="utf-8")))
     assert review_registry.review_complete(old)  # only a rerun can produce the evidence
+
+
+def test_decision_store_replaces_by_id_and_keeps_other_rows(tmp_path):
+    from server import review_store
+    path = tmp_path / "attempt-1" / "x_reviews.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"schema": 1, "decisions": [{"id": "a", "v": 1}, {"note": "kept"}]}), encoding="utf-8")
+    review_store.put(path, {"id": "a", "v": 2})
+    review_store.put(path, {"id": "b", "v": 3})
+    assert review_store.rows(path) == [{"note": "kept"}, {"id": "a", "v": 2}, {"id": "b", "v": 3}]
+    assert review_store.load(path) == {}  # a row without an id makes the file unusable as a whole
+    assert [p.name for p in path.parent.iterdir()] == ["x_reviews.json"]
+    path.write_text(json.dumps({"schema": 2, "decisions": [{"id": "a"}]}), encoding="utf-8")
+    assert review_store.rows(path) == [] and review_store.load(tmp_path / "missing.json") == {}

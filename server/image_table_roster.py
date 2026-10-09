@@ -18,6 +18,7 @@ import re
 
 from PIL import Image
 
+from server import review_store
 from server.identity_review import digest
 from server.pdf_roster import LayoutLine, PdfRecord, TableLayout, TableRow, reconcile_table, table_layout
 from server.segmented_roster import SegmentRecord, _name_like
@@ -198,11 +199,7 @@ def scan_cells(original, *, ocr_engine=None):
 
 
 def load_reviews(path):
-    try:
-        saved = json.loads(Path(path).read_text(encoding="utf-8"))
-        return {item["id"]: item for item in saved["decisions"]} if saved.get("schema") == 1 else {}
-    except (OSError, ValueError, KeyError, TypeError):
-        return {}
+    return review_store.load(path)
 
 
 def combine_scans(scans):

@@ -10,11 +10,10 @@ from itertools import combinations
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
-import tempfile
 import time
 
+from server import review_store
 from server.faculty_identity import field_value
 
 STATUS = "distinct_profile_identity_unverified"
@@ -90,13 +89,7 @@ def collect_items(audit_path) -> list[dict]:
 
 
 def load_decisions(path) -> dict:
-    try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        if payload.get("schema") != 1:
-            return {}
-        return {d["id"]: d for d in payload["decisions"]}
-    except (OSError, ValueError, TypeError, KeyError):
-        return {}
+    return review_store.load(path)
 
 
 def _resolution(item, verdict, primary_url="", assignments=None):
@@ -121,21 +114,7 @@ def save_decision(path, item, verdict, primary_url="", *, assignments=None, revi
     resolution = _resolution(item, verdict, primary_url, assignments)
     decision = {"id": item["id"], "item": item, "verdict": verdict, "resolution": resolution,
                 "reviewed_by": reviewed_by, "reviewed_at": time.time()}
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    decisions = load_decisions(path)
-    decisions[item["id"]] = decision
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as out:
-            temporary = Path(out.name)
-            json.dump({"schema": 1, "decisions": list(decisions.values())}, out, ensure_ascii=False, indent=2)
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary:
-            temporary.unlink(missing_ok=True)
+    review_store.put(path, decision)
     return decision
 
 

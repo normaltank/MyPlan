@@ -13,12 +13,12 @@ from collections import Counter
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
-import tempfile
 import time
 
 from bs4 import BeautifulSoup
+
+from server import review_store
 
 STATUSES = frozenset({"ambiguous_email_assignment", "ambiguous_shared_email", "ambiguous_surname_email",
                       "conflicting_card_email", "mailto_address_conflict"})
@@ -153,13 +153,7 @@ def build_items(issues, records, candidates, page_html) -> list[dict]:
 
 
 def load_decisions(path) -> dict:
-    try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        if payload.get("schema") != 1:
-            return {}
-        return {row["id"]: row for row in payload["decisions"]}
-    except (OSError, ValueError, TypeError, KeyError):
-        return {}
+    return review_store.load(path)
 
 
 def _choice(item: dict, verdict: str, selected_email: str) -> str:
@@ -181,21 +175,7 @@ def save_decision(path, item: dict, verdict: str, selected_email: str = "", *, t
     decision = {"id": item["id"], "task_id": task_id, "name": item["name"], "url": item["url"],
                 "candidates": [o["email"] for o in item["candidates"]],
                 "verdict": verdict, "email": email, "reviewed_by": reviewed_by, "reviewed_at": time.time()}
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    decisions = load_decisions(path)
-    decisions[item["id"]] = decision
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as out:
-            temporary = Path(out.name)
-            json.dump({"schema": 1, "decisions": list(decisions.values())}, out, ensure_ascii=False, indent=2)
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary:
-            temporary.unlink(missing_ok=True)
+    review_store.put(path, decision)
     return decision
 
 

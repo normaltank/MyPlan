@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import time
 
-from . import review_registry
+from . import review_registry, review_store
 from .image_bio_review import (EMAIL_DECISIONS_FILE, TEXT_DECISIONS_FILE, collect_email_conflict_items,
                                collect_review_items)
 
@@ -88,10 +88,7 @@ def legacy_review_audits(scratch_root: str | Path) -> list[tuple[str, Path, dict
             audit = json.loads(resolved.read_text(encoding='utf-8'))
             saved_review = False
             for filename in (TEXT_DECISIONS_FILE, EMAIL_DECISIONS_FILE):
-                decision_path = resolved.parent / filename
-                if decision_path.is_file():
-                    decisions = json.loads(decision_path.read_text(encoding='utf-8'))
-                    saved_review |= decisions.get('schema') == 1 and bool(decisions.get('decisions'))
+                saved_review |= bool(review_store.rows(resolved.parent / filename))
             if (Path(audit.get('audit_path', '')).resolve() != resolved
                     or not (review_registry.has_review(resolved) or saved_review)):
                 continue

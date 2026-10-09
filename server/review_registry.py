@@ -13,8 +13,9 @@ import json
 from pathlib import Path
 from typing import Callable
 
-from . import html_email_review, identity_review, image_bio_review, image_table_review, media_kind_review, name_review
-from .image_table_roster import REVIEW_FILE as IMAGE_TABLE_REVIEW_FILE
+from server import (html_email_review, identity_review, image_bio_review, image_table_review, media_kind_review,
+                    name_review)
+from server.image_table_roster import REVIEW_FILE as IMAGE_TABLE_REVIEW_FILE
 
 
 @dataclass(frozen=True)

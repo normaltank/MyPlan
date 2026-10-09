@@ -4,13 +4,12 @@ from hashlib import sha256
 from html import escape
 from io import BytesIO
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
 
 from PIL import Image
 
+from server import review_store
 from server.image_table_roster import POLICY, REVIEW_FILE, load_reviews, parse_cells
 
 # Review codes image_table_roster raises; each is filed under "review" in recovery_policy.
@@ -80,16 +79,7 @@ def save(audit_path, identifier, *, verified_text=None, expected_count=None, rev
     decisions = load_reviews(path)
     if identifier in decisions and all(decisions[identifier].get(k) == v for k, v in candidate.items()):
         return
-    decisions[identifier] = {**candidate, "reviewed_by": reviewed_by, "reviewed_at": time.time()}
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        json.dump({"schema": 1, "decisions": list(decisions.values())}, handle, ensure_ascii=False, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
-    try:
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    review_store.put(path, {**candidate, "reviewed_by": reviewed_by, "reviewed_at": time.time()})
 
 
 def render(audit_path, task_id, csrf):
