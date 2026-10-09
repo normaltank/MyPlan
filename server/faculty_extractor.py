@@ -452,6 +452,32 @@ class FacultyDirectoryExtractor:
         return cls.extract(html, base_url, review=review), review
 
     @classmethod
+    def _name_slot_path(cls, scope: Tag, name: str) -> Optional[tuple]:
+        """Child-index path from ``scope`` to the innermost element holding ``name``."""
+        matches = [node for node in [scope, *scope.find_all(True)]
+                   if cls._clean_name(node.get_text(' ', strip=True))[0] == name]
+        if not matches:
+            return None
+        node = max(matches, key=lambda item: len(list(item.parents)))
+        steps = []
+        while node is not scope:
+            parent = node.parent
+            siblings = parent.find_all(node.name, recursive=False)
+            steps.append((node.name, next(i for i, item in enumerate(siblings) if item is node)))
+            node = parent
+        return tuple(reversed(steps))
+
+    @staticmethod
+    def _node_at_path(scope: Tag, path: tuple) -> Optional[Tag]:
+        node = scope
+        for name, index in path:
+            children = node.find_all(name, recursive=False)
+            if index >= len(children):
+                return None
+            node = children[index]
+        return node
+
+    @classmethod
     def _verified_card_candidates(cls, html: str, base_url: str, selector: str):
         """Account for each verified card; full-page mining cannot override its boundary."""
         soup = BeautifulSoup(html, 'html.parser')
@@ -459,7 +485,7 @@ class FacultyDirectoryExtractor:
         table_rows = html_table_rows(soup)
         if cards and all(card.name == 'img' for card in cards):
             return cls.extract_with_review(html, base_url)
-        slots = []
+        entries = []
         for card in cards:
             row = card if card.name == 'tr' else card.find_parent('tr')
             table = table_rows.get(id(row), {})
@@ -496,10 +522,32 @@ class FacultyDirectoryExtractor:
                 if name and name not in TITLE_KEYWORDS and name_prob(name) >= 0.5:
                     slot = (name, title, href)
                     break
+            path = cls._name_slot_path(name_scope, slot[0]) if slot else None
+            entries.append((card, table, name_scope, labels, linked_slots, slot, path))
+        # Cards matched by one verified selector share a layout. Where the
+        # recognised names sit (e.g. the <h2> inside a link that also wraps a
+        # summary) is where an unrecognised card keeps its name, so that slot is
+        # read before the card's whole first label.
+        paths = Counter(path for *_, path in entries if path is not None)
+        agreed = next((path for path, support in paths.most_common(1) if support >= 3), None)
+        slots = []
+        for card, table, name_scope, labels, linked_slots, slot, _ in entries:
+            tries = []
+            if slot is None and agreed is not None:
+                node = cls._node_at_path(name_scope, agreed)
+                if node is not None:
+                    anchor = node if node.name == 'a' else node.find_parent('a')
+                    inside = anchor is not None and (
+                        anchor is name_scope or any(item is name_scope for item in anchor.parents))
+                    owner = anchor if inside else node
+                    tries.append((node.get_text(' ', strip=True), first_href([owner], base_url)))
             if slot is None and labels:
-                name, title = cls._clean_name(labels[0][0])
+                tries.append(labels[0])
+            for raw, href in tries:
+                name, title = cls._clean_name(raw)
                 if name and name not in TITLE_KEYWORDS and len(name) <= 40:
-                    slot = (name, title, labels[0][1])
+                    slot = (name, title, href)
+                    break
             if slot is None:
                 continue
             context = LayoutAwareTokenizer.get_clean_text(card, preserve_content=True)
