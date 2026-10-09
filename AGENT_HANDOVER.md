@@ -60,7 +60,6 @@
 
 ### 4. 姓名规则和邮箱归属规则现在在哪
 
-- 单人简介与多人名单串的分流：`server/name_list.py` 的 `is_name_list_page` 在只有一个卡片、页面标题按既有姓名规则可读且正文开头逗号前的主体与标题同名时，沿用普通单人卡片读取；简介中的毕业院校、研究方向顿号串不再自动变成多人名单。真实名单中的未知项仍阻断。皖西学院法学院 `5d98debe` 保存页复现与修复见 [`docs/audits/2026-10-09-wxc-law-name-list.md`](docs/audits/2026-10-09-wxc-law-name-list.md)；未重采、未改工单状态、未重启服务。
 - 姓名：唯一的判定是 `server/name_list.py` 的 `_person_name`，常量 `NAME_PRIOR_FLOOR`、`_HAN_NAME`、`_MINORITY_NAME` 也只在那里定义；`server/segmented_roster.py` 以 `_name_like` 的名字引用它，`pdf_roster`、`image_table_roster` 再从分段名录引用。少数民族点号两边最少字数是 `MINORITY_SIDE_MIN = 1`（badr 10-08 选定）。姓名先验 `name_prob` 和生僻姓判断 `rare_surname_name` 在 `Opus/iso_mining.py`，生僻姓表是 `Opus/rare_surnames.txt`。生僻姓的人名只在表头写明“姓名”的列里直接收（badr 10-09）：HTML 表格看 `faculty_extractor._verified_card_candidates` 的 `labelled_name`，PDF/整图表格看 `pdf_roster` 里 `_name_like(...) or _rare_name(...)`；其他位置仍进 `rare_surname_needs_review`。
 - 邮箱归属：主规则是 `server/detail_mecc.py` 的 `is_personal_email_for_scholar`、`is_institutional_email`（拼音模型在 `Opus/email_matching.py`）。`find_emails` 也只在 `detail_mecc.py` 定义。`server/faculty_extractor.py` 直接导入这三个函数并照旧导出；算法层或 `detail_mecc` 导不进来时 `faculty_extractor` 导入即报错，没有降级版（对齐执行方案 D 包，PR #28）。
 - 邮箱归属的口径（badr 10-09）：标签（“邮箱：”）和纯数字照旧直接归本人；没有标签时**按位置**认，拼音只用来排除别人。本人浏览器核验过的个人页正文里（或本人独占的名录卡片里）只有一个地址、全院只此一页出现、不拼写正文里另一个人的名字、也不是三个字母以内的缩写（办公室），就归本人；同一人有多个地址时取学校域名那个（`on_university_domain`，按页面主机的机构域名判断）。判定在 `server/faculty_extractor.py` 的 `owned_by_position`、`spells_other_person`、`prefer_university_email`；怎么选的和落选的地址写进审计 `email_alternates`，不阻断。
@@ -68,6 +67,7 @@
 
 ### 5. 侦察提交门禁怎么打回、什么时候停（PR #33）
 
+- 名录／个人页角色冲突：`FacultyDirectoryExtractor.profile_introduction_links` 复用既有“姓名＋职称＋简介/介绍/主页”字段语法，只返回实际所选简介链接 URL；裸姓名、机构和“查看详情”不据此判型。`browser_verify` 返回 `profile_intro_link_count`，`selector_evidence_issues` 对 navigation 中的冲突返回 `child_roster_not_verified` / `navigation_links_are_profiles`；`harvest_workflow.capture_sources` 同判据在任何子页捕获／缓存恢复之前阻断。混合目录保留全部链接和快照，不自动转换或过滤。须重新核验普通名录卡片及个人页正文范围。皖西法学院专项见 [`docs/audits/2026-10-09-wxc-law-name-list.md`](docs/audits/2026-10-09-wxc-law-name-list.md)；先前 `6f34c0f` 标题例外已撤回，未重采/重排/重启服务。
 - 证据判定在 `server/agent_recon.py` 的 `selector_evidence_issues`：每条问题带 `failed_condition`、`closest`、`need`；个人页证明在可用页不够证明数（或补缺点名的页被挡）时标 `page_only`。“挡住任何容器”的请求由 `server/profile_structure.py` 的 `verify_profile_container` 在重开后记为 `page_blocking_requests`。
 - `server/recon_contract.py` 的 `validate_submission` 原样转给模型（只削 schema 报错的输入值）；`server/recon_browser_mcp.py` 的 `submit_plan` 记住被打回的提交：同一计划无新浏览器调用时不重判，第二次给出 stop `recon_gate_stalled`；全部 `page_only` 时给出 stop `recon_page_unverifiable`。
 - `agent_recon._execute_harness` 用 `_watch_gate` 跟踪回复，遇到 stop 抛 `ReconGateStopped`（属于 `ReconPlanError`），并记下每个会话最后一次打回；超时/预算错误带 `last_gate_rejections`。两个码在 `recovery_policy._GROUPS`：页面类 access，worker 不再派补缺侦察；stalled 归 structure。

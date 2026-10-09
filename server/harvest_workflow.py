@@ -226,6 +226,18 @@ async def capture_sources(
             if html is not None:
                 result.navigation_pages.append((branch["url"], html))
             result.unresolved.extend({**item, "branch_url": branch["url"]} for item in errors)
+            introductions = FacultyDirectoryExtractor.profile_introduction_links(
+                html, branch["url"], branch["child_link_selector"]) if html and branch.get("child_link_selector") else []
+            if introductions:
+                # A person's introduction cannot be silently treated as a child
+                # roster. Mixed directories also need a new verified plan; no
+                # selected links are filtered or converted into completed work.
+                result.unresolved.append({"url": branch["url"], "branch_url": branch["url"],
+                    "status": "child_roster_not_verified", "reason": "navigation_links_are_profiles",
+                    "profile_intro_link_count": len(introductions), "sample_urls": introductions[:4]})
+                evidence["profile_intro_link_count"] = len(introductions)
+                result.branches.append(evidence)
+                continue
             for child_url in child_urls:
                 child_branch = {**branch["child_branch"], "url": child_url}
                 if "profile_content_selector" in branch and "profile_content_selector" not in child_branch:
