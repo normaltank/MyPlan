@@ -585,6 +585,14 @@ async def retry_task_after_image_review(task_id: str, request: Request):
     return {'status': 'queued', 'task_id': task_id}
 
 
+@app.post('/api/task/{task_id}/no-faculty')
+async def mark_task_no_faculty(task_id: str, request: Request):
+    """A person checked the college site and found no faculty roster."""
+    if not agent_queue.mark_no_faculty(task_id, _user(request).id):
+        raise HTTPException(status_code=409, detail='只有已结束的学院工单可以判为无师资，请刷新页面')
+    return {'status': 'completed', 'task_id': task_id}
+
+
 def _university_review_url(batch_id: str | None, school: str) -> str:
     return f"/review/university/{quote(batch_id, safe='')}?school={quote(school, safe='')}" if batch_id else ''
 

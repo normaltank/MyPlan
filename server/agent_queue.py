@@ -311,6 +311,39 @@ class AgentTaskQueue:
             self._reconcile_failure_types_best_effort()
         return updated.rowcount == 1
 
+    def mark_no_faculty(self, task_id: str, reviewed_by: int | None) -> bool:
+        """A person judged the college to publish no faculty roster (badr 2026-10-09).
+
+        Only a finished college can be judged: it completes with zero teachers,
+        and whatever an earlier attempt collected (office staff on an
+        organisation page) leaves the delivery. The verdict, who gave it and
+        what it replaced stay in the task's stats.
+        """
+        now = time.time()
+        with self._connect() as con:
+            con.execute('BEGIN IMMEDIATE')
+            row = con.execute("SELECT status,task_type,error,stats_json,meta_json FROM tasks WHERE task_id=?",
+                              (task_id,)).fetchone()
+            if not row or row['task_type'] != 'harvest' or row['status'] not in ('failed', 'completed'):
+                return False
+            previous = json.loads(row['stats_json'] or '{}')
+            if previous.get('no_faculty'):
+                return False
+            stats = {'total': 0, 'with_email': 0, 'no_email': 0, 'unresolved': 0,
+                     'coverage_scope': 'no_faculty_reviewed',
+                     'no_faculty': {'reviewed_by': reviewed_by, 'reviewed_at': now,
+                                    'previous_status': row['status'], 'previous_error': row['error'],
+                                    'previous_total': previous.get('total', 0)}}
+            meta = json.loads(row['meta_json'])
+            meta.update(progress=100, current_step='人工判定：本学院没有专任教师', teachers_preview=[])
+            con.execute("DELETE FROM records WHERE task_id=?", (task_id,))
+            updated = con.execute("""UPDATE tasks SET status='completed',error=NULL,stats_json=?,meta_json=?,
+                download_url=NULL,finished_at=?,lease_until=NULL,lease_token=NULL
+                WHERE task_id=? AND status IN ('failed','completed')""", (_json(stats), _json(meta), now, task_id))
+        if updated.rowcount == 1:
+            self._reconcile_failure_types_best_effort()
+        return updated.rowcount == 1
+
     def get_pending_tasks(self) -> list[AgentTask]:
         with self._connect() as con:
             rows = con.execute("""SELECT * FROM tasks WHERE status='queued' OR

@@ -45,6 +45,10 @@
 
 大学级复核不在登记表里：`server/university_identity_review.py`（跨学院同名）按批次和学校聚合，决定按版本存在 `tasks.db` 的 `university_identity_reviews` 表，卡的是大学发布，不是学院重试。
 
+### 2b. 学院判为“无师资”（badr 10-09）
+
+官网没有师资栏目的学院（集美大学继续教育学院、国际教育学院）由人判定：批次列表每个已结束的学院（失败或完成）有“判为无师资”，调用 `/api/task/{task_id}/no-faculty`，即 `agent_queue.mark_no_faculty`。学院按 0 人完成，之前采到的记录从库里删掉（不进大学表；审计文件留在磁盘），`stats.no_faculty` 记判定人、时间、原状态、原错误和原人数，`coverage_scope` 为 `no_faculty_reviewed`；同一学院不能再判一次。前台显示“无师资（人工判定）”。这不是复核种类，不在 `review_registry`。
+
 ### 3. 失败去向只在一处定义
 
 审计状态码分到 access / structure / review / stop 四组，只在 `server/recovery_policy.py` 的 `_GROUPS` 里写；新状态码必须加在这里，否则按 stop 处理。失败学院的去向（review / access / structure / recon / failed）只由 `recovery_policy.failure_disposition` 计算；`agent_queue.failure_disposition` 只是先用 `site_type_registry.classify_failure` 取出状态码再调用它，`app.py` 和前台计数都走这个包装。不要在别处再写一份分组或去向判断。
