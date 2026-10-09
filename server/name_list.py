@@ -216,7 +216,19 @@ def is_name_list_page(html: str, card_selector: str) -> bool:
     True when some card holds a people chain and cards holding people chains
     are at least half of the cards that hold any name at all.
     """
-    cards = BeautifulSoup(html, "html.parser").select(card_selector)
+    soup = BeautifulSoup(html, "html.parser")
+    cards = soup.select(card_selector)
+    # A single article whose title and opening subject identify the same
+    # person is their biography. Its school/subject enumerations must not
+    # turn the verified one-person container into a list of new people.
+    # Keep using the ordinary card reader, including its name-review gate.
+    if len(cards) == 1 and soup.title:
+        title_text = soup.title.get_text(" ", strip=True)
+        title_name = _person_name(title_text) or _rare_name(title_text)
+        opening = re.split(r"[，,]", _source_text(cards[0]), maxsplit=1)
+        if (title_name and len(opening) == 2
+                and (_person_name(opening[0]) or _rare_name(opening[0])) == title_name):
+            return False
     # Named personal links have their own URL identity. Do not convert them
     # into profile-less names merely because get_text inserted whitespace.
     if any(_person_name(a.get_text(' ', strip=True)) and first_href([a], None)
