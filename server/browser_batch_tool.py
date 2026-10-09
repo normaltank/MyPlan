@@ -950,6 +950,18 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
     return unresolved
 
 
+def page_names_person(name: str, html: str, image_biography: str = "") -> bool:
+    """The profile page (or its image biography) carries the roster name.
+
+    Both sides are compared without whitespace: the page may space a Chinese
+    name ('林  静'), and a Latin name keeps the spaces between its words
+    ('KHASKHELI MUHAMMAD BILAWAL').
+    """
+    compact = re.sub(r"\s+", "", name)
+    page = re.sub(r"\s+", "", BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
+    return compact in page or compact in re.sub(r"\s+", "", image_biography)
+
+
 async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str | Path, *, state=None) -> dict[str, Any]:
     """Capture a Subagent-selected college plan using an existing browser context."""
     started = time.perf_counter()
@@ -1252,9 +1264,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                                "assigned_images": len(assigned_names)})
     for candidate in admitted:
         html = profile_html.get(candidate.url)
-        if (html and candidate.name not in BeautifulSoup(html, "html.parser")
-                .get_text(" ", strip=True).replace(" ", "")
-                and candidate.name not in media_audit["biographies"].get(candidate.url, "")):
+        if html and not page_names_person(candidate.name, html,
+                                          media_audit["biographies"].get(candidate.url, "")):
             unresolved.append({"url": candidate.url, "name": candidate.name,
                                "status": "profile_identity_not_found"})
     finish_stage("media_audit")
