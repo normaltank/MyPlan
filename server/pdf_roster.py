@@ -51,6 +51,7 @@ import uuid
 from server.segmented_roster import (_LABELS, _SPLIT, OcrName, Segment, SegmentRecord, _name_like, _unique,
                                      admit_ocr_name, choose_email, heading_shape, text_name)
 from server.faculty_extractor import find_emails
+from server.name_list import _rare_name
 
 KIND = "pdf_roster"
 # Same floor as the image biography audit and its review page.
@@ -409,7 +410,10 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
         if any(line.cell_id for line in row.lines):
             evidence["cell_ids"] = [line.cell_id for line in row.lines if line.cell_id]
         item = {**source, "segment": row.number, "pages": [row.page]}
-        name = _name_like(re.sub(r"\s+", "", cell)) if re.fullmatch(r"[\u4e00-\u9fff·•\s]+", cell) else None
+        # The column header says 姓名, so a rare surname there is a name too
+        # (badr 2026-10-09); an unreadable cell still goes to a person.
+        name = ((_name_like(re.sub(r"\s+", "", cell)) or _rare_name(cell))
+                if re.fullmatch(r"[\u4e00-\u9fff·•\s]+", cell) else None)
         basis = "pdf_table_name_column"
         if name is None:
             # The column says this is a name; a person confirms what it reads.

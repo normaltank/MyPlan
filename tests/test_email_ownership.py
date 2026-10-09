@@ -47,9 +47,19 @@ def test_colleague_address_quoted_on_another_page_stays_with_the_colleague():
     assert harvest(pages) == {"王晓岚": "", "李强": ""}
 
 
-def test_multiple_labeled_addresses_require_review_instead_of_page_order():
+def test_multiple_labeled_addresses_prefer_the_university_domain_else_review():
     pages = {"https://cs.univ.edu.cn/p/1.htm": ("王晓岚", profile(
         "王晓岚", "邮箱：sunny2008@qq.com", "邮箱：wangxiaolan@univ.edu.cn"))}
+    result = FacultyHarvestPipeline().harvest_candidates(
+        candidates=[FacultyCandidate(name="王晓岚", url=next(iter(pages)))],
+        profile_fetcher=lambda url: pages[url][1], base_url=BASE, school="测试大学", college="计科院")
+    assert result["unresolved"] == []
+    assert result["sheet1_with_email"][0]["邮箱"] == "wangxiaolan@univ.edu.cn"
+    assert result["email_alternates"][0]["others"] == ["sunny2008@qq.com"]
+
+    # Neither address is the university's own: the page order decides nothing.
+    pages = {"https://cs.univ.edu.cn/p/1.htm": ("王晓岚", profile(
+        "王晓岚", "邮箱：sunny2008@qq.com", "邮箱：wangxiaolan@163.com"))}
     result = FacultyHarvestPipeline().harvest_candidates(
         candidates=[FacultyCandidate(name="王晓岚", url=next(iter(pages)))],
         profile_fetcher=lambda url: pages[url][1], base_url=BASE, school="测试大学", college="计科院")
@@ -96,3 +106,34 @@ def test_card_named_by_its_own_text_when_every_link_says_view_details():
     found, review = FacultyDirectoryExtractor.extract_with_review(html, "https://a.edu.cn/szdw/js.htm")
     assert [candidate.name for candidate in found + review] == names
     assert found[0].url == "https://a.edu.cn/info/1033/0.htm"
+
+
+def positional(lines, *, verified=True, name="王晓岚"):
+    url = "https://cs.univ.edu.cn/p/1.htm"
+    html = profile(name, *lines)
+    result = FacultyHarvestPipeline().harvest_candidates(
+        candidates=[FacultyCandidate(name=name, url=url, title="教授")], profile_fetcher=lambda _: html,
+        base_url=BASE, school="测试大学", college="计科院", verified_profile_urls={url} if verified else set())
+    rows = result["sheet1_with_email"] + result["sheet2_no_email"]
+    return rows[0]["邮箱"], [item["status"] for item in result["unresolved"]]
+
+
+def test_only_address_in_a_verified_profile_is_the_owners_by_position():
+    # badr 2026-10-09: position decides; the spelling only rules out someone else.
+    assert positional(["calony@qq.com"]) == ("calony@qq.com", [])
+    assert positional(["jlding.math@univ.edu.cn"]) == ("jlding.math@univ.edu.cn", [])
+
+
+def test_position_does_not_take_a_student_or_office_address_or_an_unproven_scope():
+    # The address spells a student named in the biography.
+    assert positional(["指导学生赵志远 zhaozhiyuan@163.com"]) == ("", ["ambiguous_email_assignment"])
+    # A bare abbreviation reads as an office, not a person.
+    assert positional(["zz@univ.edu.cn"]) == ("", ["ambiguous_email_assignment"])
+    # Two addresses, neither the university's: nothing singles one out.
+    assert positional(["calony@qq.com", "joey@163.com"]) == ("", ["ambiguous_email_assignment"])
+    # Without a browser-verified profile body the position proves nothing.
+    assert positional(["calony@qq.com"], verified=False) == ("", ["ambiguous_email_assignment"])
+
+
+def test_two_unlabelled_addresses_prefer_the_university_domain():
+    assert positional(["calony@qq.com", "calony@univ.edu.cn"]) == ("calony@univ.edu.cn", [])

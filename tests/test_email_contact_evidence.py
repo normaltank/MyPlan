@@ -143,8 +143,16 @@ def test_roster_card_owns_its_labelled_address():
     assert result["unresolved"] == []
 
 
-def test_roster_card_unlabelled_address_without_evidence_is_a_review_item():
+def test_roster_card_owns_its_only_unlabelled_address_by_position():
+    # badr 2026-10-09: the one address in a person's own card is theirs.
     result = roster_only(("王晓岚", "教授 sunflower88@163.com"), ("李强", "副教授"))
+    assert _rows(result) == {"王晓岚": "sunflower88@163.com", "李强": ""}
+    assert result["unresolved"] == []
+    assert result["email_alternates"][0]["basis"] == "position_in_roster_card"
+
+
+def test_roster_card_address_spelling_someone_else_named_there_is_a_review_item():
+    result = roster_only(("王晓岚", "教授 联系学生：赵志远 zhaozhiyuan@163.com"), ("李强", "副教授"))
     assert _rows(result) == {"王晓岚": "", "李强": ""}
     assert _statuses(result) == [("王晓岚", "ambiguous_email_assignment")]
 

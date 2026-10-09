@@ -126,6 +126,15 @@ async def test_confirmed_name_cell_is_admitted_on_the_next_run(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_rare_surname_in_the_name_column_is_admitted(tmp_path):
+    # badr 2026-10-09: the 姓名 header makes a rare surname a name, not a review item.
+    faculty = [*FACULTY[:4], ("智能科学系", "闻爱友", "教授"), FACULTY[5]]
+    result = await _read(tmp_path, _table_pdf(faculty=faculty))
+    assert "闻爱友" in {record.name for record in result["records"]}
+    assert result["unresolved"] == []
+
+
+@pytest.mark.asyncio
 async def test_missing_index_cell_stays_unresolved(tmp_path):
     gap = await _read(tmp_path, _table_pdf(skip_index=3))
     assert "pdf_roster_table_index_gap" in {item["status"] for item in gap["unresolved"]}

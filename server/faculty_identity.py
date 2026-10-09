@@ -93,6 +93,50 @@ def resolve_broken_profile_aliases(candidates, profile_html, errors, profile_evi
     return aliases
 
 
+def resolve_duplicate_profile_aliases(candidates, profile_html, profile_evidence, list_urls):
+    """One person published under several URLs (badr 2026-10-09).
+
+    A name with two or more personal pages on one host is one teacher when the
+    pages carry the same profile body: the body selector proven in the browser
+    on one of them selects, on every page, the same non-empty text containing
+    that name. The proven page is kept and the others become its aliases.
+    Different bodies, a body the selector cannot isolate, or a page shared with
+    another name keep the identity for review.
+    """
+    from bs4 import BeautifulSoup
+    from server.profile_content import scope_profile_html
+
+    by_name = defaultdict(list)
+    by_url = defaultdict(set)
+    for candidate in candidates:
+        by_url[candidate.url].add(candidate.name)
+        if candidate.url and candidate.url not in list_urls and candidate.url not in by_name[candidate.name]:
+            by_name[candidate.name].append(candidate.url)
+    aliases = {}
+    for name, urls in by_name.items():
+        if (len(urls) < 2 or len({urlsplit(url).netloc for url in urls}) != 1
+                or any(len(by_url[url]) != 1 or not profile_html.get(url) for url in urls)):
+            continue
+        proven = [url for url in urls if (profile_evidence.get(url) or {}).get("confirmed") is True]
+        if not proven:
+            continue
+        kept = proven[0]
+        proof = profile_evidence[kept]
+        bodies = set()
+        for url in urls:
+            scoped, _, issue = scope_profile_html(
+                profile_html[url], proof.get("profile_content_selector", ""), url,
+                start_selector=proof.get("profile_content_start_selector"))
+            if issue or not scoped:
+                break
+            bodies.add(re.sub(r"\s+", "", BeautifulSoup(scoped, "html.parser").get_text(" ", strip=True)))
+        else:
+            body = next(iter(bodies)) if len(bodies) == 1 else ""
+            if body and re.sub(r"\s+", "", name) in body:
+                aliases.update({url: kept for url in urls if url != kept})
+    return aliases
+
+
 def merge_same_name_observations(candidates, candidate_sources, list_urls):
     """同名合并（用户 2026-09-30 决定：唯一同名即合并）。
 
