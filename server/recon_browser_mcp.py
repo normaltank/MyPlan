@@ -270,11 +270,12 @@ class BrowserScout:
             # again here saves the scout a round trip for a condition no selector
             # changes, and a request failing the same way twice is the published page.
             failed = captured.get("failed_requests")
+            missing = captured.get('missing_media_failures')
             await asyncio.sleep(PROFILE_RETRY_SECONDS)
             await self.page.reload(wait_until="domcontentloaded", timeout=30000)
             captured = {}
             value = await verify_profile_container(self.page, selector, start, local_capture=captured,
-                                                   recurring_failures=failed)
+                                                   recurring_failures=failed, recurring_missing_media=missing)
         if "html" in captured:
             self.save("html", captured["html"])
         else:

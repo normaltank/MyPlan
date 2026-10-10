@@ -12,7 +12,7 @@ _GROUPS = {
         segment_name_asset_failed pdf_roster_asset_failed table_asset_failed recon_page_unverifiable""",
     "review": """rare_surname_needs_review segment_name_needs_review distinct_profile_identity_unverified
         zero_person_delivery_requires_review image_bio_email_conflict image_bio_low_confidence
-        image_bio_ocr_incomplete image_bio_owner_unresolved image_bio_unreadable_profile
+        image_bio_ocr_incomplete image_bio_owner_unresolved image_bio_unreadable_profile missing_profile_media_needs_review
         segment_image_bio_unassigned segment_name_unreadable segment_duplicate_name segment_email_ambiguous
         ambiguous_email_assignment ambiguous_shared_email ambiguous_surname_email conflicting_card_email
         appointment_evidence_unverified possible_unreviewed_appointment source_qualification_missing profile_unavailable
