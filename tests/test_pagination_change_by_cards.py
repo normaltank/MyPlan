@@ -25,7 +25,7 @@ FIRST = [(1, "张富有"), (2, "刘圣洁"), (3, "孙洁")]
 
 
 def capture(pages):
-    browser = FakeContext({URL: pages})
+    browser = FakeContext({URL: pages}, synthetic_pagination=True)
     return asyncio.run(_capture_branch(
         browser, {"url": URL, "next_selector": ".next", "card_selector": "main li.card"}))
 
