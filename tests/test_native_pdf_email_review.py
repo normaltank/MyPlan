@@ -2,17 +2,19 @@ import json
 from hashlib import sha256
 
 import pymupdf
+import pytest
 
 from server.image_bio_review import collect_email_conflict_items, email_conflict_id
 from server.image_biography import scan_media
 
 
-def native_audit(tmp_path):
+def native_audit(tmp_path, *, rotation=0):
     with pymupdf.open() as document:
         page = document.new_page()
         page.insert_text((30, 40), '张富有 教授', fontname='china-s', fontsize=12)
         page.insert_text((30, 70), '邮箱 123456@qq.com', fontname='china-s', fontsize=12)
         page.insert_text((30, 100), '邮箱 234567@163.com', fontname='china-s', fontsize=12)
+        page.set_rotation(rotation)
         original = document.tobytes()
     digest = sha256(original).hexdigest()
     original_path = tmp_path / 'original.pdf'
@@ -47,6 +49,25 @@ def test_native_pdf_email_conflict_has_original_crops_and_same_runtime_id(tmp_pa
     assert all(item['crops'])
     assert item['id'] == email_conflict_id(evidence['profile_url'], '张富有', scanned['text'].strip(),
                                           [evidence], '', item['choices'])
+
+
+@pytest.mark.parametrize('rotation', [0, 90, 180, 270])
+def test_native_email_crops_show_original_text_after_page_rotation(tmp_path, rotation):
+    from io import BytesIO
+    from pathlib import Path
+    from PIL import Image
+
+    audit_path, scanned, evidence = native_audit(tmp_path, rotation=rotation)
+    original_before = Path(evidence['original_path']).read_bytes()
+    scan_before = Path(evidence['ocr_path']).read_bytes()
+    [item] = collect_email_conflict_items(audit_path)
+    for crop in item['crops']:
+        image = Image.open(BytesIO(crop)).convert('L')
+        assert image.getextrema()[0] < 100, 'review crop must contain original printed text'
+    assert item['id'] == email_conflict_id(evidence['profile_url'], '张富有', scanned['text'].strip(),
+                                         [evidence], '', item['choices'])
+    assert Path(evidence['original_path']).read_bytes() == original_before
+    assert Path(evidence['ocr_path']).read_bytes() == scan_before
 
 
 def test_native_pdf_email_review_ui_decision_and_resume_use_runtime_evidence(tmp_path, monkeypatch):

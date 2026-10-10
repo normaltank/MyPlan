@@ -669,7 +669,8 @@ def _review_page_lines(original: bytes, kind: str, scanned: dict):
                     text = ''.join(span['text'] for span in line['spans']).strip()
                     if not text:
                         continue
-                    left, top, right, bottom = (value * 2 for value in line['bbox'])
+                    rendered = pymupdf.Rect(line['bbox']) * page.rotation_matrix
+                    left, top, right, bottom = (value * 2 for value in rendered)
                     lines.append({'text': text, 'confidence': 1.,
                                   'box': [[left, top], [right, top], [right, bottom], [left, bottom]]})
             page_scan['lines'] = lines
