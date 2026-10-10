@@ -7,6 +7,7 @@ import pytest
 from server import agent_recon, agent_worker
 from server.agent_recon import ReconPlanError, ReconResult
 from server.agent_worker import AgentWorker
+from server.recovery_policy import profile_access_failures, profile_issue_is_access_only
 from test_recon_optimizations import pair, result
 
 ROSTER = 'https://repair.example.edu/roster'
@@ -153,15 +154,15 @@ async def test_worker_repairs_live_bodies_without_requiring_a_dead_reference_bod
 
 def test_body_only_failure_cannot_be_deferred_without_a_failed_fetch():
     issue = {'url': 'https://repair.example.edu/p/1', 'status': 'profile_content_selector_empty'}
-    failed = agent_recon.profile_access_failures([issue])
-    assert not agent_recon.profile_issue_is_access_only(issue, failed)
+    failed = profile_access_failures([issue])
+    assert not profile_issue_is_access_only(issue, failed)
     # A plain space in a source URL and the browser's percent encoding identify
     # the same failed reference, without matching a different page or fragment.
-    failed = agent_recon.profile_access_failures([
+    failed = profile_access_failures([
         {'url': 'https://repair.example.edu/p/broken%20reference', 'status': 'profile_navigation_failed'}])
-    assert agent_recon.profile_issue_is_access_only(
+    assert profile_issue_is_access_only(
         {**issue, 'url': 'https://repair.example.edu/p/broken reference'}, failed)
-    assert not agent_recon.profile_issue_is_access_only(issue, failed)
+    assert not profile_issue_is_access_only(issue, failed)
 
 
 def test_rejected_plan_with_same_urls_cannot_replace_the_valid_capture_plan():

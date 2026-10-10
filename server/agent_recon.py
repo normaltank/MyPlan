@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 from types import SimpleNamespace
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 import yaml
 
 __all__ = ["ReconError", "ReconPlanError", "PlanHygieneError", "ReconPhaseLimitExceeded",
@@ -477,26 +477,6 @@ def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
         if not prior_urls <= proposed_urls:
             merged['previous_plan'] = prior_plan
     return merged
-
-
-def profile_access_failures(issues: list[dict]) -> set[str]:
-    """URL keys of profiles this capture could not fetch, not bad containers.
-
-    A companion 'body unverified/missing' issue on the same failed fetch cannot
-    tell a scout which body selector to change. The original issues and person
-    observations stay unresolved in the harvest report.
-    """
-    return {quote(url, safe=":/?#[]@!$&'()*+,;=%") for item in issues
-            if item.get('status') in {'profile_navigation_failed', 'fetch_failed'}
-            or str(item.get('status', '')).startswith('fetch_failed:')
-            for url in [item.get('url') or item.get('主页')]
-            if isinstance(url, str) and _URL.match(url)}
-
-
-def profile_issue_is_access_only(issue: dict, failed_urls: set[str]) -> bool:
-    url = issue.get('url')
-    return (str(issue.get('status', '')).startswith('profile_content_')
-            and isinstance(url, str) and quote(url, safe=":/?#[]@!$&'()*+,;=%") in failed_urls)
 
 
 def _profile_issue_branch(plan: dict[str, Any], issue: dict[str, Any]) -> str | None:

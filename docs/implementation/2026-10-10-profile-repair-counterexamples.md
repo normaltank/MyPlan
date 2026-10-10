@@ -38,3 +38,17 @@
 最终本地结果：`test_repair_counterexamples` 6项通过；连同 repair_scope、worker_resume_cache、recon_evidence、recon_optimizations、recon_stages、recon_submission、profile_structure_evidence、recon_gate_stop、agent_worker_delivery 共 **85 passed in 43.09s**。相关集合包含已有的本地真实 Chromium 场景；三处改动文件 Ruff 全通过。最后追加“已核实但未获接受的阶段证明”fixture后，新6项再次通过（1.60秒）。未执行实网学院采集与实际模型调用，未提交故没有对应CI结果。
 
 代价：不再截掉末尾反例，结构反馈可能更长。每URL证明是已有审计要求，应通过消解同URL重复问题而不是丢弃约束控制费用。报告保留旧审计事实时仍会有新增门禁问题，调用者需分别识别采集失败与侦察失败；本提交没有以这两种问题的数量相加推导人数。
+
+## 共享恢复分类与队列分流补齐
+
+冻结 `c882c0f` 独立审查复现了一个尚未贯通的调用者：worker 在结构反馈前过滤同 URL 的访问失败伴随正文问题，但共享 `recovery_policy`、报告的 recovery、失败数据库和 API/UI 仍把伴随正文错误归为 structure。原始审计保留是必要条件，不能用此理由让不同调用者对同一故障给出相反的恢复动作。
+
+访问 helper 已迁至 `recovery_policy`，worker 的局部另行过滤删除。共享分类要求当前捕获有同 URL 的 `profile_navigation_failed` 或 `fetch_failed[:…]` 机器事件，才把已登记的 `profile_content_*` 结构问题视为访问失败的后果。普通空正文、另一 URL／片段／查询参数上的正文问题，以及未知 `profile_content_*` 状态均不会据此降级。空格与浏览器 `%20` 仅按既有 URL 编码对应；不推测重定向或合并不同页面。既有 DOM 不稳定／网络未结束机器原因及分支访问依赖也由同一策略继续处理。
+
+worker 的真实失败出口新增内部 `stats.failure_issues`：只保存已登记机器 status、URL／branch_url 和已登记的浏览器瞬态 reason。教师字段、正文、原错误和原异常后缀不进入该上下文；`fetch_failed:…` 归一为 `fetch_failed`，未知状态归一为 `unknown_failure` 并保持 stop。含凭据或邮箱的 URL 不保存到此路由上下文，缺少安全 URL 时不能据它降低正文问题；原 URL 和详细问题仍在本地审计中保留。
+
+queue 的 `failure_disposition` 使用上述上下文调用共享分类，API 与 UI 继续读取该统一分流。独立或未知 summary code 若未被上下文覆盖，仍追加为无 URL 的恢复约束，不能因精简上下文丢失停止／范围问题。旧工单没有该上下文时沿用原 codes／旧错误文本分流，不能从 summary 的“两种错误同时出现”臆测同 URL；未静默重入队。新增上下文不修改侦察 Schema、原始 unresolved、记录、交付状态或人工无师资口径。
+
+新增定向测试先复现 **6 failed in 2.19s**，补齐后 6项通过，再扩展安全元数据、未知 stop、侦察重试和精确 URL 边界。真实 worker `_process`→结构采集审计→独立临时数据库失败持久化→queue→`app.present_task` 均执行：同 URL 访问后果归 access；独立正常页正文缺陷仍归 structure；未知问题仍归 failed；原审计的 unresolved、保留记录和 `delivery_ready=false` 不变。结构浏览器捕获与模型侦察使用固定 fixture，无实网、付费模型或生产状态变更。新10项连同恢复策略、队列分流、原反例、失败类型登记和来源／人工无师资相关回归共 **40 passed in 9.76s**（仅已有 FastAPI/Starlette弃用警告）。提交、CI、加载及学院验收仍需分别报告，本补齐不声明土木全部58项问题已解决。
+
+随后扩展到 worker恢复缓存、侦察门禁停止与人工复核整合，相关集合 **62 passed in 16.64s**；6个改动Python文件 Ruff通过。仅有既有 BeautifulSoup/lxml弃用警告。验证元数据保存在开发目录 `.planning/review/civil-recovery-context/validation.json`，未替代真实学院与CI终局证据。

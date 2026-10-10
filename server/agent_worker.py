@@ -48,11 +48,11 @@ import httpx
 
 from server.agent_queue import AgentTaskQueue
 from server.local_service_config import local_web_url
-from server.recovery_policy import NON_STRUCTURAL, classify_issues
+from server.recovery_policy import NON_STRUCTURAL, classify_issues, safe_failure_code, safe_failure_issues
 from server.agent_recon import (PlanHygieneError, ReconBudget, ReconBudgetExceeded,
                                ReconError, ReconPhaseLimitExceeded, ReconPlanError, ReconResult,
                                build_repair_feedback, merge_repair_feedback, reconnoiter, run_metrics,
-                               validate_model_plan, profile_access_failures, profile_issue_is_access_only)
+                               validate_model_plan)
 
 __all__ = ["AgentWorker", "main"]
 
@@ -359,6 +359,7 @@ class AgentWorker:
                 task,
                 reason,
                 failure_codes=[u.get("status") for u in unresolved],
+                failure_issues=unresolved,
             )
             return
 
@@ -564,12 +565,7 @@ class AgentWorker:
                 await self._attach_cross_check(task, recon.plan, report, deadline)
                 return report
             recovery = classify_issues(report.get("unresolved") or [])
-            # A failed profile fetch has no readable body to prove. Preserve
-            # its access and scope issues, but do not force a broader selector
-            # for its accessible siblings merely to fit an HTTP error page.
-            failed_profiles = profile_access_failures(report.get('unresolved') or [])
-            structural = [item for item in recovery.structure
-                          if not profile_issue_is_access_only(item, failed_profiles)]
+            structural = recovery.structure
             if recovery.stop or not structural:
                 break  # Only a person (review page) or the content itself can settle these.
             feedback = build_repair_feedback(recon.plan, {**report, "unresolved": self._with_branch_urls(
@@ -880,7 +876,8 @@ class AgentWorker:
 
     # ── 失败出口（三要素围栏）────────────────────────────────────────────
     async def _mark_failed(self, task: Any, reason: str,
-                           failure_codes: list[str | None] | None = None) -> None:
+                           failure_codes: list[str | None] | None = None,
+                           failure_issues: list[dict] | None = None) -> None:
         """把工单标记为终态失败。
 
         注意：**绝不修改内存里的 `task.status`。**
@@ -893,8 +890,9 @@ class AgentWorker:
         try:
             stats = {"total": 0, "with_email": 0, "no_email": 0}
             if failure_codes:
-                stats["failure_codes"] = sorted({code for code in failure_codes
-                                                  if isinstance(code, str)})
+                stats["failure_codes"] = sorted({safe_failure_code(code) for code in failure_codes})
+            if failure_issues is not None:
+                stats['failure_issues'] = safe_failure_issues(failure_issues)
             path = self.output_dir / "tasks" / task.task_id / "recon-attempts.json"
             if path.is_file():
                 stats.update(recon_audit_path=str(path),
