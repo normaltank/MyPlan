@@ -190,6 +190,7 @@ class ProfileDetail:
     contact_emails: Tuple[str, ...] = ()  # addresses explicitly labeled inside this person's content
     mecc_selector: str = ""
     status: str = "ok"  # 'ok', 'no_profile', 'fetch_failed'
+    title_fields: Tuple[TitleField, ...] = ()
 
 
 # CMS/Word contact headings pad Chinese glyphs with ordinary or NBSP spaces.
@@ -358,6 +359,13 @@ def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
         ambiguous = (invalid_group or _title_continuation(value)
             or bool(re.search(r'[^\s:：]+[:：]', outside))
             or bool(_BARE_TITLE_LABEL.search(outside)))
+        # Plain text has lost the DOM distinction between an internal break
+        # and a sibling paragraph. Do not certify a truncated prefix when a
+        # following title expression might still belong to this field.
+        if cursor + 1 < len(lines) and title_expression_tail(lines[cursor + 1][1]):
+            value += '\n' + lines[cursor + 1][1]
+            value_line = lines[cursor + 1][0]
+            ambiguous = True
         mentions = title_mentions(value)
         if mentions:
             fields.append(TitleField(value, mentions, (line_number, value_line), ambiguous))
@@ -367,6 +375,51 @@ def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
 def explicit_title_candidates(full_bio: str) -> Tuple[str, ...]:
     """Legacy mention view for callers that inspect words, not field conflicts."""
     return tuple(dict.fromkeys(title for field in explicit_title_fields(full_bio) for title in field.mentions))
+
+
+def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> tuple[TitleField, ...]:
+    """Read a labelled physical element or a table's complete value cell.
+
+    Internal line breaks belong to the field. Sibling paragraphs do not. This
+    evidence must travel with the profile instead of being rediscovered from
+    its flattened biography, which no longer distinguishes those boundaries.
+    """
+    field_pattern = re.compile(_TITLE_FIELD_LINE.pattern, re.S)
+    blocks = {'p', 'div', 'li', 'dd', 'td', 'th', 'section', 'article'}
+    fields, consumed = [], set()
+    for node in [root, *root.find_all(blocks)]:
+        if node.name not in blocks:
+            continue
+        if id(node) in consumed or (not preserve_content and is_noise_element(node)):
+            continue
+        # A table cell is a physical field unit even when Word nests paragraphs
+        # inside it; an outer article containing many fields is not one unit.
+        if node.name not in {'td', 'th'} and node.find(blocks, recursive=False):
+            continue
+        text = LayoutAwareTokenizer.get_clean_text(node, preserve_content=preserve_content)
+        match = field_pattern.fullmatch(text)
+        if match is None:
+            continue
+        value = (match.group(1) or '').strip()
+        value_node = node
+        if not value and node.name in {'td', 'th'}:
+            sibling = node.find_next_sibling(['td', 'th'])
+            if sibling is not None:
+                value_node = sibling
+                value = LayoutAwareTokenizer.get_clean_text(sibling, preserve_content=preserve_content)
+        if not value:
+            continue
+        outside, invalid_group = _outside_title_groups(value)
+        ambiguous = (invalid_group or _title_continuation(value)
+                     or bool(re.search(r'[^\s:：]+[:：]', outside))
+                     or bool(_BARE_TITLE_LABEL.search(outside)))
+        mentions = title_mentions(value)
+        if mentions:
+            fields.append(TitleField(value, mentions, (1, len(text.splitlines())), ambiguous))
+            for accepted in (node, value_node):
+                consumed.add(id(accepted))
+                consumed.update(id(child) for child in accepted.find_all(blocks))
+    return tuple(fields)
 
 
 def _find_lca(nodes: List[Tag]) -> Optional[Tag]:
@@ -500,7 +553,8 @@ class DetailMECCExtractor:
             if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
         ]
 
-        title_choice = select_title(explicit_fields=explicit_title_fields(full_bio),
+        title_fields = declared_dom_title_fields(mecc, preserve_content=preserve_content)
+        title_choice = select_title(explicit_fields=title_fields,
                                     body_title=resolve_title(full_bio))
         title = title_choice.title
 
@@ -527,6 +581,7 @@ class DetailMECCExtractor:
             full_bio=full_bio,
             emails=tuple(emails),
             contact_emails=contact_emails,
+            title_fields=title_fields,
             status=("mailto_address_conflict" if mailto_address_conflicts(mecc) else
                     "title_field_conflict" if title_choice.conflicts else "ok")
         )
@@ -575,7 +630,8 @@ class DetailMECCExtractor:
                 if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
             ]
 
-            title_choice = select_title(explicit_fields=explicit_title_fields(full_bio),
+            title_fields = declared_dom_title_fields(mecc, preserve_content=scoped)
+            title_choice = select_title(explicit_fields=title_fields,
                                         body_title=resolve_title(full_bio))
             title = title_choice.title
 
@@ -586,6 +642,7 @@ class DetailMECCExtractor:
                 full_bio=full_bio,
                 emails=tuple(raw_emails),
                 contact_emails=contact_email_candidates(mecc),
+                title_fields=title_fields,
                 status=("mailto_address_conflict" if mailto_address_conflicts(mecc) else
                         "title_field_conflict" if title_choice.conflicts else "ok")
             ))

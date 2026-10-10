@@ -4,6 +4,6 @@
 
 一个物理容器或表格标签／值单元内列出多个词，可能并列或带括号限定。字段内词数不能代替字段数量；读取保留边界、原值和物理文本行范围，不同本人字段矛盾仍待核。
 
-实现：`titles.TitleField`、`detail_mecc.explicit_title_fields`；全部生产选择使用 `select_title(explicit_fields=...)`。既有范围和归属证明仍必要，模型计划不携带这些数据字段。
+实现：`titles.TitleField`、`detail_mecc.declared_dom_title_fields`；完整物理字段对象通过个人页／名录 DTO 传递，全部生产选择使用 `select_title(explicit_fields=...)`。纯文本 `explicit_title_fields` 无法证明相邻行属于同一物理字段时保留疑义；既有范围和归属证明仍必要，模型计划不携带这些数据字段。
 
 实际观察：7个个人页、每页1个明确职称段落，来源与原件SHA已保存；字段值不作为类型库结构特征。跨学院实网泛化未证明。混合人员、边界不明及真实多字段矛盾不能当作一个安全字段。
