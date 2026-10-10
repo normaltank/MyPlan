@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -19,9 +20,9 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from server.dom_regions import is_noise_element
 
 try:
-    from server.titles import resolve_title, select_title, title_mentions
+    from server.titles import resolve_title, select_title, title_mentions, title_expression_tail, TitleField
 except ImportError:
-    from titles import resolve_title, select_title, title_mentions
+    from titles import resolve_title, select_title, title_mentions, title_expression_tail, TitleField
 
 _OPUS = str(Path(__file__).resolve().parent.parent / "Opus")
 if _OPUS not in sys.path:
@@ -190,6 +191,7 @@ class ProfileDetail:
     contact_emails: Tuple[str, ...] = ()  # addresses explicitly labeled inside this person's content
     mecc_selector: str = ""
     status: str = "ok"  # 'ok', 'no_profile', 'fetch_failed'
+    title_fields: Tuple[TitleField, ...] = ()
 
 
 # CMS/Word contact headings pad Chinese glyphs with ordinary or NBSP spaces.
@@ -290,29 +292,196 @@ def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
 
 
 _TITLE_FIELD_LINE = re.compile(r'^(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?:\s*[:：]\s*(.*)|\s*)$')
+# A second declared label is a boundary whatever precedes it. Punctuation is
+# not field ownership evidence; parenthetical qualifications are masked first.
+_BARE_TITLE_LABEL = re.compile(r'(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?=\s|[:：]|$)')
 
 
-def explicit_title_candidates(full_bio: str) -> Tuple[str, ...]:
+def _outside_title_groups(value: str) -> tuple[str, bool]:
+    """Separate parenthetical qualifications from top-level field boundaries."""
+    closes = {'(': ')', '（': '）', '[': ']', '【': '】'}
+    stack, outside = [], []
+    invalid = False
+    for char in value:
+        if char in closes:
+            stack.append(closes[char])
+            outside.append(' ')
+        elif char in closes.values():
+            if not stack or stack.pop() != char:
+                invalid = True
+            outside.append(' ')
+        else:
+            outside.append(' ' if stack else char)
+    return ''.join(outside), bool(stack) or invalid
+
+
+def _title_continuation(value: str) -> bool:
+    _, incomplete_group = _outside_title_groups(value)
+    return incomplete_group or value.rstrip().endswith(('/', '／', '、', '|'))
+
+
+def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
     """Read complete labelled fields in the parser's physical text stream.
 
     Block boundaries also preserve a table's separate label/value cells as
     consecutive lines. Prose mentioning a title label mid-sentence is not a
     labelled field. The stream must already be scoped to this person's body.
     """
-    lines = [line.strip() for line in full_bio.splitlines() if line.strip()]
-    titles = []
-    for index, line in enumerate(lines):
+    lines = [(index + 1, line.strip()) for index, line in enumerate(full_bio.splitlines()) if line.strip()]
+    fields = []
+    for index, (line_number, line) in enumerate(lines):
         match = _TITLE_FIELD_LINE.fullmatch(line)
         if not match:
             continue
         value = match.group(1)
+        value_line = line_number
         if not value and index + 1 < len(lines):
-            value = lines[index + 1]
+            value_line, value = lines[index + 1]
             # A following labelled field is not this field's value.
             if re.match(r'^[^:：]+[:：]', value):
                 continue
-        titles.extend(title_mentions(value or ''))
-    return tuple(dict.fromkeys(titles))
+        value = (value or '').strip()
+        cursor = index + (value_line != line_number)
+        # A dangling list operator or open qualification is not a complete
+        # field. Keep its following physical lines until the expression closes;
+        # a new explicit field remains a boundary rather than a continuation.
+        while _title_continuation(value) and cursor + 1 < len(lines):
+            next_number, next_line = lines[cursor + 1]
+            outside, _ = _outside_title_groups(next_line)
+            if (_TITLE_FIELD_LINE.fullmatch(next_line) or _BARE_TITLE_LABEL.search(outside)
+                    or re.search(r'[^\s:：]+[:：]', outside)):
+                break
+            # Continuations must contain a title, or only close an already
+            # open qualification. Unknown prose cannot complete a field.
+            if not title_expression_tail(next_line) and not re.fullmatch(r'[)）\]】\s]+', next_line):
+                break
+            value += '\n' + next_line
+            value_line = next_number
+            cursor += 1
+        outside, invalid_group = _outside_title_groups(value)
+        ambiguous = (invalid_group or _title_continuation(value)
+            or bool(re.search(r'[^\s:：]+[:：]', outside))
+            or bool(_BARE_TITLE_LABEL.search(outside)))
+        # Plain text has lost the DOM distinction between an internal break
+        # and a sibling paragraph. Do not certify a truncated prefix when a
+        # following title expression might still belong to this field.
+        if cursor + 1 < len(lines):
+            next_number, next_line = lines[cursor + 1]
+            next_outside, _ = _outside_title_groups(next_line)
+            possible_title = (title_expression_tail(next_line)
+                or title_expression_tail(next_outside)
+                or (not next_outside.strip() and bool(title_mentions(next_line))))
+            if possible_title:
+                value += '\n' + next_line
+                value_line = next_number
+                ambiguous = True
+        mentions = title_mentions(value)
+        if mentions:
+            fields.append(TitleField(value, mentions, (line_number, value_line), ambiguous))
+    return tuple(fields)
+
+
+def explicit_title_candidates(full_bio: str) -> Tuple[str, ...]:
+    """Legacy mention view for callers that inspect words, not field conflicts."""
+    return tuple(dict.fromkeys(title for field in explicit_title_fields(full_bio) for title in field.mentions))
+
+
+def _direct_title_texts(node: Tag, structural: set[str], *, preserve_content: bool):
+    """Read only direct inline runs, never re-flatten child profile containers.
+
+    An article's heading and paragraphs delimit these runs. Text after its
+    heading still needs reading, but its lost internal field boundaries remain
+    the responsibility of the conservative plain-text reader.
+    """
+    run = []
+    for child in [*node.children, None]:
+        boundary = child is None or (isinstance(child, Tag) and (
+            child.name in structural or child.find(structural) is not None))
+        if boundary:
+            if run:
+                wrapper = BeautifulSoup('', 'html.parser').new_tag('div')
+                for item in run:
+                    wrapper.append(copy(item))
+                yield LayoutAwareTokenizer.get_clean_text(wrapper, preserve_content=preserve_content)
+                run = []
+        else:
+            run.append(child)
+
+
+def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> tuple[TitleField, ...]:
+    """Read a labelled physical element or a table's complete value cell.
+
+    Internal line breaks belong to the field. Sibling paragraphs do not. This
+    evidence must travel with the profile instead of being rediscovered from
+    its flattened biography, which no longer distinguishes those boundaries.
+    """
+    field_pattern = re.compile(_TITLE_FIELD_LINE.pattern, re.S)
+    blocks = {'p', 'div', 'li', 'dt', 'dd', 'td', 'th', 'section', 'article', 'main', 'body',
+              'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
+    structural = (BLOCK_ELEMENTS | blocks) - {'br'}
+    fields, consumed = [], set()
+    for node in [root, *root.find_all(blocks)]:
+        if node.name not in blocks:
+            continue
+        if id(node) in consumed or (not preserve_content and is_noise_element(node)):
+            continue
+        if not preserve_content and node is not root:
+            ignored = False
+            for ancestor in node.parents:
+                if is_noise_element(ancestor):
+                    ignored = True
+                    break
+                if ancestor is root:
+                    break
+            if ignored:
+                continue
+        # A table cell is a physical field unit even when Word nests paragraphs
+        # inside it; an outer article containing many fields is not one unit.
+        if node.name in {'section', 'article', 'main', 'body'} or (
+                node.name not in {'td', 'th'} and node.find(structural) is not None):
+            for text in _direct_title_texts(node, structural, preserve_content=preserve_content):
+                fields.extend(explicit_title_fields(text))
+            continue
+        text = LayoutAwareTokenizer.get_clean_text(node, preserve_content=preserve_content)
+        match = field_pattern.fullmatch(text)
+        if match is None:
+            continue
+        value = (match.group(1) or '').strip()
+        value_node = node
+        if not value:
+            # A standalone label and its immediately adjacent value are one
+            # evidenced DOM pair. Never search beyond intervening elements or
+            # cross a person's heading to find a convenient title.
+            sibling = None
+            for following in node.next_siblings:
+                if isinstance(following, Comment) or (
+                        isinstance(following, NavigableString) and not following.strip()):
+                    continue
+                sibling = following if isinstance(following, Tag) else None
+                break
+            allowed = ({'td', 'th'} if node.name in {'td', 'th'} else
+                       {'dd'} if node.name == 'dt' else {'p', 'div', 'dd'})
+            if (sibling is not None and sibling.name in allowed
+                    and sibling.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) is None):
+                sibling_text = LayoutAwareTokenizer.get_clean_text(sibling, preserve_content=preserve_content)
+                if _TITLE_FIELD_LINE.fullmatch(sibling_text):
+                    continue
+                value_node = sibling
+                value = sibling_text
+        if not value:
+            continue
+        outside, invalid_group = _outside_title_groups(value)
+        ambiguous = (invalid_group or _title_continuation(value)
+                     or bool(re.search(r'[^\s:：]+[:：]', outside))
+                     or bool(_BARE_TITLE_LABEL.search(outside))
+                     or value_node.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) is not None)
+        mentions = title_mentions(value)
+        if mentions:
+            fields.append(TitleField(value, mentions, (1, len(text.splitlines())), ambiguous))
+            for accepted in (node, value_node):
+                consumed.add(id(accepted))
+                consumed.update(id(child) for child in accepted.find_all(blocks))
+    return tuple(fields)
 
 
 def _find_lca(nodes: List[Tag]) -> Optional[Tag]:
@@ -446,7 +615,8 @@ class DetailMECCExtractor:
             if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
         ]
 
-        title_choice = select_title(explicit=explicit_title_candidates(full_bio),
+        title_fields = declared_dom_title_fields(mecc, preserve_content=preserve_content)
+        title_choice = select_title(explicit_fields=title_fields,
                                     body_title=resolve_title(full_bio))
         title = title_choice.title
 
@@ -473,6 +643,7 @@ class DetailMECCExtractor:
             full_bio=full_bio,
             emails=tuple(emails),
             contact_emails=contact_emails,
+            title_fields=title_fields,
             status=("mailto_address_conflict" if mailto_address_conflicts(mecc) else
                     "title_field_conflict" if title_choice.conflicts else "ok")
         )
@@ -521,7 +692,8 @@ class DetailMECCExtractor:
                 if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
             ]
 
-            title_choice = select_title(explicit=explicit_title_candidates(full_bio),
+            title_fields = declared_dom_title_fields(mecc, preserve_content=scoped)
+            title_choice = select_title(explicit_fields=title_fields,
                                         body_title=resolve_title(full_bio))
             title = title_choice.title
 
@@ -532,6 +704,7 @@ class DetailMECCExtractor:
                 full_bio=full_bio,
                 emails=tuple(raw_emails),
                 contact_emails=contact_email_candidates(mecc),
+                title_fields=title_fields,
                 status=("mailto_address_conflict" if mailto_address_conflicts(mecc) else
                         "title_field_conflict" if title_choice.conflicts else "ok")
             ))
