@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -291,7 +292,9 @@ def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
 
 
 _TITLE_FIELD_LINE = re.compile(r'^(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?:\s*[:：]\s*(.*)|\s*)$')
-_BARE_TITLE_LABEL = re.compile(r'(?:^|[\s;；,，])(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?=\s|[:：]|$)')
+# A second declared label is a boundary whatever precedes it. Punctuation is
+# not field ownership evidence; parenthetical qualifications are masked first.
+_BARE_TITLE_LABEL = re.compile(r'(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?=\s|[:：]|$)')
 
 
 def _outside_title_groups(value: str) -> tuple[str, bool]:
@@ -362,10 +365,16 @@ def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
         # Plain text has lost the DOM distinction between an internal break
         # and a sibling paragraph. Do not certify a truncated prefix when a
         # following title expression might still belong to this field.
-        if cursor + 1 < len(lines) and title_expression_tail(lines[cursor + 1][1]):
-            value += '\n' + lines[cursor + 1][1]
-            value_line = lines[cursor + 1][0]
-            ambiguous = True
+        if cursor + 1 < len(lines):
+            next_number, next_line = lines[cursor + 1]
+            next_outside, _ = _outside_title_groups(next_line)
+            possible_title = (title_expression_tail(next_line)
+                or title_expression_tail(next_outside)
+                or (not next_outside.strip() and bool(title_mentions(next_line))))
+            if possible_title:
+                value += '\n' + next_line
+                value_line = next_number
+                ambiguous = True
         mentions = title_mentions(value)
         if mentions:
             fields.append(TitleField(value, mentions, (line_number, value_line), ambiguous))
@@ -377,6 +386,28 @@ def explicit_title_candidates(full_bio: str) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(title for field in explicit_title_fields(full_bio) for title in field.mentions))
 
 
+def _direct_title_texts(node: Tag, structural: set[str], *, preserve_content: bool):
+    """Read only direct inline runs, never re-flatten child profile containers.
+
+    An article's heading and paragraphs delimit these runs. Text after its
+    heading still needs reading, but its lost internal field boundaries remain
+    the responsibility of the conservative plain-text reader.
+    """
+    run = []
+    for child in [*node.children, None]:
+        boundary = child is None or (isinstance(child, Tag) and (
+            child.name in structural or child.find(structural) is not None))
+        if boundary:
+            if run:
+                wrapper = BeautifulSoup('', 'html.parser').new_tag('div')
+                for item in run:
+                    wrapper.append(copy(item))
+                yield LayoutAwareTokenizer.get_clean_text(wrapper, preserve_content=preserve_content)
+                run = []
+        else:
+            run.append(child)
+
+
 def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> tuple[TitleField, ...]:
     """Read a labelled physical element or a table's complete value cell.
 
@@ -385,7 +416,8 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
     its flattened biography, which no longer distinguishes those boundaries.
     """
     field_pattern = re.compile(_TITLE_FIELD_LINE.pattern, re.S)
-    blocks = {'p', 'div', 'li', 'dd', 'td', 'th', 'section', 'article'}
+    blocks = {'p', 'div', 'li', 'dd', 'td', 'th', 'section', 'article', 'main', 'body'}
+    structural = (BLOCK_ELEMENTS | blocks) - {'br'}
     fields, consumed = [], set()
     for node in [root, *root.find_all(blocks)]:
         if node.name not in blocks:
@@ -394,7 +426,10 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
             continue
         # A table cell is a physical field unit even when Word nests paragraphs
         # inside it; an outer article containing many fields is not one unit.
-        if node.name not in {'td', 'th'} and node.find(blocks, recursive=False):
+        if node.name in {'section', 'article', 'main', 'body'} or (
+                node.name not in {'td', 'th'} and node.find(structural) is not None):
+            for text in _direct_title_texts(node, structural, preserve_content=preserve_content):
+                fields.extend(explicit_title_fields(text))
             continue
         text = LayoutAwareTokenizer.get_clean_text(node, preserve_content=preserve_content)
         match = field_pattern.fullmatch(text)
@@ -402,11 +437,25 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
             continue
         value = (match.group(1) or '').strip()
         value_node = node
-        if not value and node.name in {'td', 'th'}:
-            sibling = node.find_next_sibling(['td', 'th'])
-            if sibling is not None:
+        if not value:
+            # A standalone label and its immediately adjacent value are one
+            # evidenced DOM pair. Never search beyond intervening elements or
+            # cross a person's heading to find a convenient title.
+            sibling = None
+            for following in node.next_siblings:
+                if isinstance(following, Comment) or (
+                        isinstance(following, NavigableString) and not following.strip()):
+                    continue
+                sibling = following if isinstance(following, Tag) else None
+                break
+            allowed = {'td', 'th'} if node.name in {'td', 'th'} else {'p', 'div', 'dd'}
+            if (sibling is not None and sibling.name in allowed
+                    and sibling.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) is None):
+                sibling_text = LayoutAwareTokenizer.get_clean_text(sibling, preserve_content=preserve_content)
+                if _TITLE_FIELD_LINE.fullmatch(sibling_text):
+                    continue
                 value_node = sibling
-                value = LayoutAwareTokenizer.get_clean_text(sibling, preserve_content=preserve_content)
+                value = sibling_text
         if not value:
             continue
         outside, invalid_group = _outside_title_groups(value)

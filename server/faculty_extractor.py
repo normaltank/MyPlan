@@ -617,9 +617,14 @@ class FacultyDirectoryExtractor:
             if slot is None:
                 continue
             context = LayoutAwareTokenizer.get_clean_text(card, preserve_content=True)
+            title_fields = declared_dom_title_fields(card, preserve_content=True)
+            if len(linked_slots) > 1:
+                # Preserve the common field and both people, but its container
+                # proves no individual owner. A later own-profile field can
+                # supersede this ambiguity under the existing precedence rule.
+                title_fields = tuple(replace(field, ambiguous=True) for field in title_fields)
             for name, title, href in (list(linked_slots.values()) if len(linked_slots) > 1 else [slot]):
                 href = href or first_href([name_scope], base_url)
-                title_fields = declared_dom_title_fields(card, preserve_content=True)
                 title = select_title(explicit_fields=title_fields, card_title=title,
                                      body_title=resolve_title(context)).title
                 reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'

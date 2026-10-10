@@ -943,7 +943,8 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
     def text_fields(record, segment):
         # Use only this person's already scoped DOM. A shared page's other
         # profiles must never donate their explicit fields to this record.
-        sole_owner = sum(candidate.url == record['主页'] for candidate in admitted) == 1
+        sole_owner = (record['主页'] in verified_profile_urls
+                      and sum(candidate.url == record['主页'] for candidate in admitted) == 1)
         html = (getattr(segment.segment, 'html', '') if segment is not None else
                 scoped_profile_html.get(record['主页'], '') if sole_owner else '')
         if html:
