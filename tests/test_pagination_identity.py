@@ -237,6 +237,32 @@ async def test_real_terminal_widget_excludes_a_separate_news_next(widget_id):
 
 @pytest.mark.asyncio
 @pytest.mark.browser
+async def test_direct_forward_link_does_not_bind_to_a_shared_widgets_wrapper():
+    from playwright.async_api import async_playwright
+    from server.browser_batch_tool import _capture_branch
+
+    first = '<main><ul><li>张伟</li></ul><section class="widgets"><div class="pages"><a href="/list/2">Next</a></div><div class="news"><a href="/news/2">Next</a></div></section></main>'
+    last = first.replace("张伟", "李明").replace(
+        '<a href="/list/2">Next</a>', "<span disabled>Next</span>"
+    )
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            context = await context_for(
+                browser, [], {URL: first, "https://faculty.example.edu/list/2": last}
+            )
+            pages, errors, evidence = await _capture_branch(
+                context,
+                {"url": URL, "card_selector": CARDS, "next_selector": ".pages > a"},
+            )
+            assert len(pages) == 2 and not errors
+            assert evidence["end"] == "next_control_absent"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
 @pytest.mark.parametrize("selector,expected_count", [(FRAGILE, 2), (STABLE, 3)])
 async def test_actual_browser_cannot_treat_shifted_next_as_end(
     selector, expected_count

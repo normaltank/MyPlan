@@ -98,19 +98,18 @@ def same_identity(original: dict, current: dict | None) -> bool:
     return original["unlabelled_shape"] == current["unlabelled_shape"]
 
 
-def _retained_components(
+def _retained_slots(
     soup: BeautifulSoup, cards: list[Tag], original: dict
 ) -> list[Tag]:
-    """Locate the original widget if it still exists, independently of its leaf.
+    """Locate the observed control's enclosing slot, keeping its full outer path.
 
-    A link's immediate parent may be its forward slot; the next ancestor is
-    the enclosing widget. Keep the full outer path to distinguish peer widgets.
+    Never guess the widget by a fixed ancestor depth: the immediate container
+    can itself be the pager, or a forward slot inside it.
     """
     path = original["scope_path"]
     if not path:
         return []
-    index = 1 if len(path) > 1 else 0
-    shape = path[index]
+    shape = path[0]
     found = []
     for node in soup.find_all(shape["tag"]):
         if _shape(node) != shape:
@@ -119,7 +118,7 @@ def _retained_components(
         if (
             identity is not None
             and identity["scope"] == original["scope"]
-            and identity["scope_path"] == path[index + 1 :]
+            and identity["scope_path"] == path[1:]
         ):
             found.append(node)
     return found
@@ -130,7 +129,7 @@ def displaced_controls(
 ) -> list[str | None]:
     soup = BeautifulSoup(html, "html.parser")
     cards = soup.select(card_selector)
-    components = _retained_components(soup, cards, original)
+    slots = _retained_slots(soup, cards, original)
     found = []
     for node in soup.find_all(list({original["tag"], "a", "button", "input"})):
         if node.has_attr("disabled"):
@@ -138,8 +137,9 @@ def displaced_controls(
         current = _identity(node, cards)
         if current is None or original["scope"] != current["scope"]:
             continue
-        if components and not any(
-            parent is widget for widget in components for parent in node.parents
+        if slots and not any(
+            node is slot or any(parent is slot for parent in node.parents)
+            for slot in slots
         ):
             continue
         # An unchanged control slot, or an observed forward role in the same
@@ -153,7 +153,7 @@ def displaced_controls(
             == [p["tag"] for p in current["scope_path"]]
         )
         widget_changed = (
-            not components
+            not slots
             and bool(original["scope_path"])
             and [p["tag"] for p in original["scope_path"]]
             == [p["tag"] for p in current["scope_path"]]
