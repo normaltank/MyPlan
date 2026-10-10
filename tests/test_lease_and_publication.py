@@ -77,16 +77,26 @@ async def test_renewal_failing_until_lease_expiry_blocks_delivery(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_database_renewer_extends_the_stored_lease(tmp_path):
+@pytest.mark.parametrize('renewal_delay', [0, .2])
+async def test_database_renewer_extends_the_stored_lease(tmp_path, renewal_delay):
     queue = AgentTaskQueue(tmp_path / "tasks.db")
     task = queue.claim_task("worker-1", task_id=queue.submit_task("U", "C", "https://e.edu/").task_id,
                             lease_seconds=300)
     before = _lease_until(queue, task.task_id)
     worker = AgentWorker(db_path=queue.db_path, output_dir=tmp_path / "out")
     renew = worker._lease_renewer(task)
+    succeeded = asyncio.Event()
 
-    async with lease_keepalive(renew, interval_seconds=0.02, lease_seconds=300) as lease:
-        await asyncio.sleep(0.15)
+    async def observed_renewal():
+        # Scheduling or database work can exceed the old fixed 0.15-second wait.
+        await asyncio.sleep(renewal_delay)
+        owned = await renew()
+        if owned:
+            succeeded.set()
+        return owned
+
+    async with lease_keepalive(observed_renewal, interval_seconds=0.02, lease_seconds=300) as lease:
+        await asyncio.wait_for(succeeded.wait(), timeout=5)
 
     assert lease["error"] is None
     assert _lease_until(queue, task.task_id) > before

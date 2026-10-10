@@ -753,6 +753,50 @@ def resolve_email_conflict(path: str | Path, item_id: str, choices: list[str]) -
     return selected if decision.get("choices") == choices and selected in choices else None
 
 
+def native_pdf_owner_rerun_ready(audit_path: str | Path, audit: dict) -> bool:
+    """Allow a new run only when every old native PDF owner error now recomputes.
+
+    This settles no human decision and changes no saved audit. The resumed
+    media audit must still prove ownership and readability for its own capture.
+    """
+    from server.pdf_biography_owner import inspect_owner_scope
+
+    issues = [item for item in audit.get('unresolved', []) if item.get('status') in TEXT_STATUSES]
+    if not issues or any(item['status'] != 'image_bio_owner_unresolved' for item in issues):
+        return False
+    root = Path(audit_path).resolve().parent
+    eligibility = audit.get('eligibility', [])
+    try:
+        known_names = {item['name'] for item in eligibility}
+        for issue in issues:
+            evidence = [item for item in audit.get('image_biography_evidence', [])
+                        if item.get('profile_url') == issue.get('profile_url')
+                        and item.get('media_url') == issue.get('media_url')]
+            if len(evidence) != 1 or evidence[0].get('kind') != 'pdf':
+                return False
+            item = evidence[0]
+            owners = {row['name'] for row in eligibility if row.get('status') == 'eligible'
+                      and row.get('profile_url') == item['profile_url']}
+            if len(owners) != 1:
+                return False
+            original = _inside(item['original_path'], root).read_bytes()
+            if sha256(original).hexdigest() != item['sha256']:
+                return False
+            scanned = json.loads(_inside(item['ocr_path'], root).read_text(encoding='utf8'))
+            pages = scanned.get('pages') or []
+            if (scanned.get('source_sha256') != item['sha256'] or not pages
+                    or any(page.get('source') != 'pdf_text_layer' for page in pages)):
+                return False
+            adjusted, reviewed = apply_review_decisions(
+                scanned, item['media_url'], item['sha256'], root / TEXT_DECISIONS_FILE)
+            proof = inspect_owner_scope(original, adjusted, next(iter(owners)), known_names, reviewed)
+            if proof['status'] != 'single_owner':
+                return False
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return True
+
+
 def text_review_complete(audit_path: str | Path, items: list[dict]) -> bool:
     """Every OCR line under review has a nonempty decision bound to the same original line,
     or its image was judged irrelevant."""
