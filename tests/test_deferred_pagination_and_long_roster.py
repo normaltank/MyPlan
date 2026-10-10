@@ -12,8 +12,6 @@ from server.browser_batch_tool import run_plan
 from server.browser_context import new_browser_context
 from server.harvest_state import HarvestState
 
-pytestmark = pytest.mark.browser
-
 ROOT = 'https://fixture.edu/'
 
 
@@ -135,4 +133,4 @@ async def test_roster_longer_than_twenty_pages_completes_under_worker_checkpoint
     assert not report['unresolved'] and report['delivery_ready'] is True
 
 # This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
-pytestmark = pytest.mark.verified_source_boundary
+pytestmark = [pytest.mark.browser, pytest.mark.verified_source_boundary]

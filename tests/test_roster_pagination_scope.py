@@ -7,6 +7,9 @@ from playwright.async_api import async_playwright
 from server.browser_context import IsolatedPage
 from server.recon_browser_mcp import BrowserScout
 
+# Keep actual pager proof; only the unrelated source-purpose producer is stipulated.
+pytestmark = pytest.mark.verified_source_boundary
+
 
 CAROUSEL = """<div class="banner slick-slider slick-initialized">
   <div class="slick-list"><div class="slick-track">
