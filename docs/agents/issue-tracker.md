@@ -1,24 +1,13 @@
-# Issue tracker: Local Markdown
+# 项目工作项入口
 
-Issues and specs for this repo live as Markdown files in `.scratch/`.
+本阶段唯一工作清单是 [五项改进任务](../improvement-plan.md)。技能要求获取 spec 或 ticket 时，先读取该计划、[CONTEXT.md](../../CONTEXT.md) 和任务直接引用的证据；用户当前对话给出的要求优先。
 
-## Conventions
+## 使用规则
 
-- One feature per directory: `.scratch/<feature-slug>/`
-- The spec is `.scratch/<feature-slug>/spec.md`
-- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`
-- Triage state is recorded as a `Status:` line near the top of each issue file
-- Comments and conversation history append under a `## Comments` heading
+- 在现有任务或问题条目下记录下一步、证据链接及阻塞条件，不为同一事项再建平行清单。
+- GitHub PR 保存具体改动、审查与对应 CI；合并和检查状态直接查询 GitHub，完成后在工作项附证据链接。
+- 需要跨 agent 留存的复现步骤、设计或实验结论放入对应的已跟踪项目文档，且由工作项链接。只有内容需要独立阅读时才新增文件。
+- 本地 `.scratch/<effort>/` 可以保存临时推演或技能中间产物，但文件存在不等于已共享。交接前核对 `git ls-files` 与实际提交；不得让五项任务只指向未提交的本机材料。
+- 已有外部 issue 或 PR 按其真实链接继续，不因为技能默认使用本地 Markdown 就复制一份。
 
-## Publishing and fetching
-
-When a skill says to publish to the issue tracker, create the corresponding file under `.scratch/<feature-slug>/`. When a skill says to fetch a ticket, read the referenced Markdown file.
-
-## Wayfinding operations
-
-- Map: `.scratch/<effort>/map.md`
-- Child ticket: `.scratch/<effort>/issues/NN-<slug>.md`
-- Blocking: a `Blocked by: NN, NN` line
-- Frontier: open, unblocked, unclaimed child files in numeric order
-- Claim: set `Status: claimed`
-- Resolve: append `## Answer`, set `Status: resolved`, and add a context pointer to the map
+完成条件是结论与验证证据到位，不是创建了 `Status:` 行或打勾。与权限相关的执行边界见 AGENTS，技能不能另增授权。
