@@ -425,7 +425,7 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
             continue
         if id(node) in consumed or (not preserve_content and is_noise_element(node)):
             continue
-        if not preserve_content:
+        if not preserve_content and node is not root:
             ignored = False
             for ancestor in node.parents:
                 if is_noise_element(ancestor):
