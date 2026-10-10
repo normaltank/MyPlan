@@ -1,5 +1,7 @@
 # Page Qualification Architecture
 
+> Status (2026-10-10): interface and migration design. Whether every production entry path follows this design remains a code-audit question, not an implementation guarantee. Current user requirements are in [CONSTITUTION.md](../../CONSTITUTION.md); work follows [the improvement plan](../improvement-plan.md). A supplied URL prioritizes validation but never removes the duty to inspect other faculty branches.
+
 ## Decision
 
 Use an A/B-lite hybrid: a small qualification interface with mandatory audit metadata. Discovery remains outside the module; Page Qualification owns Page Snapshot acquisition and reuse, Page Evidence, College Attribution, page-purpose classification, and the deterministic outcome.
