@@ -172,10 +172,11 @@ async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
         await asyncio.sleep(0.3)
         stable_html = await page.content()
         stable = (scope_digest(stable_html, card_selector), scope_digest(stable_html, before['pager_selector']))
+        stable_facts = await page.evaluate(FACTS, card_selector)
         if (popups or page.url != before['url'] or tracker.script_errors or tracker.pending
                 or tracker.failures != failures or tracker.activity != activity
                 or tracker.failed_requests != failure_set or tracker.document_response is not document
-                or stable != current or await page.evaluate(FACTS, card_selector) != facts):
+                or stable != current or stable_facts != facts):
             return [{**proof, 'reason': 'pager_not_stable'}]
         return [{**proof, 'confirmed': True, 'source_sha256': current[0], 'pager_sha256': current[1]}]
     except Exception:

@@ -95,15 +95,17 @@ def test_one_media_carousel_is_not_a_roster_pager():
 
 
 @pytest.mark.parametrize('reload_status', [404, 503])
+@pytest.mark.parametrize('reload_during_final', [False, True])
 @pytest.mark.asyncio
 @pytest.mark.browser
-async def test_same_url_reload_cannot_reuse_previous_document_controller(reload_status):
+async def test_same_url_reload_cannot_reuse_previous_document_controller(reload_status, reload_during_final):
     from playwright.async_api import async_playwright
     from server.browser_context import new_browser_context
     from server.browser_readiness import install_request_tracking
-    from server.pager_evidence import terminal_pagers
+    from server.pager_evidence import FACTS, terminal_pagers
 
-    html = CONTROLLER_PAGE.replace('<a class="next"', '<a onclick="location.reload()" class="next"')
+    html = (CONTROLLER_PAGE if reload_during_final else
+            CONTROLLER_PAGE.replace('<a class="next"', '<a onclick="location.reload()" class="next"'))
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         try:
@@ -121,10 +123,21 @@ async def test_same_url_reload_cannot_reuse_previous_document_controller(reload_
             page = await context.new_page()
             install_request_tracking(page)
             await page.goto(URL, wait_until='networkidle')
+            if reload_during_final:
+                original_evaluate = page.evaluate
+                fact_calls = 0
+                async def evaluate(expression, arg=None):
+                    nonlocal fact_calls
+                    if expression == FACTS:
+                        fact_calls += 1
+                        if fact_calls == 3:
+                            await page.reload(wait_until='networkidle')
+                    return await original_evaluate(expression, arg)
+                page.evaluate = evaluate
             [proof] = await terminal_pagers(page, SELECTOR)
             assert documents == 2
             assert not proof['confirmed']
-            assert proof['reason'] == 'pager_state_changed'
+            assert proof['reason'] == ('pager_not_stable' if reload_during_final else 'pager_state_changed')
         finally:
             await browser.close()
 
