@@ -13,6 +13,7 @@
 | [当前待办](review-backlog.md) | 可执行事项，完成后附证据 |
 | [领域术语](../CONTEXT.md) | 来源、身份、完整性和交付语义 |
 | [运维说明](operations.md) | 命令与运行诊断；历史部署记录不证明当前环境状态 |
+| [项目访问保护](project-access-protection.md) | 所有者写入权限、分支／标签保护及实际配置边界 |
 
 ## 会影响实际运行的 Markdown
 
