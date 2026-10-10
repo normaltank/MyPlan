@@ -12,7 +12,7 @@ from server.task_image_review import prepare_review_resume, carry_review_decisio
 
 def fixture(tmp_path, *, name='王芳', role='organizational_membership'):
     task_id = 'source-task'
-    out = tmp_path/task_id/'attempt-1'
+    out = tmp_path/'tasks'/task_id/'attempt-1'
     out.mkdir(parents=True)
     url = 'https://example.edu/members'
     html = '<main><p>王芳、李华，组织成员原文。</p></main>'

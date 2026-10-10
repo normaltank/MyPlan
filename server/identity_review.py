@@ -150,25 +150,53 @@ def _resolved_records(item, resolution) -> list[dict]:
     return result
 
 
-def _certificate(decision, results):
-    return {"id": decision["id"], "verdict": decision["verdict"], "resolution": decision["resolution"],
-            "reviewed_by": decision["reviewed_by"], "reviewed_at": decision["reviewed_at"],
-            "result_sha256s": sorted(record_digest(row) for row in results)}
+def _certificate(decision, results, *, current_item=None, equivalence=None):
+    certificate = {"id": decision["id"], "verdict": decision["verdict"], "resolution": decision["resolution"],
+                "reviewed_by": decision["reviewed_by"], "reviewed_at": decision["reviewed_at"],
+                "result_sha256s": sorted(record_digest(row) for row in results)}
+    if equivalence:
+        certificate.update(current_item=current_item, source_equivalence=equivalence)
+    return certificate
 
 
-def apply_decisions(records, source_hashes, decision_path):
+def _reviewed_item(item, decision_path, *, source_html=None, source_evidence=None):
+    if item.get('id') != item_id(item):
+        return None, None
+    decisions = load_decisions(decision_path)
+    direct = decisions.get(item['id'],{})
+    if _valid_decision(item,direct):
+        return direct, None
+    if item['id'] in decisions:
+        return None,None
+    if source_html is None or source_evidence is None:
+        return None, None
+    from server.review_evidence import old_review_items, identity_equivalence
+    for bundle, previous in old_review_items(Path(decision_path).parent.parent,'identity_review_items'):
+        try:
+            decision = bundle.decisions(DECISIONS_FILE).get(previous['id'],{})
+            if (previous.get('id') != item_id(previous) or decisions.get(previous['id']) != decision
+                    or not _valid_decision(previous,decision)):
+                continue
+            proof = identity_equivalence(bundle,previous,item,source_html,source_evidence)
+            if proof:
+                return decision, proof
+        except (OSError,ValueError,KeyError,TypeError):
+            continue
+    return None, None
+
+
+def apply_decisions(records, source_hashes, decision_path, *, source_html=None, source_evidence=None):
     """Resolve exact current observations; stale/unresolved decisions stay pending."""
     items = pending_items(records, source_hashes)
-    decisions = load_decisions(decision_path)
     pending, certificates, replacements = [], [], {}
     for item in items:
-        decision = decisions.get(item["id"], {})
-        if not _valid_decision(item, decision):
+        decision, proof = _reviewed_item(item,decision_path,source_html=source_html,source_evidence=source_evidence)
+        if decision is None:
             pending.append(item)
             continue
         results = _resolved_records(item, decision["resolution"])
         replacements[item["name"]] = results
-        certificates.append(_certificate(decision, results))
+        certificates.append(_certificate(decision, results,current_item=item,equivalence=proof))
     result, emitted = [], set()
     for row in records:
         name = field_value(row, "姓名")
@@ -194,8 +222,21 @@ def validated_pairs(records, certificates, decision_path):
         item = decision.get("item", {})
         if not _valid_decision(item, decision):
             raise ValueError("identity review evidence is missing or invalid")
+        proof = None
+        if certificate.get('source_equivalence'):
+            from server.review_evidence import _read
+            current = certificate.get('current_item',{})
+            root = Path(decision_path).parent.parent
+            html = {p['source_url']:_read(root,p['new_original_sha256'],'.html').decode('utf8')
+                    for p in certificate['source_equivalence']}
+            evidence = {p['source_url']:{'profile_content_selector':p['bounds'][0],
+                         'profile_content_start_selector':p['bounds'][1]} for p in certificate['source_equivalence']}
+            reviewed, proof = _reviewed_item(current,decision_path,source_html=html,source_evidence=evidence)
+            if reviewed != decision or proof != certificate['source_equivalence']:
+                raise ValueError('identity source equivalence is missing or invalid')
+            item = current
         results = _resolved_records(item, decision["resolution"])
-        if certificate != _certificate(decision, results) or any(observation_key(r) not in keys for r in results):
+        if certificate != _certificate(decision, results,current_item=item,equivalence=proof) or any(observation_key(r) not in keys for r in results):
             raise ValueError("identity review does not match output records")
         pairs.update(frozenset((observation_key(a), observation_key(b))) for a,b in combinations(results, 2))
     return pairs
@@ -216,5 +257,17 @@ def audit_pairs(records, stats, task_id):
 
 
 def review_complete(audit_path, items):
-    decisions = load_decisions(Path(audit_path).parent / DECISIONS_FILE)
-    return all(_valid_decision(item, decisions.get(item["id"], {})) for item in items)
+    from server.review_evidence import current_source
+    path = Path(audit_path)
+    html, evidence = {}, {}
+    try:
+        for item in items:
+            for observation in item['observations']:
+                url = observation['url']
+                html[url], evidence[url] = current_source(path,url)
+        return all(_reviewed_item(item,path.parent/DECISIONS_FILE,source_html=html,
+                                 source_evidence=evidence)[0] is not None for item in items)
+    except (OSError,ValueError,KeyError,TypeError):
+        # Exact decisions do not require a counter equivalence source archive.
+        decisions = load_decisions(path.parent/DECISIONS_FILE)
+        return all(_valid_decision(item,decisions.get(item['id'],{})) for item in items)

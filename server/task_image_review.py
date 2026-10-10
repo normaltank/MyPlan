@@ -44,10 +44,12 @@ def prepare_review_resume(audit_path: Path, task_id: str) -> None:
     root = audit_path.parent.parent.resolve()
     if root.name != task_id or not audit_path.resolve().is_relative_to(root):
         raise ValueError('review audit must belong to the task')
+    from .review_evidence import register_source
+    bundle = register_source(root, audit_path, task_id)
     marker = root / 'review-resume.json'
     staging = root / 'review-resume.tmp'
     staging.write_text(json.dumps({'task_id': task_id, 'audit_path': str(audit_path.resolve()),
-                                   'prepared_at': time.time()}), encoding='utf-8')
+                                   'prepared_at': time.time(), 'source_bundle': bundle}), encoding='utf-8')
     staging.replace(marker)
 
 
@@ -67,6 +69,11 @@ def carry_review_decisions(task_root: str | Path, target_attempt: str | Path) ->
     except FileNotFoundError:
         return
     source = source_audit.parent
+    # Legacy resume markers have no immutable bundle yet. Seal the actual old
+    # audit before capture can overwrite this same attempt's snapshot names.
+    if not marker.get('source_bundle'):
+        from .review_evidence import register_source
+        register_source(root, source_audit, root.name)
     target.mkdir(parents=True, exist_ok=True)
     for filename in review_registry.DECISION_FILES:
         path = source / filename

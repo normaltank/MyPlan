@@ -1431,7 +1431,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         verified_profile_urls=set(profile_scope_evidence), title_field_evidence=title_field_evidence))
     from server import html_email_review
     unresolved, html_email_items, html_email_reviews = html_email_review.apply_decisions(
-        unresolved, pipeline_records, admitted, scoped_profile_html, out)
+        unresolved, pipeline_records, admitted, scoped_profile_html, out,
+        raw_source_html=profile_html, source_evidence=profile_scope_evidence)
     remaining = {id(item) for item in unresolved}
     extraction_ready = bool(extraction["delivery_ready"] or (
         html_email_reviews and extraction.get("records_conserved") and pipeline_records
@@ -1452,7 +1453,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     if html_email_reviews:
         # A reviewed e-mail may move a row between sheets; numbering follows the rows.
         records = [{**row, "序号": index} for index, row in enumerate(records, 1)]
-    records, identity_items, identity_reviews = identity_review.apply_decisions(records, source_hashes, decision_path)
+    records, identity_items, identity_reviews = identity_review.apply_decisions(records, source_hashes, decision_path,
+        source_html={**dict(all_pages), **profile_html}, source_evidence=profile_scope_evidence)
     reviewed_pairs = identity_review.validated_pairs(records, identity_reviews, decision_path)
     from server.faculty_identity import identity_review_issues
     unresolved.extend(identity_review_issues(records, reviewed_pairs))
