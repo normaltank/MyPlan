@@ -44,7 +44,7 @@ ADR 记录已选定、需要保留理由的重要工程取舍：背景、决定�
 
 [recon_discovery.md](../server/recon_discovery.md)、[recon_provided_links.md](../server/recon_provided_links.md)、[recon_instructions.md](../server/recon_instructions.md) 由程序直接加载，属于运行逻辑。它们必须自包含，不能依赖模型另读根目录规则。修改时验证实际加载、结构 Schema、浏览器工具与证据契约。
 
-DS 使用上述三份运行提示词；旧 `faculty-browser-harvest/SKILL.md` 未被当前运行时加载，已移除以免被开发 agent 自动发现并误用。原文从 Git 历史追溯。[TOOLS.md](../.agents/skills/faculty-browser-harvest/TOOLS.md) 保留执行层接口参考，原目录中的退役脚本保留明确拒绝旧调用的兼容行为。开发维护与全链路审查 agent 将运行指令作为源码资料维护，通用开发技能按当前任务使用。
+DS 使用上述三份运行提示词；旧 `faculty-browser-harvest/SKILL.md` 未被当前运行时加载，已移除以免被开发 agent 自动发现并误用。原文从 Git 历史追溯。[TOOLS.md](../.agents/skills/faculty-browser-harvest/TOOLS.md) 保留执行层接口参考，原目录中的退役脚本保留明确拒绝旧调用的兼容行为。同目录体系下旧 `.agents/plugins/faculty_harvest_tools/` 的 `plugin.json`、`mcp_config.json` 与 `dsh-agent-runtime.cordis.yml` 是退役 IDE／浏览器实验配置；当前 worker 从 `server/agent_recon.py` 加载 `server/recon_runtime.cordis.yml` 并挂载项目 scout，旧配置不能作为现行安装步骤。开发维护与全链路审查 agent 将运行指令作为源码资料维护，通用开发技能按当前任务使用。
 
 ## 历史记录与证据
 

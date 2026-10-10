@@ -12,8 +12,8 @@ The issue may sit in `ready-for-agent` for days or weeks. The codebase will chan
 
 - **Do** describe interfaces, types, and behavioral contracts
 - **Do** name specific types, function signatures, or config shapes that the agent should look for or modify
-- **Don't** reference file paths: they go stale
-- **Don't** reference line numbers
+- Use current file paths, symbols and version-pinned evidence when they help the next agent locate or reproduce the issue.
+- Avoid an unexplained line number as the whole specification; pair locations with the behavioral contract.
 - **Don't** assume the current implementation structure will remain the same
 
 ### Behavioral, not procedural
@@ -201,7 +201,7 @@ The function around line 150 has the issue.
 This is bad because:
 - No category
 - Vague description ("the triage thing is broken")
-- References file paths and line numbers that will go stale
+- Gives only a vague location instead of a behavioral contract and reproducible evidence
 - No acceptance criteria
 - No scope boundaries
 - No description of current vs desired behavior

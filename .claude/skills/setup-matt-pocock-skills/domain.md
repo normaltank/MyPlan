@@ -1,3 +1,5 @@
+> Optional seed example for an explicitly requested new setup. MyPlan’s current routing is in docs/agents/; preserve its configured responsibilities and adapt this example only where requested.
+
 # Domain Docs
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
