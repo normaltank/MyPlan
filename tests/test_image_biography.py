@@ -176,7 +176,9 @@ async def test_image_declared_over_size_cap_is_recorded_and_not_fetched(tmp_path
                                           "media_url": "https://faculty.example.edu/artwork.jpg",
                                           "status": "image_over_size_cap",
                                           "declared_bytes": MAX_PROFILE_IMAGE_BYTES + 1}]
-    assert result["unresolved"] == []
+    assert len(result['unresolved']) == 1
+    assert result['unresolved'][0]['media_url'] == 'https://faculty.example.edu/artwork.jpg'
+    assert result['unresolved'][0]['reason'] == 'declared_media_exceeds_size_cap'
 
 
 @pytest.mark.asyncio

@@ -302,7 +302,7 @@ async def audit_profile_media(
     gone on two opens with no room on the page; nothing was shown there to read.
     ``asset_size`` reads a size the server declares; an image declared over
     ``MAX_PROFILE_IMAGE_BYTES`` is listed in ``oversized_media`` unread. A
-    profile whose only content is such an image still fails the image-only check.
+    capped image also stays unresolved: size cannot prove its role or content.
     """
     out = Path(output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -358,6 +358,9 @@ async def audit_profile_media(
                 if declared is not None and declared > MAX_PROFILE_IMAGE_BYTES:
                     oversized.append({"profile_url": profile_url, "media_url": ref.url,
                                       "status": "image_over_size_cap", "declared_bytes": declared})
+                    unresolved.append({'profile_url':profile_url,'media_url':ref.url,'kind':ref.kind,
+                        'status':'image_bio_asset_failed','reason':'declared_media_exceeds_size_cap',
+                        'declared_bytes':declared})
                     continue
             source = {"profile_url": profile_url, "media_url": ref.url,
                       "kind": ref.kind, "position": ref.position}

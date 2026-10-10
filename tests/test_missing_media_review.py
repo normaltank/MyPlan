@@ -174,6 +174,23 @@ async def test_download_failures_cannot_invent_missing_image_role(tmp_path, erro
 
 
 @pytest.mark.asyncio
+async def test_inconsistent_oversized_head_cannot_make_unknown_missing_image_successful(tmp_path):
+    from server.image_biography import MAX_PROFILE_IMAGE_BYTES
+    fetched = []
+    async def fetch(address):
+        fetched.append(address)
+        raise BrowserAssetError(404,address)
+    async def size(_address):
+        return MAX_PROFILE_IMAGE_BYTES + 1
+    result = await audit_profile_media({URL:HTML},{URL:{'张伟'}},tmp_path,
+        fetch_asset=fetch,asset_size=size,missing_media_evidence={URL:[item()]})
+    assert not fetched  # The transfer size protection stays in effect.
+    assert result['unresolved'][0]['status'] == 'image_bio_asset_failed'
+    assert result['unresolved'][0]['reason'] == 'declared_media_exceeds_size_cap'
+    assert result['oversized_media'][0]['declared_bytes'] == MAX_PROFILE_IMAGE_BYTES + 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.browser
 @pytest.mark.parametrize('first_status', [404, 403])
 @pytest.mark.parametrize('image_markup', [
