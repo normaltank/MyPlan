@@ -1,8 +1,10 @@
-# Page Qualification Architecture
+# Page Qualification — historical interface proposal
 
-> Status (2026-10-10): interface and migration design. Whether every production entry path follows this design remains a code-audit question, not an implementation guarantee. Current user requirements are in [CONSTITUTION.md](../../CONSTITUTION.md); work follows [the improvement plan](../improvement-plan.md). A supplied URL prioritizes validation but never removes the duty to inspect other faculty branches.
+> Status (2026-10-10): interface and migration design. Whether every production entry path follows this design remains a code-audit question, not an implementation guarantee. Current user requirements are in [CONSTITUTION.md](../../CONSTITUTION.md); task-specific routing is in [AGENTS.md](../../AGENTS.md). A supplied URL prioritizes validation but never removes the duty to inspect other faculty branches.
 
-## Decision
+The `PageQualification` and `QualificationLedger` interfaces below are proposed shapes, not classes present in the current production code. Current qualification paths must be traced through `server/harvest_eligibility.py`, `server/harvest_workflow.py` and their callers. This proposal does not schedule a migration or establish a new mandatory interface.
+
+## Proposed design
 
 Use an A/B-lite hybrid: a small qualification interface with mandatory audit metadata. Discovery remains outside the module; Page Qualification owns Page Snapshot acquisition and reuse, Page Evidence, College Attribution, page-purpose classification, and the deterministic outcome.
 
@@ -40,7 +42,7 @@ class QualificationLedger:
 
 `QualificationDecision` contains the Collection Target, Page Lead, outcome, College Attribution, page kind, stable reason codes, Page Snapshot identity and digest, and retryability. Only an accepted decision contains a Faculty Source Page, which carries the same Page Snapshot and any acquired document evidence into extraction.
 
-## Invariants
+## Intended invariants of the proposal
 
 - Every Page Lead produces exactly one decision.
 - Every entry path uses the same `qualify` interface.
@@ -73,6 +75,6 @@ The module hides URL normalization, redirect aliasing, request deduplication, Pa
 - A one-shot module that also performs discovery would couple crawl budgets and locator failures to qualification policy.
 - Numeric score and recommendation fields would preserve the current ambiguous authority model.
 
-## Migration
+## Proposed migration (not an execution instruction)
 
 Use expand-contract. Add the new decisions and compatibility columns first, route all entry paths through qualification, make extraction accept only Faculty Source Pages, then stop producing legacy score and recommendation values after every caller has migrated.
