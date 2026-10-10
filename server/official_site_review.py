@@ -30,7 +30,9 @@ def build_issue(task, observations: list[dict]) -> dict:
     """Register explicit access failures, never infer them from missing people or purpose."""
     urls = [url for url in [task.url, *task.roster_urls] if url]
     # Consume the core source-disposition contract; do not create another role taxonomy.
-    urls.extend(item['url'] for item in task.stats.get('source_disposition_evidence', [])
+    source_evidence = task.stats.get('source_disposition_evidence',
+        task.stats.get('runtime_report', {}).get('source_disposition_evidence', []))
+    urls.extend(item['url'] for item in source_evidence
                 if item.get('reason') == 'source_unreadable' and item.get('status') == 'unavailable')
     allowed = {_url_key(url) for url in urls}
     if not observations:

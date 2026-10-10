@@ -103,7 +103,8 @@ def test_access_issue_does_not_expand_person_404_or_unknown_source_purpose(tmp_p
     assert 'official_site_issue' not in queue.get_task(task.task_id).stats
 
 
-def test_known_roster_access_evidence_uses_core_source_disposition_contract(tmp_path):
+@pytest.mark.parametrize('location', ['top_level', 'runtime_report'])
+def test_known_roster_access_evidence_uses_core_source_disposition_contract(tmp_path, location):
     queue = AgentTaskQueue(tmp_path / 'queue.db')
     task = queue.submit_task('样本大学', '样本学院', 'https://college.example.edu/')
     evidence = {'url': 'https://college.example.edu/faculty', 'reason': 'source_unreadable',
@@ -111,13 +112,21 @@ def test_known_roster_access_evidence_uses_core_source_disposition_contract(tmp_
                 'observed_at': '2026-10-11T00:10:00Z', 'http_status': 502,
                 'error_kind': None, 'source_html_sha256': None,
                 'original_path': None, 'browser_proof': None}
+    evidence_stats = {'source_disposition_evidence': [evidence]}
+    stats = evidence_stats if location == 'top_level' else {'runtime_report': evidence_stats}
     with queue._connect() as con:
         con.execute("UPDATE tasks SET status='failed',stats_json=? WHERE task_id=?",
-                    (json.dumps({'source_disposition_evidence': [evidence]}), task.task_id))
+                    (json.dumps(stats), task.task_id))
     assert queue.record_official_site_issue(task.task_id, [evidence])
     saved = queue.get_task(task.task_id)
-    assert saved.stats['source_disposition_evidence'] == [evidence]
+    assert all(saved.stats[key] == value for key, value in stats.items())
     assert saved.stats['official_site_issue']['observations'][0]['error'] == 'HTTP 502'
+    if location == 'runtime_report':
+        with queue._connect() as con:
+            con.execute("UPDATE tasks SET stats_json=? WHERE task_id=?",
+                        (json.dumps({**stats, 'source_disposition_evidence': []}), task.task_id))
+        with pytest.raises(ValueError):
+            queue.record_official_site_issue(task.task_id, [evidence])
 
 
 def test_old_field_retry_cannot_bypass_unconfirmed_site_access(tmp_path, monkeypatch):
