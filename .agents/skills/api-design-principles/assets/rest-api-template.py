@@ -1,6 +1,8 @@
 """
-Production-ready REST API template using FastAPI.
-Includes pagination, filtering, error handling, and best practices.
+Illustrative REST API template using FastAPI.
+Uses mock data without durable storage. Authentication, host/CORS settings,
+error handling and persistence require project-specific implementation and tests
+before deployment; this is not the MyPlan server configuration.
 """
 
 from fastapi import FastAPI, HTTPException, Query, Path, Depends, status

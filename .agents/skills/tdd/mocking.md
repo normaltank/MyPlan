@@ -1,17 +1,13 @@
 # When to Mock
 
-Mock at **system boundaries** only:
+Common candidates for test substitutes are **system boundaries**:
 
 - External APIs (payment, email, etc.)
 - Databases (sometimes - prefer test DB)
 - Time/randomness
 - File system (sometimes)
 
-Don't mock:
-
-- Your own classes/modules
-- Internal collaborators
-- Anything you control
+Prefer real owned collaborators when practical. An internal substitute can isolate an unavailable or expensive dependency, but state which behavior it omits and cover the important integration separately. Avoid mocking away the failure the test is meant to catch.
 
 ## Designing for Mockability
 

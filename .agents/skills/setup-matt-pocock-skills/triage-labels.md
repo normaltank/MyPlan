@@ -1,3 +1,5 @@
+> Optional seed example for an explicitly requested new setup. MyPlan’s current routing is in docs/agents/; preserve its configured responsibilities and adapt this example only where requested.
+
 # Triage Labels
 
 The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.

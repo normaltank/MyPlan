@@ -1,12 +1,12 @@
 ---
 name: research
-description: Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo. Use when the user wants a topic researched, docs or API facts gathered, or reading legwork delegated to a background agent.
+description: "Investigate a specific question using primary sources and preserve findings where the task needs them."
 ---
 
-Spin up a **background agent** to do the research, so you keep working while it reads.
+# Research a concrete question
 
-Its job:
+Investigate the question against primary sources such as actual code, official version-appropriate documentation, original specifications or first-party APIs. Distinguish observed facts from inference and cite the source supporting each material claim.
 
-1. Investigate the question against **primary sources** (official docs, source code, specs, first-party APIs), not a secondary write-up of them. Follow every claim back to the source that owns it.
-2. Write the findings to a single Markdown file, citing each claim's source.
-3. Save it where the repo already keeps such notes; match the existing convention, and if there is none, put it somewhere sensible and say where.
+Use an authorized background subagent when independent reading would help and the host supports it; otherwise research directly. Keep the scope tied to the current question.
+
+A short answer may stay in the conversation or existing PR/work item. Save a reusable evidence note only when the findings need durable independent reading, using the project's existing location and linking it from the work item. Intermediate notes belong in task scratch space. Research does not automatically require another permanent Markdown file in the repository.

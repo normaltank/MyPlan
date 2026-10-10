@@ -43,7 +43,7 @@ Create files lazily: only when you have something to write. If no `CONTEXT.md` e
 
 ### Challenge against the glossary
 
-When the user uses a term that conflicts with the existing language in `CONTEXT.md`, call it out immediately. "Your glossary defines 'cancellation' as X, but you seem to mean Y. Which is it?"
+Compare the term with CONTEXT.md. If the user has clearly changed the requirement, record that change. Ask a concrete question only when the intended meaning remains ambiguous; old wording does not overrule the current request.
 
 ### Sharpen fuzzy language
 
@@ -55,13 +55,13 @@ When domain relationships are being discussed, stress-test them with specific sc
 
 ### Cross-reference with code
 
-When the user states how something works, check whether the code agrees. If you find a contradiction, surface it: "Your code cancels entire Orders, but you just said partial cancellation is possible. Which is right?"
+Compare intended behavior with actual code and identify any implementation gap. Distinguish a description of current behavior from a requested change; a confirmed new requirement does not need to be re-approved merely because old code differs.
 
 ### Update CONTEXT.md inline
 
 When a term is resolved, update `CONTEXT.md` right there. Don't batch these up: capture them as they happen. Use the format in [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md).
 
-`CONTEXT.md` should be totally devoid of implementation details. Do not treat `CONTEXT.md` as a spec, a scratch pad, or a repository for implementation decisions. It is a glossary and nothing else.
+Preserve the role the project assigns to `CONTEXT.md`. In MyPlan it owns the goals, domain terms and business contracts described in `docs/agents/domain.md`; keep those together. Task progress belongs in its work item and implementation details in code or the relevant technical reference. The glossary template is optional and must not erase established goals or contracts.
 
 ### Offer ADRs sparingly
 
