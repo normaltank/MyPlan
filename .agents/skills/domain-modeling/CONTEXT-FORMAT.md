@@ -1,5 +1,7 @@
 # CONTEXT.md Format
 
+This is a glossary example, not a mandatory replacement for an existing project CONTEXT.md. Preserve MyPlan’s goals and business contracts as well as its terms.
+
 ## Structure
 
 ```md

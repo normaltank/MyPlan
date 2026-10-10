@@ -1,54 +1,5 @@
-> 历史架构决策，部分内容已过时（2026-10-10 标记）：下文的 Accepted、任意 CMS 适配、零遗漏等是当时表述，不构成现行验收结论。当前业务见 [项目目标](../../CONSTITUTION.md)，实际卡片／正文范围和模块职责按 [改进计划](../improvement-plan.md) 审查。保留原文用于追溯，不能据此恢复全页最大簇等旧行为。
+# ADR 0003：历史 DOM 聚类与正文抽取方案（已被替代）
 
-# 3. CS-Principled Deep Module Extraction (DOM Clustering, Layout Tokenization, MECC Scoping)
+本路径兼容旧引用。原方案及当时的性能、准确率和架构判断保存在 [历史版本](https://github.com/normaltank/MyPlan/blob/e8fb3232a61c2ef971989624aaafcca70b99882d/docs/adr/0003-cs-principled-deep-module-extraction.md)，不能作为当前调用方法或验收保证。
 
-Date: 2026-09-22
-
-## Status
-Historical / partially superseded. The original 2026-09-22 record said Accepted; it is retained below as historical rationale, not a current implementation or accuracy guarantee.
-
-## Context and Problem Statement
-Earlier implementations of faculty list extraction and profile harvesting suffered from recurring issues:
-1. **Keyword Blacklist "Shithouse" (Anti-pattern)**: To filter out navigation menus, pagination items (e.g. "尾页", "动态", "学工"), and administrative links, developers continually added hardcoded keyword blacklists. When encountering new university websites with unexpected navigation labels, these blacklists inevitably broke or mistakenly filtered out real names.
-2. **Phone/Email Concatenation**: Due to simple text extraction ignoring CSS layout formatting contexts, office phone numbers immediately preceding email strings (e.g. `办公电话：0510-8591xxxxEmail:xxx@jiangnan.edu.cn`) were frequently concatenated into the email prefix. Over-correcting this via naive regex that stripped leading digits destroyed legitimate numeric faculty ID emails (e.g. `8843120002@jiangnan.edu.cn`).
-3. **College-Wide Public Email Leakage**: Footers or contact sidebars containing dean/office emails (e.g. `sdy@hhu.edu.cn`) leaked into individual scholar records that lacked personal emails.
-
-We need an extraction core built on principled computer science and typography foundations rather than ad-hoc rule patches.
-
-## Decision Drivers
-* Strict adherence to AGENTS.md: Zero external LLM APIs, zero keyword blacklists, 100% Dual-Sheet Conservation ($N_1 + N_2 = N_{total}$).
-* Must adapt to arbitrary college website CMS without code modifications.
-* Zero information loss in academic bios (verbatim copying of full resume, zero AI summarization).
-
-## Architectural Solution
-
-We consolidated the extraction logic into a deep module (`server/faculty_extractor.py`) with 3 foundational pillars backed by automated TDD unit tests (`tests/test_faculty_extractor.py`):
-
-1. **DOM Isomorphic Subtree Clustering (`FacultyDirectoryExtractor`)**:
-   - Represents each DOM node by its Structural Tag Sequence (STS fingerprint).
-   - In a faculty list container, faculty card entries are isomorphic subtrees with high repetition frequency among sibling elements.
-   - Computes structural fingerprint clusters and selects the maximal isomorphic cluster.
-   - Non-faculty navigation, pagination widgets, and headers/footers naturally become structural outliers and are discarded mathematically without any keyword blacklists.
-
-2. **Layout-Aware Tokenization (`LayoutAwareTokenizer`)**:
-   - Adheres to W3C CSS Block/Inline formatting context rules.
-   - Emits physical newline tokens at block element boundaries (`div`, `p`, `tr`, `li`, `h1`-`h6`, `br`).
-   - Physically isolates telephone numbers from subsequent email addresses at the layout level, eliminating concatenation.
-   - Preserves pure numeric faculty ID email addresses intact.
-
-3. **Minimal Enclosing Content Container (`FacultyProfileExtractor` / MECC)**:
-   - Evaluates text content density across DOM subtrees to identify the minimal enclosing container holding the scholar's biography text.
-   - Restricts personal email extraction strictly to this local container, completely isolating footers, headers, and site-wide contact cards.
-
-4. **Dual-Sheet Conservation Enforcement**:
-   - The extractor guarantees that every qualified scholar is partitioned into either Sheet 1 (with email) or Sheet 2 (without email), asserting $N_1 + N_2 = N_{total}$.
-
-## Consequences
-* **Positive**:
-  - Completely eliminated 60+ keyword blacklist words.
-  - Zero phone-email concatenation bugs across thousands of tested pages.
-  - 100% preservation of numeric student/faculty ID emails.
-  - Zero leakage of college footer emails into scholar records.
-  - Fully verified by automated unit tests (`tests/test_faculty_extractor.py`, 6 tests passing in 0.18s).
-* **Negative**:
-  - Requires parsing the DOM tree with BeautifulSoup before clustering, which adds a few milliseconds of CPU processing per page (negligible compared to network I/O).
+当前业务范围、字段与交付契约见 [CONTEXT.md](../../CONTEXT.md)，开发任务分工见 [AGENTS.md](../../AGENTS.md)，现行工程路线见 [ADR 0005](0005-plan-driven-browser-harvest.md)。实现和运行状态通过代码、对应版本的测试及实际证据核对。

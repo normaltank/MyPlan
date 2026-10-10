@@ -1,6 +1,8 @@
-# HTML Report Format
+# Optional HTML report example
 
-The architectural review is rendered as a single self-contained HTML file in the OS temp directory. Tailwind and Mermaid both come from CDNs. Mermaid handles graph-shaped diagrams reliably; hand-built divs and inline SVG handle the more editorial visuals (mass diagrams, cross-sections). Mix the two: don't lean on Mermaid for everything, it'll start to look generic.
+Use this example only when a visual artifact helps the requested review. The CDN version below requires network access and is not an offline self-contained deliverable. Choose the task’s artifact location and user language; prose, Markdown and small diagrams are also valid. The fixed card layout, vocabulary and styling below are examples, not project requirements.
+
+This example uses one HTML file with Tailwind and Mermaid loaded from CDNs. Mermaid handles graph-shaped diagrams reliably; hand-built divs and inline SVG handle the more editorial visuals (mass diagrams, cross-sections). Mix the two: don't lean on Mermaid for everything, it'll start to look generic.
 
 ## Scaffold
 
@@ -105,11 +107,11 @@ One larger card. Candidate name, one sentence on why, anchor link to its card. T
 
 ## Tone
 
-Plain English, concise, but the architectural nouns and verbs come straight from the `/codebase-design` skill. Concision is not an excuse to drift.
+Use the user's language and concise explanations of the concrete problem and tradeoffs.
 
-**Use exactly:** module, interface, implementation, depth, deep, shallow, seam, adapter, leverage, locality.
+**Suggested vocabulary:** module, interface, implementation, depth, deep, shallow, seam, adapter, leverage, locality.
 
-**Never substitute:** component, service, unit (for module) · API, signature (for interface) · boundary (for seam) · layer, wrapper (for module, when you mean module).
+Use the actual code names and the clearest accurate terms for the reader; the suggested vocabulary does not ban API, service, component or boundary.
 
 **Phrasings that fit the style:**
 
@@ -118,6 +120,6 @@ Plain English, concise, but the architectural nouns and verbs come straight from
 - "Deepen: one interface, one place to test."
 - "Two adapters justify the seam: HTTP in prod, in-memory in tests."
 
-**Wins bullets** name the gain in glossary terms: *"locality: bugs concentrate in one module"*, *"leverage: one interface, N call sites"*, *"interface shrinks; implementation absorbs the wrappers"*. Don't write *"easier to maintain"* or *"cleaner code"*, because those terms aren't in the glossary and don't earn their place.
+**Wins bullets** name the gain in glossary terms: *"locality: bugs concentrate in one module"*, *"leverage: one interface, N call sites"*, *"interface shrinks; implementation absorbs the wrappers"*. Explain a maintenance benefit with a concrete change or failure case.
 
-No hedging, no throat-clearing, no "it's worth noting that…". If a sentence could be a bullet, make it a bullet. If a bullet could be cut, cut it. If a term isn't in the `/codebase-design` glossary, reach for one that is before inventing a new one.
+State evidence and uncertainty accurately. Use prose or bullets according to what makes the comparison clearest.

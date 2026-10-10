@@ -123,41 +123,37 @@ async def main():
 asyncio.run(main())
 ```
 
-### Pattern 4: Error Handling in Async Code
+### Pattern 4: Preserve every async outcome
+
+This small example returns one result per input, including the input identity and error for failures. Cancellation still propagates; it is not reported as success.
 
 ```python
 import asyncio
-from typing import List, Optional
 
 async def risky_operation(item_id: int) -> dict:
-    """Operation that might fail."""
     await asyncio.sleep(0.1)
     if item_id % 3 == 0:
         raise ValueError(f"Item {item_id} failed")
     return {"id": item_id, "status": "success"}
 
-async def safe_operation(item_id: int) -> Optional[dict]:
-    """Wrapper with error handling."""
+async def safe_operation(item_id: int) -> dict:
     try:
         return await risky_operation(item_id)
-    except ValueError as e:
-        print(f"Error: {e}")
-        return None
+    except Exception as exc:
+        return {"id": item_id, "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}"}
 
-async def process_items(item_ids: List[int]):
-    """Process multiple items with error handling."""
-    tasks = [safe_operation(iid) for iid in item_ids]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Filter out failures
-    successful = [r for r in results if r is not None and not isinstance(r, Exception)]
-    failed = [r for r in results if isinstance(r, Exception)]
-
-    print(f"Success: {len(successful)}, Failed: {len(failed)}")
-    return successful
+async def process_items(item_ids: list[int]) -> list[dict]:
+    results = await asyncio.gather(*(safe_operation(iid) for iid in item_ids))
+    successful = sum(r["status"] == "success" for r in results)
+    failed = sum(r["status"] == "failed" for r in results)
+    print(f"Success: {successful}, Failed: {failed}")
+    return results
 
 asyncio.run(process_items([1, 2, 3, 4, 5, 6]))
 ```
+
+Expected totals: four successful and two failed, with all six outcomes retained. This example does not replace a project's persistent evidence store or retry policy.
 
 ### Pattern 5: Timeout Handling
 
@@ -306,21 +302,23 @@ async def producer_consumer_example():
 asyncio.run(producer_consumer_example())
 ```
 
-### Pattern 9: Semaphore for Rate Limiting
+### Pattern 9: Semaphore for Concurrency Limits
+
+A semaphore limits simultaneous operations. It does not impose requests per second; a rate quota requires separate pacing or a time-window/token-bucket policy.
 
 ```python
 import asyncio
 from typing import List
 
 async def api_call(url: str, semaphore: asyncio.Semaphore) -> dict:
-    """Make API call with rate limiting."""
+    """Make an API call with bounded concurrency."""
     async with semaphore:
         print(f"Calling {url}")
         await asyncio.sleep(0.5)  # Simulate API call
         return {"url": url, "status": 200}
 
-async def rate_limited_requests(urls: List[str], max_concurrent: int = 5):
-    """Make multiple requests with rate limiting."""
+async def concurrency_limited_requests(urls: List[str], max_concurrent: int = 5):
+    """Make multiple requests with bounded concurrency."""
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks = [api_call(url, semaphore) for url in urls]
     results = await asyncio.gather(*tasks)
@@ -328,7 +326,7 @@ async def rate_limited_requests(urls: List[str], max_concurrent: int = 5):
 
 async def main():
     urls = [f"https://api.example.com/item/{i}" for i in range(20)]
-    results = await rate_limited_requests(urls, max_concurrent=3)
+    results = await concurrency_limited_requests(urls, max_concurrent=3)
     print(f"Completed {len(results)} requests")
 
 asyncio.run(main())
@@ -673,6 +671,6 @@ async def test_with_timeout():
 5. **Use timeouts** to prevent hanging operations
 6. **Pool connections** for better performance
 7. **Avoid blocking operations** in async code
-8. **Use semaphores** for rate limiting
+8. **Use semaphores** to bound concurrency; handle rate quotas separately
 9. **Handle task cancellation** properly
 10. **Test async code** with pytest-asyncio

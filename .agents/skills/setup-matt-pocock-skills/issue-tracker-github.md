@@ -1,3 +1,5 @@
+> Optional seed example for an explicitly requested new setup. MyPlan’s current routing is in docs/agents/; preserve its configured responsibilities and adapt this example only where requested.
+
 # Issue tracker: GitHub
 
 Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.

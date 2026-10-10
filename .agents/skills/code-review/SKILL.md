@@ -10,26 +10,27 @@ Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
-The issue tracker should have been provided to you. If `docs/agents/issue-tracker.md` is missing, tell the user to run `/setup-matt-pocock-skills`.
+Use the current user request and `docs/agents/issue-tracker.md` when present. A conversation can supply the spec; missing tracker configuration is not a reason to halt a review or run setup.
 
 ## Process
 
 ### 1. Pin the fixed point
 
-Whatever the user said is the fixed point (a commit SHA, branch name, tag, `main`, `HEAD~5`, etc.). If they didn't specify one, ask for it.
+Use the user's fixed point when supplied. Otherwise infer and record the PR base or the relevant branch merge-base; ask only when different plausible baselines would change the requested review. Resolve it to a commit SHA before reviewing.
 
-Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
+Record the exact diff and commit-list commands. For a committed branch, `git diff <fixed-point>...HEAD` reviews from the merge-base. For working changes, pin the base SHA and include the relevant index/worktree diff (for example `git diff <base-sha> -- <owned-paths>`); inspect owned untracked files separately. Preserve unrelated changes and do not silently omit uncommitted work.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here, not inside two parallel sub-agents.
+Verify the comparison resolves and has the requested content before dispatch. An empty comparison calls for checking scope, not inventing findings.
 
 ### 2. Identify the spec source
 
 Look for the originating spec, in this order:
 
-1. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.), fetched via the workflow in `docs/agents/issue-tracker.md`.
-2. A path the user passed as an argument.
-3. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+1. The current user request and its explicit requirements.
+2. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.), fetched via the workflow in `docs/agents/issue-tracker.md`.
+3. A path the user passed as an argument.
+4. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
+5. If intent remains unavailable, report that limit and continue the supported review. Ask a focused question only for a requirement that changes the assessment; do not require a separate spec document when the conversation already supplies one.
 
 ### 3. Identify the standards sources
 
