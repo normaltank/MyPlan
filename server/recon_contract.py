@@ -28,7 +28,9 @@ class SourceFields(StrictObject):
 class RosterFields(SourceFields):
     source_kind: Source | None = None
     card_selector: Selector | None = None
-    single_page: bool | None = None
+    single_page: bool | None = Field(default=None, description=(
+        "Use true only after browser_verify reports pagination_termination.confirmed; "
+        "pagination.total is a candidate count, not completion evidence."))
     next_selector: Selector | None = None
     max_pages: Count | None = None
     initial_click_selector: Selector | None = None

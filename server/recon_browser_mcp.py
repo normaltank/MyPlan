@@ -68,11 +68,12 @@ TOOLS = [
           'source_container_selector': STRING, 'role_evidence_selector': STRING, 'source_context_selector': STRING,
           'unit_selector': STRING},
          ('source_role', 'source_container_selector', 'role_evidence_selector', 'source_context_selector')),
-    tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes and sample URLs.",
+    tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes, sample URLs and "
+         "pagination_termination. pagination.total counts candidates; single_page requires confirmed termination.",
          {"card_selector": STRING, "next_selector": STRING,
           "empty_state_selector": STRING, "roster_container_selector": STRING}, ("card_selector",)),
     tool("browser_verify_segments", "Verify a flat multi-person article: the unique body container and the element "
-         "starting each person's record. Returns segment counts and shapes only.",
+         "starting each person's record. Returns segment counts, shapes and pagination_termination only.",
          {"container_selector": STRING, "record_start_selector": STRING},
          ("container_selector", "record_start_selector")),
     tool("browser_verify_profile", "Verify a complete profile DOM container and optional direct-child start "
@@ -442,6 +443,17 @@ class BrowserScout:
                     'isError': True}
             value['pagination'] = without_terminal_pagers(
                 await self.page.content(), value['pagination'], terminal, arguments['card_selector'])
+            from server.browser_batch_tool import single_page_evidence
+            from server.pager_evidence import proof_valid
+            html = await self.page.content()
+            ignored = [p['control_selector'] for p in terminal if proof_valid(p, html, arguments['card_selector'])]
+            value['pagination_termination'] = single_page_evidence(html, self.page.url, arguments['card_selector'], ignored)
+            value['pagination_termination']['evidence_path'] = str(self.save('pagination-source.html', html.encode('utf-8')))
+            if value['pagination'].get('total', 0) > 0 or (
+                    value.get('nextCount') == 1 and value.get('nextDisabled') is not True):
+                value['pagination_termination']['confirmed'] = False
+                value['pagination_termination']['unresolved_forward_controls'] = max(
+                    value['pagination_termination']['unresolved_forward_controls'], value['pagination']['total'], 1)
             if "empty_state_selector" in arguments or "roster_container_selector" in arguments:
                 from server.empty_roster import verify_empty_roster
                 branch = {**arguments, "url": self.page.url, "single_page": True}
@@ -457,6 +469,13 @@ class BrowserScout:
                                          arguments["record_start_selector"])
             value["pagination"] = await self.page.evaluate(
                 "selector => __facultyRecon.pagination('body',0,12,false,selector)", arguments["container_selector"])
+            from server.browser_batch_tool import single_page_evidence
+            value['pagination_termination'] = single_page_evidence(html, self.page.url, arguments['container_selector'])
+            value['pagination_termination']['evidence_path'] = str(self.save('pagination-source.html', html.encode('utf-8')))
+            if value['pagination'].get('total', 0) > 0:
+                value['pagination_termination']['confirmed'] = False
+                value['pagination_termination']['unresolved_forward_controls'] = max(
+                    value['pagination_termination']['unresolved_forward_controls'], value['pagination']['total'])
             await self.snapshot()
         elif name == "browser_verify_profile":
             value = await self._verify_profiles(arguments)

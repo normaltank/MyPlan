@@ -3,6 +3,7 @@ import json
 
 
 from server import agent_recon
+from pagination_contract_fixture import termination
 
 
 PLAN = {"school": "样本大学", "college": "样本学院", "source_kind": "university_faculty_roster",
@@ -14,7 +15,7 @@ def verification(selector="main ul > li", url="https://example.edu/list", count=
              "arguments": json.dumps({"card_selector": selector})}},
             {"type": "tool/result", "data": {"message": {"content": [{"type": "tool-result", "toolCallId": "v",
              "isError": False, "content": [{"type": "text", "text": json.dumps({"url": url, "cardCount": count,
-              "pagination": {"total": 0}})}]}]}}}]
+              "pagination": {"total": 0}, "pagination_termination": termination(url, selector)})}]}]}}}]
 
 
 def test_guessed_or_empty_selector_evidence_is_rejected():
@@ -52,8 +53,18 @@ def test_single_page_claim_is_rejected_when_browser_reports_pagination_controls(
     block = events[1]["data"]["message"]["content"][0]["content"][0]
     result = json.loads(block["text"])
     result["pagination"]["total"] = 1
+    result["pagination_termination"]["confirmed"] = False
     block["text"] = json.dumps(result)
     assert agent_recon.selector_evidence_issues(PLAN, events)[0]["status"] == "single_page_pagination_unverified"
+
+
+def test_candidate_zero_without_terminal_observation_cannot_prove_single_page():
+    events = verification()
+    block = events[1]['data']['message']['content'][0]['content'][0]
+    result = json.loads(block['text'])
+    del result['pagination_termination']
+    block['text'] = json.dumps(result)
+    assert agent_recon.selector_evidence_issues(PLAN, events)[0]['status'] == 'single_page_pagination_unverified'
 
 
 def test_discovered_urls_require_successful_browser_observation():

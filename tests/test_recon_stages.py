@@ -1,3 +1,4 @@
+from pagination_contract_fixture import completed_result, termination
 import json
 import pytest
 from types import SimpleNamespace
@@ -30,7 +31,7 @@ def test_stages_keep_branch_contexts_separate_and_count_every_model_request(monk
                     "arguments": json.dumps({"card_selector": value["card_selector"]})}},
                 {"type": "tool/result", "data": {"message": {"content": [{"type": "tool-result", "toolCallId": sid,
                     "content": [{"type": "text", "text": json.dumps({"url": url, "cardCount": 37,
-                     "pagination": {"total": 0}})}]}]}}}])
+                     "pagination": {"total": 0}, "pagination_termination": termination(url, value["card_selector"])})}]}]}}}])
         return SimpleNamespace(final_response=json.dumps(value), finish_reason="completed", events=events)
 
     monkeypatch.setattr(agent_recon, "_execute_harness", execute)
@@ -49,6 +50,7 @@ def test_failed_branch_retry_reuses_discovery_without_another_model_call(monkeyp
     calls = []
 
     def pair(name, args, value, call_id):
+        value = completed_result(value, args)
         return [{"type": "tool/call", "data": {"callId": call_id,
                  "name": "mcp__playwright__" + name, "arguments": json.dumps(args)}},
                 {"type": "tool/result", "data": {"message": {"content": [
@@ -86,6 +88,7 @@ def test_later_branch_failure_reuses_earlier_verified_branches_and_scopes_feedba
     calls = []
 
     def pair(name, args, value, call_id):
+        value = completed_result(value, args)
         return [{"type": "tool/call", "data": {"callId": call_id,
                  "name": "mcp__playwright__" + name, "arguments": json.dumps(args)}},
                 {"type": "tool/result", "data": {"message": {"content": [
@@ -130,6 +133,7 @@ def test_navigation_branch_requires_child_roster_browser_proof():
             "source_kind": "university_faculty_roster", "branches": [branch]}
 
     def pair(args, result, call_id):
+        result = completed_result(result, args)
         return [{"type": "tool/call", "data": {"callId": call_id,
                  "name": "mcp__playwright__browser_verify", "arguments": json.dumps(args)}},
                 {"type": "tool/result", "data": {"message": {"content": [
@@ -184,6 +188,7 @@ def test_stage_accepts_canonical_branch_url_only_after_real_redirect(monkeypatch
     target = {"school": "样本大学", "college": "样本学院", "url": "https://example.edu/"}
     original, canonical = "http://example.edu/list", "https://example.edu/list/"
     def event_pair(name, args, result, call_id):
+        result = completed_result(result, args)
         return [{"type": "tool/call", "data": {"callId": call_id, "name": "mcp__playwright__" + name,
                   "arguments": json.dumps(args)}},
                 {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": call_id,
