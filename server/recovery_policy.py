@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Literal
+from urllib.parse import quote, unquote, urlsplit
 
 Action = Literal["access", "structure", "review", "stop"]
 
@@ -56,6 +58,76 @@ def recovery_action(code: str | None) -> Action:
     return POLICIES.get(code, "stop")
 
 
+def _url_key(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme.lower() not in {'http', 'https'} or not parsed.netloc:
+            return None
+    except ValueError:
+        return None
+    return quote(value, safe=":/?#[]@!$&'()*+,;=%")
+
+
+def profile_access_failures(issues: list[dict]) -> set[str]:
+    """URL keys with failed-fetch evidence; a bad body alone proves no access failure."""
+    return {key for item in issues
+            if item.get('status') == 'profile_navigation_failed'
+            or (isinstance(item.get('status'), str)
+                and (item['status'] == 'fetch_failed' or item['status'].startswith('fetch_failed:')))
+            if (key := _url_key(item.get('url') or item.get('主页'))) is not None}
+
+
+def profile_issue_is_access_only(issue: dict, failed_urls: set[str]) -> bool:
+    code = issue.get('status')
+    return (isinstance(code, str) and code.startswith('profile_content_')
+            and POLICIES.get(code) == 'structure'
+            and (key := _url_key(issue.get('url'))) is not None and key in failed_urls)
+
+
+def safe_failure_code(code: object) -> str:
+    """Persist only our machine vocabulary; raw or future codes still stop safely."""
+    if isinstance(code, str):
+        if code == 'fetch_failed' or code.startswith('fetch_failed:'):
+            return 'fetch_failed'
+        if code in POLICIES or code in RECON_RETRY:
+            return code
+    return 'unknown_failure'
+
+
+def safe_failure_issues(issues: list[dict]) -> list[dict]:
+    """Keep cause metadata for queue routing, never teacher fields or raw errors.
+
+    URLs that expose credentials/email are left out; absent context cannot
+    justify downgrading a body failure. The unchanged local audit keeps the
+    original URL and failure evidence.
+    """
+    result = []
+    for item in issues:
+        if not isinstance(item, dict):
+            result.append({'status': 'unknown_failure'})
+            continue
+        safe = {'status': safe_failure_code(item.get('status'))}
+        for url_field in ('url', 'branch_url'):
+            value = item.get(url_field) or (item.get('主页') if url_field == 'url' else None)
+            key = _url_key(value)
+            if key is None:
+                continue
+            parsed = urlsplit(key)
+            if parsed.username is not None or parsed.password is not None:
+                continue
+            if re.search(r'[\w.+-]+@[\w.-]+\.[a-z]{2,}', unquote(key), re.I):
+                continue
+            safe[url_field] = key
+        proof = item.get('browser_evidence')
+        reason = proof.get('reason') if isinstance(proof, dict) else None
+        if isinstance(reason, str) and reason in PROFILE_PROOF_POLICIES:
+            safe['browser_evidence'] = {'reason': reason}
+        result.append(safe)
+    return result
+
+
 @dataclass
 class Recovery:
     access: list[dict] = field(default_factory=list)
@@ -73,12 +145,18 @@ def classify_issues(issues: list[dict]) -> Recovery:
     """Coverage errors caused by an unavailable branch follow its access retry."""
     failed_branches = {value for item in issues if item.get("status") == "browser_navigation_failed"
                        for value in (item.get("url"), item.get("branch_url")) if value}
+    failed_profiles = profile_access_failures(issues)
     result = Recovery()
     for item in issues:
         code = item.get("status")
         action = recovery_action(code)
         if code == "profile_content_browser_unverified":
-            action = PROFILE_PROOF_POLICIES.get((item.get("browser_evidence") or {}).get("reason"), action)
+            proof = item.get('browser_evidence')
+            reason = proof.get('reason') if isinstance(proof, dict) else None
+            if isinstance(reason, str):
+                action = PROFILE_PROOF_POLICIES.get(reason, action)
+        if profile_issue_is_access_only(item, failed_profiles):
+            action = 'access'
         if code in {"branch_termination_unverified", "planned_branch_not_captured"}:
             if (item.get("url") or item.get("branch_url")) in failed_branches:
                 action = "access"
@@ -98,12 +176,26 @@ def scout_found_no_roster(codes: list[str]) -> bool:
     return bool(codes) and set(codes) <= SCOUT_WITHOUT_PLAN
 
 
-def failure_disposition(codes: list[str]) -> Disposition:
+def failure_disposition(codes: list[str], issues: list[dict] | None = None) -> Disposition:
     """Where a failed college goes next. The most demanding action wins: a review
     cannot settle a structure problem, and nothing settles a stop."""
-    if RECON_RETRY & set(codes):
-        return "recon"
-    actions = {recovery_action(code) for code in codes}
+    if issues is None:
+        if RECON_RETRY & set(codes):
+            return "recon"
+        actions = {recovery_action(code) for code in codes}
+    else:
+        context = safe_failure_issues(issues)
+        covered = {item['status'] for item in context}
+        # A compact summary may include an independent error absent from the
+        # context. Never lose that stop/scope error when restoring URL causes.
+        context.extend({'status': safe_failure_code(code)} for code in codes
+                       if safe_failure_code(code) not in covered)
+        retry = any(item['status'] in RECON_RETRY for item in context)
+        recovery = classify_issues([item for item in context if item['status'] not in RECON_RETRY])
+        actions = {action for action in ('access', 'structure', 'review', 'stop')
+                   if getattr(recovery, action)}
+        if retry and 'stop' not in actions:
+            return 'recon'
     for action, disposition in (("stop", "failed"), ("structure", "structure"),
                                 ("access", "access"), ("review", "review")):
         if action in actions:
