@@ -1,3 +1,5 @@
+> 历史架构决策，部分内容已过时（2026-10-10 标记）：下文的 Accepted、任意 CMS 适配、零遗漏等是当时表述，不构成现行验收结论。当前业务见 [项目目标](../../CONSTITUTION.md)，实际卡片／正文范围和模块职责按 [改进计划](../improvement-plan.md) 审查。保留原文用于追溯，不能据此恢复全页最大簇等旧行为。
+
 # 3. CS-Principled Deep Module Extraction (DOM Clustering, Layout Tokenization, MECC Scoping)
 
 Date: 2026-09-22
