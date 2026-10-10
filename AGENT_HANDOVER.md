@@ -37,7 +37,7 @@
 - 复核原件与恢复：[review-evidence-metadata](docs/implementation/2026-10-10-review-evidence-metadata.md)。
 - 明确职称字段：[declared-title-fields](docs/implementation/2026-10-10-declared-title-fields.md)。
 - 完整简介与工作簿：[full-biography-workbook](docs/implementation/2026-10-10-full-biography-workbook.md)。
-- PDF 本人范围与履历：[pdf-owner-resume-sections](docs/implementation/2026-10-10-pdf-owner-resume-sections.md)。
+- PDF 本人范围、履历与重试：[pdf-owner-resume-sections](docs/implementation/2026-10-10-pdf-owner-resume-sections.md)、[native-pdf-owner-retry](docs/implementation/2026-10-11-native-pdf-owner-retry.md)。
 - 个人链接卡片边界：[roster-link-boundary](docs/implementation/2026-10-10-roster-link-boundary.md)。
 
 这些是对应版本的证据记录。记录中的“通过”“待 CI”“未部署”不自动延伸到当前主线或用户运行环境。更早交接保留在 Git 及 [旧快照](docs/history/2026-10-10-handover-before-guidance-refresh.md)。

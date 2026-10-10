@@ -31,7 +31,7 @@ def test_a_flagged_issue_without_a_review_item_is_never_complete(tmp_path, kind)
     issue = {"status": status, "kind": "image", "姓名": "某", "url": "https://x.edu/p", "name": "某"}
     path = _audit(tmp_path, [issue], html_email_review_items=[])
     audit = json.loads(path.read_text(encoding="utf-8"))
-    assert kind.is_triggered(audit) and not kind.rerun_only(audit)
+    assert kind.is_triggered(audit) and not kind.rerun_only(path, audit)
     assert not kind.complete(path, audit, [])
 
 

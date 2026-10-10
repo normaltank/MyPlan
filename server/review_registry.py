@@ -31,8 +31,8 @@ class ReviewKind:
     shown: Callable[[dict], bool] | None = None
     # The retry must wait for this kind (default: some issue is shown).
     triggered: Callable[[dict], bool] | None = None
-    # Evidence predates the kind; only a deterministic rerun can produce it, so nothing to decide now.
-    rerun_only: Callable[[dict], bool] = lambda audit: False
+    # Old evidence needs a deterministic rerun, with no human decision remaining for this kind.
+    rerun_only: Callable[[Path, dict], bool] = lambda path, audit: False
 
     def is_shown(self, issue: dict) -> bool:
         return self.shown(issue) if self.shown else issue.get("status") in self.statuses
@@ -62,7 +62,8 @@ KINDS: tuple[ReviewKind, ...] = (
     ReviewKind(
         "image_bio_text", image_bio_review.TEXT_STATUSES, (image_bio_review.TEXT_DECISIONS_FILE,),
         image_bio_review.collect_review_items,
-        lambda path, audit, items: image_bio_review.text_review_complete(path, items)),
+        lambda path, audit, items: image_bio_review.text_review_complete(path, items),
+        rerun_only=image_bio_review.native_pdf_owner_rerun_ready),
     ReviewKind(
         "image_bio_email", frozenset({image_bio_review.EMAIL_STATUS}), (image_bio_review.EMAIL_DECISIONS_FILE,),
         image_bio_review.collect_email_conflict_items, image_bio_review.email_review_complete),
@@ -76,7 +77,8 @@ KINDS: tuple[ReviewKind, ...] = (
         "html_email", html_email_review.STATUSES, (html_email_review.DECISIONS_FILE,),
         html_email_review.collect_items, html_email_review.review_complete,
         # Only a teacher-bound conflict has a decision to make.
-        triggered=html_email_review.has_pending, rerun_only=html_email_review.evidence_missing),
+        triggered=html_email_review.has_pending,
+        rerun_only=lambda path, audit: html_email_review.evidence_missing(audit)),
     ReviewKind(
         "profile_page", frozenset({profile_page_review.STATUS}), (profile_page_review.DECISIONS_FILE,),
         profile_page_review.collect_items,
@@ -120,7 +122,7 @@ def review_complete(audit_path: Path) -> bool:
     if not waiting:
         return False
     for kind in waiting:
-        if kind.rerun_only(audit):
+        if kind.rerun_only(audit_path, audit):
             continue
         if not kind.complete(audit_path, audit, kind.collect(audit_path)):
             return False
