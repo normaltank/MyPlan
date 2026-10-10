@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from server import (html_email_review, identity_review, image_bio_review, image_table_review, media_kind_review,
-                    name_review, profile_page_review)
+                    name_review, profile_page_review, missing_media_review)
 from server.image_table_roster import REVIEW_FILE as IMAGE_TABLE_REVIEW_FILE
 
 
@@ -53,11 +53,12 @@ def _nonempty_and(check):
 
 KINDS: tuple[ReviewKind, ...] = (
     ReviewKind(
-        "media_kind", frozenset({media_kind_review.STATUS}), (media_kind_review.DECISIONS_FILE,),
+        "media_kind", frozenset({media_kind_review.STATUS,missing_media_review.STATUS}), (media_kind_review.DECISIONS_FILE,),
         media_kind_review.collect_items, lambda path, audit, items: media_kind_review.review_complete(path, items),
-        shown=lambda issue: issue.get("status") == media_kind_review.STATUS and issue.get("kind") == "image",
+        shown=lambda issue: ((issue.get("status") == media_kind_review.STATUS and issue.get("kind") == "image")
+                             or issue.get('status') == missing_media_review.STATUS),
         # A PDF's empty pages cannot be classified as a portrait, so they keep the retry blocked.
-        triggered=_has_status({media_kind_review.STATUS})),
+        triggered=_has_status({media_kind_review.STATUS,missing_media_review.STATUS})),
     ReviewKind(
         "image_bio_text", image_bio_review.TEXT_STATUSES, (image_bio_review.TEXT_DECISIONS_FILE,),
         image_bio_review.collect_review_items,

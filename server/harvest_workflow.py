@@ -117,6 +117,7 @@ async def capture_profiles(
         # other college of the same university running in this process.
         async with semaphore, site_slot(url):
             recurring = None  # requests that failed on the previous open of this page
+            recurring_missing = None
             for attempt in range(3):
                 page = None
                 retryable = True
@@ -154,7 +155,8 @@ async def capture_profiles(
                             local_capture = {}
                             proof = await verify_profile_container(page, selector, start_selector,
                                                                    local_capture=local_capture,
-                                                                   recurring_failures=recurring)
+                                                                   recurring_failures=recurring,
+                                                                   recurring_missing_media=recurring_missing)
                             if len(scope_pairs) > 1:
                                 proof["equivalent_profile_content_selectors"] = sorted(
                                     selector for selector, _ in scope_pairs)
@@ -166,6 +168,7 @@ async def capture_profiles(
                                 # Requests still in flight or a page still settling: open
                                 # the page again rather than judge it from one moment.
                                 recurring = local_capture.get("failed_requests")
+                                recurring_missing = local_capture.get('missing_media_failures')
                                 await asyncio.sleep(1.5 * (attempt + 1))
                                 continue
                             if (proof.get("confirmed") is not True
@@ -181,6 +184,10 @@ async def capture_profiles(
                         capture_record = state.save_page("profile", url, html,
                             meta={"final_url": getattr(page, "url", url)})
                     if proof is not None and profile_content_evidence is not None:
+                        from server.missing_media_review import identity
+                        for item in proof.get('missing_content_images', []):
+                            item['requested_profile_url'] = url
+                            item['id'] = identity(item)
                         profile_content_evidence[url] = {**proof,
                             "verified_at": time.time(),
                             "capture_origin": "checkpoint_revalidated" if same_capture else "fresh_browser_capture",

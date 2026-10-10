@@ -423,6 +423,19 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             '</section>')
     body = "\n".join(cards)
     for item in media_kind_items or []:
+        if item.get('evidence_basis') == 'missing_source_snapshot':
+            status = ('已确认仅为教师照片，完整可见简介保留' if item.get('saved_verdict') == 'photo'
+                      else '尚未确认用途，仍保持阻断')
+            body += ('<section class="card media-kind-card" data-id="' + escape(item['id']) + '">'
+                '<h2>失效图片用途复核</h2><p>官网在重复访问中返回 HTTP ' + str(item['http_status'])
+                + '，原图不可查看。只有你明确知道此图片仅为教师照片、不含简介或邮箱，才可确认。'
+                '无法确认或可能含文字时保持阻断；尺寸不能证明图片用途。</p>'
+                '<p>个人页：' + _page_link(item['profile_url']) + ' · 图片链接：' + _page_link(item['media_url']) + '</p>'
+                '<details><summary>本次保存的完整可见正文</summary><pre>' + escape(item['context_text']) + '</pre></details>'
+                '<button type="button" data-verdict="photo">已知仅为教师照片，不承载简介或邮箱</button> '
+                '<button type="button" data-verdict="unreadable">用途未知或含文字，保持阻断</button>'
+                '<p class="status" role="status">' + status + '</p></section>')
+            continue
         preview = base64.b64encode(item['preview_bytes']).decode('ascii')
         status = {'photo': '已确认纯人物照片', 'irrelevant': _IRRELEVANT_SAVED,
                   'unreadable': '包含文字或无法确定，仍保持阻断'}.get(item.get('saved_verdict'), '')

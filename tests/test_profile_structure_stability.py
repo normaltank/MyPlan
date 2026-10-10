@@ -126,7 +126,7 @@ async def test_missing_image_outside_profile_does_not_block_complete_text():
 
 
 @pytest.mark.asyncio
-async def test_missing_image_inside_profile_still_blocks_delivery():
+async def test_missing_image_inside_profile_creates_blocking_media_review():
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         context = await browser.new_context()
@@ -140,9 +140,8 @@ async def test_missing_image_inside_profile_still_blocks_delivery():
         evidence = {}
         _, issues = await capture_profiles(context, [URL], 1,
             profile_content_selectors={URL: {('#text', None)}}, profile_content_evidence=evidence)
-        negative = next(item['browser_evidence'] for item in issues if item['status'] == 'profile_content_browser_unverified')
-        assert not evidence and not negative['network_idle'] and negative['failed_request_count'] > 0
-        assert not negative['unpublished_images']
+        assert not issues and evidence[URL]['confirmed']
+        assert evidence[URL]['missing_content_images'] and not evidence[URL]['unpublished_images']
         await browser.close()
 
 
@@ -165,32 +164,36 @@ async def capture_with_missing_image(img, *, status=404, style=''):
 
 
 @pytest.mark.asyncio
-async def test_unsized_image_gone_on_every_open_is_the_published_profile():
-    # An editor's leftover placeholder: no size of its own, 404 on each open.
+async def test_unsized_missing_image_requires_media_role_review():
     evidence, issues = await capture_with_missing_image('<img src="/editor/spacer.gif" vwidth="" vheight="">')
     assert not issues and evidence[URL]['confirmed']
-    assert evidence[URL]['unpublished_images'] == ['https://scope.example.edu/editor/spacer.gif']
+    assert not evidence[URL]['unpublished_images']
+    assert evidence[URL]['missing_content_images'][0]['media_url'] == 'https://scope.example.edu/editor/spacer.gif'
 
 
 @pytest.mark.asyncio
-async def test_icon_sized_image_gone_on_every_open_is_the_published_profile():
-    # 集美大学海洋文化与法律学院: a VSB editor's broken 22x22 'spacer.gif' in the body.
+async def test_icon_sized_missing_image_requires_media_role_review():
     evidence, issues = await capture_with_missing_image(
         '<img class="img_vsb_content" src="spacer.gif" width="22" height="22">')
     assert not issues and evidence[URL]['confirmed']
-    assert evidence[URL]['unpublished_images'] == ['https://scope.example.edu/spacer.gif']
+    assert not evidence[URL]['unpublished_images']
+    assert evidence[URL]['missing_content_images'][0]['media_url'] == 'https://scope.example.edu/spacer.gif'
 
 
 @pytest.mark.asyncio
-async def test_missing_image_the_page_sizes_or_that_fails_transiently_still_blocks():
+async def test_sized_missing_images_need_review_and_transient_failures_block_scope():
     for img, status, style in (('<img src="/spacer.gif">', 503, ''),
                                ('<img src="/spacer.gif">', 404, '<style>#text img{width:120px}</style>'),
                                ('<img src="/spacer.gif" style="height:80px">', 404, ''),
                                ('<img src="/spacer.gif" width="40" height="22">', 404, '')):
         evidence, issues = await capture_with_missing_image(img, status=status, style=style)
-        negative = next(item['browser_evidence'] for item in issues
-                        if item['status'] == 'profile_content_browser_unverified')
-        assert not evidence and not negative['confirmed'] and not negative['unpublished_images']
+        if status == 503:
+            negative = next(item['browser_evidence'] for item in issues
+                            if item['status'] == 'profile_content_browser_unverified')
+            assert not evidence and not negative['confirmed'] and not negative['unpublished_images']
+        else:
+            assert not issues and evidence[URL]['confirmed']
+            assert not evidence[URL]['unpublished_images'] and evidence[URL]['missing_content_images']
 
 
 @pytest.mark.asyncio
