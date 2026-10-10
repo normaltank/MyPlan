@@ -93,6 +93,10 @@ def site_slot(url: str) -> Any:
 # as well (default 0: off).
 DEFAULT_PER_SITE_INTERVAL = 0.0
 FROZEN_SITE_INTERVAL = 1.0
+# A runtime admission must reach its caller within this window. The next
+# paced admission is held until the window ends PLUS the site's interval,
+# so late thread results cannot consume old turns next to newer requests.
+_ADMISSION_WINDOW = 0.05
 _INTERVAL_ENV = "HARVEST_PER_SITE_INTERVAL_SECONDS"
 _CLOCK_ENV = "HARVEST_SITE_CLOCK_DB"
 _DEFAULT_CLOCK = Path(__file__).resolve().parent / "outputs" / "site-clock.sqlite3"
@@ -147,20 +151,26 @@ def _clock() -> sqlite3.Connection:
     return connection
 
 
-def reserve_site_turn(url: str, *, paced: bool = True, now: float | None = None) -> float:
-    """Reserve the next request start for the URL; return seconds to wait.
+def _turn_timing(url: str, *, paced: bool = True, now: float | None = None,
+                 reserve_ahead: bool = False) -> tuple[float, float | None]:
+    """Return a wait or a short-lived runtime admission, under the shared clock.
 
-    Page requests (``paced``) on a site that froze us before share one pace
-    across all processes (plus any configured per-host pace). No request,
-    paced or not, starts before the site's recorded freeze ends.
+    Explicit reservations retain their future-slot semantics. Runtime callers
+    instead compete when due; sleeping never reserves more future slots. A
+    valid admission expires on the local monotonic clock, including for
+    unpaced media, whose freeze decision must not become indefinitely stale.
     """
     site, host = site_key(url), _host(url)
     if site is None or host is None:
-        return 0.0
+        return 0.0, None
     interval = per_site_interval() if paced else 0.0
     connection = _clock()
     try:
         connection.execute("BEGIN IMMEDIATE")
+        # Sample after acquiring the write lock. Wall time remains the shared,
+        # persistent clock; monotonic expiry prevents a wall-clock rollback
+        # from reviving a stale admission in this process.
+        admission_until = time.monotonic() + _ADMISSION_WINDOW
         current = time.time() if now is None else now
         row = connection.execute("SELECT frozen_until, shared FROM freeze WHERE site = ?", (site,)).fetchone()
         frozen_until, shared = row or (0.0, 0)
@@ -172,20 +182,42 @@ def reserve_site_turn(url: str, *, paced: bool = True, now: float | None = None)
             key = site if shared else host
             pace = connection.execute("SELECT next_at FROM pace WHERE key = ?", (key,)).fetchone()
             turn = max(turn, pace[0] if pace else 0.0)
-            connection.execute("INSERT INTO pace (key, next_at) VALUES (?, ?) "
-                               "ON CONFLICT(key) DO UPDATE SET next_at = excluded.next_at",
-                               (key, turn + interval))
+            if reserve_ahead or turn <= current:
+                window = 0.0 if reserve_ahead else _ADMISSION_WINDOW
+                connection.execute("INSERT INTO pace (key, next_at) VALUES (?, ?) "
+                                   "ON CONFLICT(key) DO UPDATE SET next_at = excluded.next_at",
+                                   (key, turn + window + interval))
         connection.execute("COMMIT")
-        return turn - current
+        return turn - current, admission_until if not reserve_ahead and turn <= current else None
     finally:
         connection.close()
 
 
+def reserve_site_turn(url: str, *, paced: bool = True, now: float | None = None) -> float:
+    """Reserve a future turn and return its delay, without waiting for admission.
+
+    Page requests share a host pace, or a university pace after a freeze.
+    This is the explicit reservation API; real requests use ``site_turn`` or
+    ``wait_site_turn`` to recheck freezes and discard stale admissions.
+    """
+    return _turn_timing(url, paced=paced, now=now, reserve_ahead=True)[0]
+
+
 async def site_turn(url: str, *, paced: bool = True) -> None:
-    """Wait for the URL's next request turn (call before the request, outside its timeout)."""
-    delay = await asyncio.to_thread(reserve_site_turn, url, paced=paced)
-    if delay > 0:
-        await asyncio.sleep(delay)
+    """Wait for admission immediately before requesting, outside its timeout.
+
+    The gap applies at this wrapper's admission boundary, not after arbitrary
+    browser/autowait delays. Shared scheduling still assumes a stable wall
+    clock. A freeze written after admission cannot revoke that request.
+    A caller whose handoff takes longer than the window must compete again;
+    eventually completing a handoff within the window is needed for progress.
+    """
+    while True:
+        delay, valid_until = await asyncio.to_thread(_turn_timing, url, paced=paced)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        elif valid_until is None or time.monotonic() <= valid_until:
+            return
 
 
 def site_is_paced(url: str) -> bool:
@@ -202,9 +234,13 @@ def site_is_paced(url: str) -> bool:
 
 
 def wait_site_turn(url: str) -> None:
-    delay = reserve_site_turn(url)
-    if delay > 0:
-        time.sleep(delay)
+    """Synchronous admission with the same expiry and freeze checks as ``site_turn``."""
+    while True:
+        delay, valid_until = _turn_timing(url)
+        if delay > 0:
+            time.sleep(delay)
+        elif valid_until is None or time.monotonic() <= valid_until:
+            return
 
 
 def freeze_site(url: str, seconds: float, reason: str) -> float:
