@@ -195,25 +195,53 @@ def valid_decision(item: dict, decision: dict, task_id: str) -> str | None:
         return None
 
 
-def apply_decisions(unresolved, records, candidates, page_html, out_dir):
+def reviewed_decision(item, path, task_id, *, source_html=None, source_evidence=None):
+    decisions = load_decisions(path)
+    direct = decisions.get(item['id'],{})
+    email = valid_decision(item,direct,task_id)
+    if email is not None:
+        return direct,email,None
+    if item['id'] in decisions:
+        return None,None,None
+    if source_html is None:
+        return None,None,None
+    from server.review_evidence import old_review_items, email_equivalence
+    for bundle, previous in old_review_items(Path(path).parent.parent,'html_email_review_items'):
+        try:
+            decision = bundle.decisions(DECISIONS_FILE).get(previous['id'],{})
+            if decisions.get(previous['id']) != decision or valid_decision(previous,decision,task_id) is None:
+                continue
+            proof = email_equivalence(bundle,previous,item,source_html,source_evidence or {})
+            if proof and item.get('id') == item_id(item):
+                choice = _choice(item,decision['verdict'],decision.get('email',''))
+                if choice == decision['email']:
+                    return decision,choice,proof
+        except (OSError,ValueError,KeyError,TypeError):
+            continue
+    return None,None,None
+
+
+def apply_decisions(unresolved, records, candidates, page_html, out_dir, *, raw_source_html=None, source_evidence=None):
     """Settle reviewed conflicts in place; everything else, and stale decisions, stay unresolved."""
     items = build_items(unresolved, records, candidates, page_html)
     task_id = task_id_for(out_dir)
-    decisions = load_decisions(Path(out_dir) / DECISIONS_FILE)
     settled, pending, certificates = set(), [], []
     for item in items:
-        decision = decisions.get(item["id"], {})
-        email = valid_decision(item, decision, task_id)
+        decision,email,proof = reviewed_decision(item,Path(out_dir)/DECISIONS_FILE,task_id,
+            source_html=(raw_source_html or {}).get(item['url']),source_evidence=(source_evidence or {}).get(item['url']))
         if email is None:
             pending.append(item)
             continue
         record = next(row for row in records if row.get("姓名") == item["name"] and row.get("主页") == item["url"])
         record["邮箱"] = email
         settled.add((item["name"], item["url"]))
-        certificates.append({"id": item["id"], "name": item["name"], "url": item["url"],
+        certificate = {"id": item["id"], "name": item["name"], "url": item["url"],
                              "verdict": decision["verdict"], "email": email,
                              "statuses": item["statuses"], "reviewed_by": decision["reviewed_by"],
-                             "reviewed_at": decision["reviewed_at"]})
+                             "reviewed_at": decision["reviewed_at"]}
+        if proof:
+            certificate.update(original_decision_id=decision['id'],source_equivalence=proof)
+        certificates.append(certificate)
     remaining = [issue for issue in unresolved
                  if not (issue.get("status") in STATUSES
                          and (issue.get("姓名"), issue.get("主页")) in settled)]
@@ -245,6 +273,13 @@ def review_complete(audit_path, audit: dict, items: list[dict]) -> bool:
                if issue.get("status") in STATUSES and "姓名" in issue}
     if blocked - {(item["name"], item["url"]) for item in items}:
         return False
-    decisions = load_decisions(path.parent / DECISIONS_FILE)
     task_id = task_id_for(path.parent)
-    return all(valid_decision(item, decisions.get(item["id"], {}), task_id) is not None for item in items)
+    from server.review_evidence import current_source
+    for item in items:
+        try:
+            html, evidence = current_source(path,item['url'])
+        except (OSError,ValueError,KeyError,TypeError):
+            html,evidence = None,None
+        if reviewed_decision(item,path.parent/DECISIONS_FILE,task_id,source_html=html,source_evidence=evidence)[1] is None:
+            return False
+    return True
