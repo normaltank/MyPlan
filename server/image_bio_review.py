@@ -13,6 +13,7 @@ from html import escape
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 import time
 
 from PIL import Image
@@ -644,6 +645,38 @@ def email_conflict_id(profile_url: str, owner_name: str, image_bio: str,
                   .encode("utf-8")).hexdigest()
 
 
+def _review_page_lines(original: bytes, kind: str, scanned: dict):
+    """Native PDF text has page text but no OCR boxes; read its actual layout.
+
+    Keep saved text and runtime email identities unchanged. Coordinates are
+    scaled to the same 2x PDF rendering used by _crop_original.
+    """
+    if kind != 'pdf' or not any(page.get('source') == 'pdf_text_layer' for page in scanned['pages']):
+        return scanned['pages']
+    import pymupdf
+    pages = copy.deepcopy(scanned['pages'])
+    with pymupdf.open(stream=original, filetype='pdf') as document:
+        for page_scan in pages:
+            if page_scan.get('source') != 'pdf_text_layer':
+                continue
+            page = document[page_scan['page'] - 1]
+            compact = lambda text: re.sub(r'\s+', '', text)
+            if compact(page.get_text()) != compact(page_scan['text']):
+                raise ValueError('native PDF text layer differs from saved evidence')
+            lines = []
+            for block in page.get_text('dict')['blocks']:
+                for line in block.get('lines', []):
+                    text = ''.join(span['text'] for span in line['spans']).strip()
+                    if not text:
+                        continue
+                    rendered = pymupdf.Rect(line['bbox']) * page.rotation_matrix
+                    left, top, right, bottom = (value * 2 for value in rendered)
+                    lines.append({'text': text, 'confidence': 1.,
+                                  'box': [[left, top], [right, top], [right, bottom], [left, bottom]]})
+            page_scan['lines'] = lines
+    return pages
+
+
 def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
     """Expose only email conflicts backed by verified original image crops."""
     from server.faculty_extractor import find_emails, is_personal_email_for_scholar
@@ -681,7 +714,7 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
             adjusted, _ = apply_review_decisions(
                 scanned, item["media_url"], item["sha256"], root / TEXT_DECISIONS_FILE)
             image_parts.append(adjusted["text"].strip())
-            for page in adjusted["pages"]:
+            for page in _review_page_lines(original, item['kind'], adjusted):
                 for line in page["lines"]:
                     for email in find_emails(line["text"]):
                         if (is_personal_email_for_scholar(email, owner_name)

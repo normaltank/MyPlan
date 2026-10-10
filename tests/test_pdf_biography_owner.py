@@ -273,6 +273,44 @@ async def test_same_template_ordinary_section_remains_unknown_without_role_evide
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('body', [
+    [('【个人简介】' + OWNER + '，副教授，博', 12),
+     ('士（后），博士生导师，省级人才', 12), ('完整学习和工作经历。', 12)],
+    [(OWNER + ' 女 硕士 讲师', 16), ('完整个人履历。', 12),
+     ('完整学习经历。', 12), ('完整科研内容。', 12),
+     ('工作和学习经历', 16), ('工作经历原文。', 12),
+     ('研究方向及兴趣', 16), ('研究原文。', 12),
+     ('主持的项目或课题', 16), ('项目原文。', 12), ('代表性论文', 16), ('论文原文。', 12)],
+    [(OWNER + '简历（word）', 16), ('个人简况', 16),
+     (OWNER + '，江西于都人，工学博士，江西理工大学讲师。', 12), ('完整履历。', 12)],
+])
+async def test_resume_intro_continuation_and_explicit_sections_preserve_complete_text(tmp_path, body):
+    data = document([body])
+    result = await audit(data, tmp_path)
+    assert not result['unresolved']
+    assert result['biographies'][URL] == scan_media(data, 'pdf')['text'].strip()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('other', [PEER + '简历（word）', '哔甲简历（word）', '士敏 教授'])
+async def test_resume_rules_keep_other_person_sections_and_names_blocked(tmp_path, other):
+    data = document([[('【个人简介】' + OWNER + '，副教授，博', 12),
+                      (other, 12), ('另一个人的履历。', 12)]])
+    result = await audit(data, tmp_path, names={OWNER})
+    assert not result['biographies']
+    assert any(item['status'] == 'image_bio_owner_unresolved' for item in result['unresolved'])
+
+
+@pytest.mark.asyncio
+async def test_resume_title_does_not_turn_generic_intro_label_into_person(tmp_path):
+    data = document([[(OWNER + ' 教授', 16), ('个人简介', 16), ('完整本人履历。', 12),
+                      ('个人简历', 16), ('完整学习工作原文。', 12), ('科研原文。', 12)]])
+    result = await audit(data, tmp_path)
+    assert not result['unresolved']
+    assert result['biographies'][URL] == scan_media(data, 'pdf')['text'].strip()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["王芳", "哔甲"])
 @pytest.mark.parametrize("role", ["教授", "博士", "男"])
 @pytest.mark.parametrize(
