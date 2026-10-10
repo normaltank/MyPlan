@@ -330,3 +330,13 @@ def test_combined_context_does_not_make_news_or_biography_school_mentions_a_facu
         html = html.replace('<header>皖西学院</header><nav>法学院</nav>', '<div class="bio"><p>王芳毕业于皖西学院法学院。</p></div>')
         branch["source_context_selector"] = ".bio"
     assert not witness(html, branch["url"], branch, PLAN)["role_supported"]
+
+
+def test_formal_mentor_information_brand_title_keeps_paged_source_purpose():
+    target = {"school": "江西理工大学", "college": "信息工程学院"}
+    html = '<title>导师信息-江西理工大学信息工程学院</title><div class="position">当前位置：<a href="/yjsjy/dsxx.htm">导师信息</a></div><main><li>王芳</li></main><footer>Copyright 江西理工大学信息工程学院</footer>'
+    branch = {"url": "https://example.edu/yjsjy/dsxx/8.htm", "card_selector": "main li", "source_role": "faculty_roster",
+              "source_container_selector": "main", "role_evidence_selector": ".position", "source_context_selector": "footer"}
+    assert witness(html, branch["url"], branch, target)["role_supported"]
+    news = html.replace('导师信息-江西理工大学信息工程学院', '新闻：导师信息交流-江西理工大学信息工程学院')
+    assert not witness(news, branch["url"], branch, target)["role_supported"]

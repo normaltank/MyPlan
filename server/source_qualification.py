@@ -23,7 +23,7 @@ SOURCE_FIELDS = frozenset({'source_role', 'source_container_selector', 'role_evi
 # menu anywhere on the page is insufficient: the witness must name this page.
 _FACULTY_PURPOSE = re.compile(
     r'(?:师资(?:队伍|名录|力量|介绍|简介)|教师(?:名单|名录|队伍|介绍|简介|风采)|'
-    r'教职工(?:名单|名录|队伍)|教授博士介绍|导师(?:名单|名录|介绍)|'
+    r'教职工(?:名单|名录|队伍)|教授博士介绍|导师(?:名单|名录|介绍|信息)|'
     r'(?:专任|兼职|外聘|客座)教师|客座教授|faculty(?:\s+members)?|academic\s+staff)', re.I)
 
 
@@ -31,18 +31,25 @@ def digest(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def faculty_purpose(text: str, target: dict) -> bool:
-    """Affirmative purpose labels only; other language remains unknown.
-
-    A fragment such as '师资' in an otherwise different page title is not a
-    complete faculty-relationship assertion. No negative people filter exists.
-    """
+def _purpose_label(text: str, target: dict) -> str:
+    """Remove only observed target institution branding around a purpose label."""
     text = text.strip()
-    for field in ('school', 'college'):
-        prefix = str(target.get(field) or '').strip()
-        if prefix and text.startswith(prefix):
-            text = text[len(prefix):].strip(' ：:-|—_')
-    return bool(_FACULTY_PURPOSE.fullmatch(text))
+    school, college = (str(target.get(field) or '').strip() for field in ('school', 'college'))
+    affixes = [value for value in (school + college, college + school, school, college) if value]
+    previous = None
+    while text != previous:
+        previous = text
+        for affix in affixes:
+            if text.startswith(affix):
+                text = text[len(affix):].strip(' ：:-|—_')
+            if text.endswith(affix):
+                text = text[:-len(affix)].strip(' ：:-|—_')
+    return text
+
+
+def faculty_purpose(text: str, target: dict) -> bool:
+    """A complete affirmative label, including ordinary target-branded titles."""
+    return bool(_FACULTY_PURPOSE.fullmatch(_purpose_label(text, target)))
 
 
 def source_claim_valid(branch: dict) -> bool:
@@ -111,8 +118,9 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     # navigation link binds purpose to this source, rather than a sibling menu.
     terminal_heading = (heading.select('a[href]')[-1].get_text(' ', strip=True)
                         if heading.select('a[href]') else heading_text)
-    title_bound = bool(title and any(re.sub(r'\s+', '', text) == re.sub(r'\s+', '', title)
-                                    for text in (heading_text, terminal_heading)))
+    title_bound = bool(title and any(
+        re.sub(r'\s+', '', _purpose_label(text, target)) == re.sub(r'\s+', '', _purpose_label(title, target))
+        for text in (heading_text, terminal_heading)))
     own_links = [a.get_text(' ', strip=True) for a in heading.select('a[href]')
                  if urljoin(url, a['href']) == url]
     if heading.name == 'a' and heading.get('href') and urljoin(url, heading['href']) == url:
