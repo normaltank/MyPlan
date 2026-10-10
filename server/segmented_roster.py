@@ -36,6 +36,7 @@ from bs4 import BeautifulSoup, Tag
 from server.faculty_extractor import LayoutAwareTokenizer, TITLE_KEYWORDS, find_emails
 # The one person-name rule; pdf_roster and image_table_roster import it from here.
 from server.name_list import NAME_PRIOR_FLOOR, _HAN_NAME, _person_name as _name_like
+from server.source_qualification import SourceEvidence
 
 # faculty_extractor puts the Opus algorithm layer on sys.path under its flat
 # module names; import through the same names so there is one copy of each.
@@ -361,6 +362,7 @@ class SegmentRecord:
     email: str = ""
     email_basis: str | None = None
     source_kind: str = "university_faculty_roster"
+    source_evidence: SourceEvidence | None = None
 
     def provenance(self) -> dict:
         return {"segment": self.segment.index, "name_source": self.name_source,

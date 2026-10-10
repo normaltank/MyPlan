@@ -133,3 +133,6 @@ async def test_roster_longer_than_twenty_pages_completes_under_worker_checkpoint
     assert report['directory_pages'] == 22 and report['total'] == 22
     assert report['branches'][0]['end'] == 'next_control_absent'
     assert not report['unresolved'] and report['delivery_ready'] is True
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

@@ -322,6 +322,31 @@ class AgentTaskQueue:
             self._reconcile_failure_types_best_effort()
         return updated.rowcount == 1
 
+    def invalidate_source_relationship(self, task_id: str, reviewed_by: int) -> bool:
+        """A changed human relation decision blocks existing delivery, preserving rows.
+
+        Active leases are revoked so a concurrent worker cannot publish stale
+        permission. Existing records remain evidence; normal evidence-bound
+        review/retry must produce a new result.
+        """
+        if type(reviewed_by) is not int or reviewed_by <= 0:
+            raise ValueError('authenticated reviewer required')
+        with self._connect() as con:
+            con.execute('BEGIN IMMEDIATE')
+            row = con.execute('SELECT task_type,status,stats_json,meta_json FROM tasks WHERE task_id=?', (task_id,)).fetchone()
+            if not row or row['task_type'] != 'harvest':
+                return False
+            stats = json.loads(row['stats_json'] or '{}')
+            stats.update(delivery_ready=False, failure_codes=['source_qualification_missing'],
+                         source_review_changed={'reviewed_by': reviewed_by, 'at': time.time()})
+            meta = json.loads(row['meta_json'] or '{}')
+            meta['current_step'] = '师资关系决定已变化，保留原记录并重新核验'
+            con.execute("""UPDATE tasks SET status='failed',error='师资关系人工决定已变化，需重新核验',
+                stats_json=?,meta_json=?,download_url=NULL,lease_until=NULL,lease_token=NULL,finished_at=?
+                WHERE task_id=?""", (_json(stats), _json(meta), time.time(), task_id))
+        self._reconcile_failure_types_best_effort()
+        return True
+
     def mark_no_faculty(self, task_id: str, reviewed_by: int | None) -> bool:
         """A person judged the college to publish no faculty roster (badr 2026-10-09).
 

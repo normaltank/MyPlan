@@ -116,3 +116,6 @@ async def test_zero_person_review_does_not_repeat_structure_model_calls(tmp_path
     monkeypatch.setattr(worker, '_run_browser_plan', collect)
     report = await worker._harvest_with_repair(task, tmp_path / 'out')
     assert not report['delivery_ready'] and len(calls) == 1
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

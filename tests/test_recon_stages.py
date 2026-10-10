@@ -224,3 +224,6 @@ def test_rejected_discovery_url_is_never_replayed_in_repair_feedback(monkeypatch
         agent_recon._run_staged_harness("invalid-url", {"target": target, "timeout_seconds": 60}, ())
     assert caught.value.safe_feedback["known_urls"] == []
     assert url not in json.dumps(caught.value.safe_feedback)
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

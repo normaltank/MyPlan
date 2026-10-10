@@ -101,3 +101,6 @@ def test_harness_uses_only_successful_digest_bound_submissions():
     assert submitted_plan(events({"accepted": True, "digest": plan_digest(BRANCH)})) == BRANCH
     assert submitted_plan(events({"accepted": False, "digest": plan_digest(BRANCH)})) is None
     assert submitted_plan(events({"accepted": True, "digest": "wrong"})) is None
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

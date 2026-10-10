@@ -838,7 +838,8 @@ class AgentWorker:
             browser = await pw.chromium.launch(headless=True)
             ctx = await new_browser_context(browser)
             try:
-                return await run_plan(plan, ctx, output_dir, state=HarvestState(output_dir.parent, plan))
+                return await run_plan(plan, ctx, output_dir, state=HarvestState(output_dir.parent, plan),
+                                      task_id=output_dir.parent.name)
             finally:
                 with contextlib.suppress(Exception):
                     await browser.close()

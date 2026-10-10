@@ -1,3 +1,4 @@
+import pytest
 import json
 
 
@@ -105,3 +106,6 @@ def test_omitted_profile_selector_is_restored_only_from_complete_browser_proof()
     # One verified page cannot justify a selector for both sampled profiles.
     incomplete = events[:-2]
     assert agent_recon.restore_verified_profile_selector(branch, PLAN, incomplete) == branch
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

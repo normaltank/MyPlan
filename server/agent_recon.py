@@ -248,7 +248,8 @@ _CJK = re.compile(r"[一-鿿]")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}")
 _URL = re.compile(r"^https?://", re.I)
 # 计划 schema 里允许出现的字面量（非 URL、非选择器的合法值）
-_SCHEMA_LITERALS = {"university_faculty_roster", "hospital_doctor_roster", "navigation", "segmented", "image_table"}
+_SCHEMA_LITERALS = {"university_faculty_roster", "hospital_doctor_roster", "navigation", "segmented", "image_table",
+                    "faculty_roster", "organizational_membership", "unverified_people_source"}
 _MODEL_PLAN_KEYS = {"school", "college", "source_kind", "branches",
                     "profile_concurrency", "profile_ready_selector"}
 _MODEL_BRANCH_KEYS = {"url", "kind", "source_kind", "card_selector", "single_page",
@@ -257,6 +258,8 @@ _MODEL_BRANCH_KEYS = {"url", "kind", "source_kind", "card_selector", "single_pag
                       "empty_state_selector", "roster_container_selector",
                       "profile_content_selector", "profile_content_start_selector",
                       "container_selector", "record_start_selector"}
+from server.source_qualification import SOURCE_FIELDS, source_claim_valid, source_event_issues  # noqa: E402
+_MODEL_BRANCH_KEYS.update(SOURCE_FIELDS)
 _MODEL_CHILD_KEYS = _MODEL_BRANCH_KEYS - {"url", "kind", "child_link_selector", "child_branch", "max_children",
                                           "container_selector", "record_start_selector"}
 
@@ -319,9 +322,9 @@ def _is_structure_url(value: Any) -> bool:
 def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> None:
     """Accept only the structure-only plan that the server recon agent may emit.
 
-    Manually reviewed appointment evidence belongs to the IDE path, not to a
-    model result. This validator runs in addition to the shared batch schema
-    because that schema intentionally supports that manual field.
+    Teacher/appointment data belongs to captured evidence and review decisions,
+    never to model or manually filled structure plans. The shared batch path
+    enforces the same boundary.
     """
     if plan.get("school") != school or plan.get("college") != college:
         raise PlanHygieneError("model plan school/college differs from queued target")
@@ -337,6 +340,8 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
 
     def branch(node: dict[str, Any], path: str, *, child: bool = False) -> None:
         keys(node, _MODEL_CHILD_KEYS if child else _MODEL_BRANCH_KEYS, path)
+        if not source_claim_valid(node):
+            raise PlanHygieneError(f'{path} requires a controlled source role and complete witness selectors')
         if not child:
             raw_url = node.get("url")
             if not isinstance(raw_url, str):
@@ -348,6 +353,8 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
                       "profile_content_selector", "profile_content_start_selector",
                       "container_selector", "record_start_selector"):
             selector(node, name, path)
+        for name in SOURCE_FIELDS - {'source_role'}:
+            selector(node, name, path)
         if node.get("kind") == "segmented":
             from server.segmented_roster import branch_valid
             if child or not branch_valid(node) or node.get("single_page") is not True:
@@ -356,7 +363,7 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
             return
         if node.get("kind") == "image_table":
             if (child or node.get("single_page") is not True or not node.get("card_selector")
-                    or set(node) - {"url", "kind", "source_kind", "card_selector", "single_page"}):
+                    or set(node) - ({"url", "kind", "source_kind", "card_selector", "single_page"} | SOURCE_FIELDS)):
                 raise PlanHygieneError("image_table allows only a single-page image selector")
             return
         if "profile_content_start_selector" in node and not node.get("profile_content_selector"):
@@ -624,6 +631,7 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         return {"proofs_on_url": sum(resolve(result.get("url")) == resolve(url) for _, result, _ in found)}
 
     for branch in plan["branches"]:
+        issues.extend(source_event_issues(branch, events))
         if branch.get("kind") == "image_table":
             verified = any(
                 args.get("card_selector") == branch.get("card_selector")
@@ -1066,6 +1074,10 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                      "phase_call_limit": (cfg.get("phase_call_limits") or {}).get(phase, 0)}
         template = DISCOVERY_PROMPT if phase == "discovery" else PROMPT
         prompt = template.format(school=target["school"], college=target["college"], url=url)
+        if phase == 'branch' and discovery_checkpoint:
+            discovered = next((b for b in discovery_checkpoint['plan']['branches'] if b['url'] == url), None)
+            if discovered:
+                prompt += '\n本入口已观察的来源结构（须本阶段重新验证）：' + json.dumps(discovered, ensure_ascii=False)
         provided = [item for item in cfg.get("provided_urls") or [] if _is_structure_url(item)]
         if phase == "discovery" and provided:
             prompt += "\n" + PROVIDED_LINKS_PROMPT + "给定链接：\n" + "\n".join(provided)
@@ -1137,18 +1149,22 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             events.extend(discovery_events)
             phases.append(metric)
             discovery_session_id = f"{session_id}-discover"
-        if (set(discovery) != {"school", "college", "source_kind", "branches"}
+        if (set(discovery) - {"school", "college", "source_kind", "branches"}
+                or not {'school', 'college', 'branches'} <= set(discovery)
                 or discovery["school"] != target["school"] or discovery["college"] != target["college"]
-                or discovery["source_kind"] != "university_faculty_roster"
+                or discovery.get('source_kind') not in {None, 'university_faculty_roster', 'hospital_doctor_roster'}
                 or not isinstance(discovery["branches"], list) or not discovery["branches"]):
             raise ReconPlanError("入口发现计划不符合契约")
         check_plan_hygiene(discovery, school=target["school"], college=target["college"])
         observed = observed_browser_urls(discovery_events)
         for branch in discovery["branches"]:
-            if not isinstance(branch, dict) or set(branch) != {"url"} or not _is_structure_url(branch["url"]):
-                raise ReconPlanError("入口发现只能输出 URL")
+            if (not isinstance(branch, dict) or set(branch) != ({'url'} | SOURCE_FIELDS)
+                    or not source_claim_valid(branch) or not _is_structure_url(branch['url'])):
+                raise ReconPlanError('入口发现须输出URL、来源角色和实际见证选择器')
             if branch["url"] not in observed:
                 raise ReconPlanError("名录 URL 缺少本轮真实浏览器链接证据")
+            if source_event_issues(branch, discovery_events):
+                raise ReconPlanError('入口发现缺少来源用途浏览器见证')
             if branch["url"] not in urls:
                 urls.append(branch["url"])
         aliases = browser_url_aliases(discovery_events)

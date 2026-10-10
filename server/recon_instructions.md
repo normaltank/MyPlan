@@ -1,10 +1,12 @@
 /browser
-你负责已确认的单个师资名录分支。上一阶段已提交学院名录分支；此阶段仅验证当前入口的卡片结构、分页和动态控件。完成此分支的 JSON 后立即结束；worker 执行数据采集、审计与交付。
+你负责已观察的单个人员来源分支。上一阶段提交候选来源及用途结构；此阶段重新证明当前来源关系，再验证卡片结构、分页和动态控件。完成此分支的 JSON 后立即结束；worker 执行数据采集、审计与交付。
 本学院官网明确列为师资的兼职、外聘等人员均在采集范围内，不限专任教师；不能用选择器排除这些师资类别。行政事务、新闻、校友、讲座嘉宾等内容不能仅因出现在官网就算作教师条目。身份或归属不明时保留证据供后续复核，不自行猜定或以删去争议范围通过门禁。
 
 按顺序执行：
 1. 用 browser_navigate 打开本入口，直接复用返回的重复子树候选。
-2. 用 browser_verify 检查容器锚定的卡片选择器，通常命中数必须大于零且只匹配教师条目；只有结构不足时调用 browser_structure。正文图片没有对应 DOM 文字时，可用 browser_read_image 对实际 img 原图做本地 OCR，按 nextOffset 查看相关范围；只用于形态和来源判断，不转写字段，也不替代卡片/分页证明。完整 HTML、教师正文保留在本地。若官网有明确、真实可见的空名录提示，可按下面的严格空态流程验证；零卡片或完全空 DOM 本身不能证明名录为空。
+   来源工具的 unit_selector 使用最终 card_selector；分段使用 container_selector，导航使用 child_link_selector。工具证明所有被选条目都在完整来源容器内，改变这些选择器后重做来源证明；发现阶段尚无条目选择器时省略unit_selector。
+   调用 browser_verify_source，传 source_role（faculty_roster / organizational_membership / unverified_people_source）及完整source_container_selector、真实主标题/当前页导航role_evidence_selector、独立学院归属source_context_selector。唯一可见、稳定DOM、请求结束和当前URL/SHA由工具核验。faculty角色还须真实正向师资关系与学院证据；普通侧栏师资链接、组织成员或域名不能代替。未知/辅助页保留完整范围和候选，不能过滤争议人员来通过门禁。最终分支必须携带这四个结构字段，逐字使用本阶段证明参数；导航子分支也携带自身用途选择器，并逐个实际子页重验。不得自行填写confirmed、SHA、正文引用或教师JSON。
+2. 用 browser_verify 检查容器锚定的卡片选择器，通常命中数必须大于零且匹配实际人员条目。faculty来源核实正式师资条目；组织/未知来源保留同一完整范围内的人员，不把不像教师的成员删掉来通过门禁。只有结构不足时调用 browser_structure。正文图片没有对应 DOM 文字时，可用 browser_read_image 对实际 img 原图做本地 OCR，按 nextOffset 查看相关范围；只用于形态和来源判断，不转写字段，也不替代卡片/分页证明。完整 HTML、教师正文保留在本地。若官网有明确、真实可见的空名录提示，可按下面的严格空态流程验证；零卡片或完全空 DOM 本身不能证明名录为空。
    browser_verify 的 linkedSamples 只是卡片上的链接样例，并不证明目标就是个人主页。若卡片实际只是通往另一张多人名录的入口，不要把它当教师卡片；改用下面的 navigation 分支，并在真实浏览器打开目标名录核实。
 3. 正常名录在实际 DOM 上验证带容器锚定的 card_selector 只命中教师条目且数量大于零；明确空态按下面的独立流程验证。next_selector 必须唯一，并实际进入下一页验证同构卡片。无分页证据才可使用 single_page。
    若本入口只是通往一张或多张同构多人名录的目录，输出 kind:"navigation"、child_link_selector 和 child_branch。先用 browser_verify 的 card_selector 参数验证 child_link_selector 只命中这些真实名录链接；再打开最多两个不同子名录，用 browser_verify 核实 child_branch 的 card_selector 与分页。子名录有真正的个人主页时仍须按第 4 步核实正文范围。child_branch 不含 url，只有实际验证过的 CSS 和分页字段。若链接指向个人主页，本入口仍是普通名录，不使用 navigation。
@@ -26,8 +28,8 @@ browser_navigate 的 page 摘要已给出标题、常见正文容器（命中数
 
 完成条件：本入口的卡片选择器（或分段平铺名录的正文容器与记录起点）已验证、分页控件唯一且实际下一页已验证，或已确认确实没有分页；实际个人页样例还须正文范围核验。达到条件后立即调用 submit_plan；返回 accepted:true 后结束。不要再发现其他学院入口、巡视介绍/新闻或重复访问已验证的页面。未核实的 URL 或近似选择器不能加入计划。
 
-分段平铺名录只输出 url、kind:"segmented"、container_selector、record_start_selector、single_page:true，两个 CSS 须与成功的 browser_verify_segments 调用完全一致，不含 card_selector、next_selector 或个人页字段。
-普通名录只输出本分支的一个 JSON 对象：url、card_selector，恰好给 single_page:true 或 next_selector；总页数未核实时省略 max_pages，不猜测固定数量。目录型名录改用 url、kind:"navigation"、child_link_selector、child_branch，子分支按普通名录填写 card_selector 与分页字段，但不填 url。严格空态验证通过的普通单页分支可成对加 empty_state_selector 与 roster_container_selector，保留 card_selector、single_page:true，不能添加 next_selector。url 必须等于本入口 URL。动态 Tab 可加 initial_click_selector。CSS 使用容器锚定路径，例如 div.list_container ul.teacher > li。不要输出学校、学院、branches 数组或其他入口。
+分段平铺名录除四个来源结构字段外只输出 url、kind:"segmented"、container_selector、record_start_selector、single_page:true，两个 CSS 须与成功的 browser_verify_segments 调用完全一致，不含 card_selector、next_selector 或个人页字段。
+普通名录除四个来源结构字段外输出本分支的一个 JSON 对象：url、card_selector，恰好给 single_page:true 或 next_selector；总页数未核实时省略 max_pages，不猜测固定数量。目录型名录改用 url、kind:"navigation"、child_link_selector、child_branch，子分支按普通名录填写 card_selector 与分页字段，但不填 url。严格空态验证通过的普通单页分支可成对加 empty_state_selector 与 roster_container_selector，保留 card_selector、single_page:true，不能添加 next_selector。url 必须等于本入口 URL。动态 Tab 可加 initial_click_selector。CSS 使用容器锚定路径，例如 div.list_container ul.teacher > li。不要输出学校、学院、branches 数组或其他入口。
 有实际个人主页时另给已核实的 profile_content_selector，可选 profile_content_start_selector。CSS 必须与成功 browser_verify_profile 调用完全一致，两个不同样例都须验证；只有一个个人主页时验证该实际样例即可。正文工具只回传结构与摘要，所有教师字段仍由本地确定性代码提取。
 禁止额外添加 name、label、count、说明或备注字段；名录分支只用 URL 标识。
 模型输出只含目标标识、URL、CSS 选择器和结构控制值，严禁姓名、职称、邮箱、简介及其总结；数据由确定性代码原样提取。
@@ -35,9 +37,9 @@ browser_navigate 的 page 摘要已给出标题、常见正文容器（命中数
 完成验证后使用 submit_plan 提交当前单个分支对象，不能提交整个学院的 branches 数组。工具即时检查 Schema、目标入口、选择器、实际翻页与个人页正文证明；accepted:false 时按字段路径和错误码修正，accepted:true 后立即结束，回复“计划已提交”。
 选择器不含中文是有意的数据隔离限制；CSS 实际可以含中文，但本项目侦察契约禁止，需改用实际验证过的英文属性、结构路径等选择器。
 普通单页分支参数示例（所有 URL 与 CSS 必须换成本轮实际验证值；无个人主页时省略正文选择器）：
-{{"plan":{{"url":"{url}","card_selector":"main .faculty-list > li","single_page":true,"profile_content_selector":"article.profile"}}}}
+{{"plan":{{"url":"{url}","source_role":"faculty_roster","source_container_selector":"main .faculty-list","role_evidence_selector":"main h1","source_context_selector":"header .college-name","card_selector":"main .faculty-list > li","single_page":true,"profile_content_selector":"article.profile"}}}}
 普通分页分支示例：
-{{"plan":{{"url":"{url}","card_selector":"main .faculty-list > li","next_selector":"main .pager a.next","profile_content_selector":"article.profile"}}}}
+{{"plan":{{"url":"{url}","source_role":"faculty_roster","source_container_selector":"main .faculty-list","role_evidence_selector":"main h1","source_context_selector":"header .college-name","card_selector":"main .faculty-list > li","next_selector":"main .pager a.next","profile_content_selector":"article.profile"}}}}
 
 本工单：
 目标学校：{school}

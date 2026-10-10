@@ -12,6 +12,8 @@
 
 ## 已有代码入口
 
+来源资格开发增量：`source_qualification.SourceEvidence` 替代全局师资许可；普通与媒体来源、独立本人页关系证据及source_review逐观察绑定决定已贯通registry/UI/native恢复，撤回不复用旧许可。34旧组件fixture已按测试边界迁移，实际来源/DOM/browser集独立保护，完整相关pipeline512 passed/1 skipped、队列交付补充77 passed；用途证明错误原件保留的实际反例修复另跑定向终态。见[说明](docs/implementation/2026-10-10-source-role-qualification.md)。尚未提交、CI或实网验收，不据旧17/给定5条宣称全院完成。
+
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
 
 分页位移增量 [PR #53](https://github.com/normaltank/MyPlan/pull/53) 已在 abf7390 的[完整CI](https://github.com/normaltank/MyPlan/actions/runs/38036723639)和两轴独立复核通过后合并。原用户改动保留；定向重验与常驻服务加载、全院验收分别核对。机制和限制见 [说明](docs/implementation/2026-10-10-moving-pagination.md)，不能据合并宣布学院完成。

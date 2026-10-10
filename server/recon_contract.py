@@ -6,6 +6,7 @@ import json
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from server.source_qualification import SourceRole
 
 Selector = Annotated[str, Field(min_length=1, pattern=r"^[^\u4e00-\u9fff]+$")]
 Url = Annotated[str, Field(min_length=1, pattern=r"^https?://")]
@@ -17,7 +18,14 @@ class StrictObject(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class RosterFields(StrictObject):
+class SourceFields(StrictObject):
+    source_role: SourceRole
+    source_container_selector: Selector
+    role_evidence_selector: Selector
+    source_context_selector: Selector
+
+
+class RosterFields(SourceFields):
     source_kind: Source | None = None
     card_selector: Selector | None = None
     single_page: bool | None = None
@@ -40,14 +48,14 @@ class Branch(RosterFields):
     record_start_selector: Selector | None = None
 
 
-class DiscoveredBranch(StrictObject):
+class DiscoveredBranch(SourceFields):
     url: Url
 
 
 class Discovery(StrictObject):
     school: Annotated[str, Field(min_length=1)]
     college: Annotated[str, Field(min_length=1)]
-    source_kind: Literal["university_faculty_roster"]
+    source_kind: Source | None = None
     branches: Annotated[list[DiscoveredBranch], Field(min_length=1)]
 
 
@@ -106,11 +114,13 @@ def validate_submission(plan: Any, phase: str, target: dict | None,
     try:
         check_plan_hygiene(complete, school=target["school"], college=target["college"])
         if phase == "discovery":
+            from server.source_qualification import source_event_issues
             observed = observed_browser_urls(events)
             issues = []
             for i, branch in enumerate(plan["branches"]):
                 if not _is_structure_url(branch["url"]) or branch["url"] not in observed:
                     issues.append({"path": f"$.branches[{i}].url", "status": "url_not_observed"})
+                issues.extend({'path': f'$.branches[{i}]', **item} for item in source_event_issues(branch, events))
             resolved = {resolved_browser_url(b["url"], aliases) for b in plan["branches"]}
             if any(resolved_browser_url(url, aliases) not in resolved for url in target.get("required_urls", [])):
                 issues.append({"path": "$.branches", "status": "previous_branch_omitted"})

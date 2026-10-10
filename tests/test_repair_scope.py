@@ -196,3 +196,6 @@ def test_profile_issue_names_every_branch_that_linked_the_profile(tmp_path):
     assert [(item["url"], item["branch_url"]) for item in feedback["issues"]] == [
         (profile, A), (both, A), (both, B)]
     assert AgentWorker._damaged_branches(shared, feedback) == {A, B}
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

@@ -70,6 +70,9 @@ def carry_review_decisions(task_root: str | Path, target_attempt: str | Path) ->
     target.mkdir(parents=True, exist_ok=True)
     for filename in review_registry.DECISION_FILES:
         path = source / filename
+        from server import source_review
+        if filename == source_review.DECISIONS_FILE and (root/filename).is_file():
+            path = root/filename  # canonical decisions include later withdrawal
         if path.is_file() and path.resolve().is_relative_to(root) and path.resolve() != (target / filename).resolve():
             shutil.copyfile(path, target / filename)
 

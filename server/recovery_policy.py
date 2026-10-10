@@ -40,7 +40,7 @@ _GROUPS = {
         segment_multiple_names segment_name_missing segment_start_empty segment_start_nested segments_not_verified
         selector_not_verified single_page_pagination_unverified single_page_has_next image_roster_coverage_mismatch
         name_list_item_unrecognized table_image_selector_unverified recon_gate_stalled
-        roster_profile_link_outside_card""",
+        roster_profile_link_outside_card source_role_evidence_unverified""",
     "stop": """lease_renewal_failed repair_skipped_task_deadline recon_budget_exceeded recon_phase_limit
         recon_failed task_timeout missing_entry_url delivery_sync_failure missing_audit_file""",
 }

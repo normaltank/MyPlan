@@ -64,9 +64,9 @@ def test_reconcile_rosters_is_independent_of_domain_eligibility_policy():
     assert [(item.name, item.url) for item in result.candidates] == [
         ("李一", "https://example.edu/people/1")
     ]
-    assert result.candidate_sources[("李一", "https://example.edu/people/1")] == {
-        "university_faculty_roster"
-    }
+    source, = result.candidate_sources[("李一", "https://example.edu/people/1")]
+    assert source.source_url == captured[0].url
+    assert source.status == 'unknown' and source.reason == 'source_claim_missing'
     assert result.observations[0]["visible_cards"] == 1
     assert result.unresolved == []
 

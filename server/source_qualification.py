@@ -1,0 +1,306 @@
+"""Server-owned page-purpose witnesses, separate from names and employment type.
+
+Role claims in plans never qualify a person. Current rendered scope, title and
+navigation witnesses must establish a positive faculty relationship. Unknown
+and organizational observations remain evidence; this module excludes nobody.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import hashlib
+import json
+import re
+from typing import Literal
+from urllib.parse import urljoin
+
+from bs4 import BeautifulSoup
+
+SourceRole = Literal['faculty_roster', 'organizational_membership', 'unverified_people_source']
+ROLES = frozenset({'faculty_roster', 'organizational_membership', 'unverified_people_source'})
+SOURCE_FIELDS = frozenset({'source_role', 'source_container_selector', 'role_evidence_selector',
+                           'source_context_selector'})
+# Positive relationship vocabulary, not a people/college blacklist. A context
+# menu anywhere on the page is insufficient: the witness must name this page.
+_FACULTY_PURPOSE = re.compile(
+    r'(?:师资(?:队伍|名录|力量|介绍|简介)|教师(?:名单|名录|队伍|介绍|简介|风采)|'
+    r'教职工(?:名单|名录|队伍)|教授博士介绍|导师(?:名单|名录|介绍)|'
+    r'(?:专任|兼职|外聘|客座)教师|客座教授|faculty(?:\s+members)?|academic\s+staff)', re.I)
+
+
+def digest(text: str) -> str:
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def faculty_purpose(text: str, target: dict) -> bool:
+    """Affirmative purpose labels only; other language remains unknown.
+
+    A fragment such as '师资' in an otherwise different page title is not a
+    complete faculty-relationship assertion. No negative people filter exists.
+    """
+    text = text.strip()
+    for field in ('school', 'college'):
+        prefix = str(target.get(field) or '').strip()
+        if prefix and text.startswith(prefix):
+            text = text[len(prefix):].strip(' ：:-|—_')
+    return bool(_FACULTY_PURPOSE.fullmatch(text))
+
+
+def source_claim_valid(branch: dict) -> bool:
+    return (branch.get('source_role') in ROLES and all(
+        isinstance(branch.get(key), str) and branch[key].strip()
+        for key in SOURCE_FIELDS - {'source_role'}))
+
+
+def source_unit_selector(branch: dict) -> str | None:
+    if branch.get('unit_selector'):
+        return branch['unit_selector']
+    if branch.get('kind') == 'navigation':
+        return branch.get('child_link_selector')
+    if branch.get('kind') == 'segmented':
+        return branch.get('container_selector')
+    return branch.get('card_selector')
+
+
+def witness(html: str, url: str, branch: dict, target: dict) -> dict:
+    """Read complete local witnesses; a model supplies only role and CSS."""
+    result = {'url': url, **{key: branch.get(key) for key in SOURCE_FIELDS},
+              'source_html_sha256': digest(html), 'role_supported': False}
+    if not source_claim_valid(branch):
+        return {**result, 'reason': 'source_claim_missing'}
+    soup = BeautifulSoup(html, 'html.parser')
+    try:
+        scopes = soup.select(branch['source_container_selector'])
+        headings = soup.select(branch['role_evidence_selector'])
+        contexts = soup.select(branch['source_context_selector'])
+    except Exception:
+        return {**result, 'reason': 'source_selector_invalid'}
+    result.update(scope_count=len(scopes), role_count=len(headings), context_count=len(contexts))
+    if any(len(nodes) != 1 for nodes in (scopes, headings, contexts)):
+        return {**result, 'reason': 'source_witness_not_unique'}
+    scope, heading, context = scopes[0], headings[0], contexts[0]
+    unit_selector = source_unit_selector(branch)
+    units_within = True
+    if unit_selector:
+        try:
+            units = soup.select(unit_selector)
+            units_within = all(node is scope or scope in node.parents for node in units)
+        except Exception:
+            units_within = False
+    result.update(unit_selector=unit_selector, units_within_scope=units_within)
+    result.update(selected_scope_sha256=digest(str(scope)), role_scope_sha256=digest(str(heading)),
+                  context_scope_sha256=digest(str(context)))
+    title = soup.title.get_text(' ', strip=True) if soup.title else ''
+    heading_text = heading.get_text(' ', strip=True)
+    # A document heading matching its own title or an explicit current-page
+    # navigation link binds purpose to this source, rather than a sibling menu.
+    terminal_heading = (heading.select('a[href]')[-1].get_text(' ', strip=True)
+                        if heading.select('a[href]') else heading_text)
+    title_bound = bool(title and any(re.sub(r'\s+', '', text) == re.sub(r'\s+', '', title)
+                                    for text in (heading_text, terminal_heading)))
+    own_links = [a.get_text(' ', strip=True) for a in heading.select('a[href]')
+                 if urljoin(url, a['href']) == url]
+    if heading.name == 'a' and heading.get('href') and urljoin(url, heading['href']) == url:
+        own_links.append(heading_text)
+    context_text = context.get_text(' ', strip=True) + ' ' + ' '.join(
+        str(node.get('alt') or node.get('title') or '') for node in context.find_all(['img', 'a']))
+    college = str(target.get('college') or '').strip()
+    school = str(target.get('school') or '').strip()
+    # An entire body or a person's biography mentioning the target college is
+    # not site-affiliation context. It must be a separate visible witness.
+    separate_context = scope is not context and scope not in context.descendants and context not in scope.descendants
+    college_bound = bool(college and college in context_text and school and school in context_text and separate_context)
+    result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
+    if branch['source_role'] == 'faculty_roster':
+        purpose = bool((title_bound and faculty_purpose(title, target))
+                       or any(faculty_purpose(text, target) for text in own_links))
+        result['role_supported'] = bool(purpose and college_bound and units_within)
+        if not result['role_supported']:
+            result['reason'] = 'faculty_relationship_unverified'
+    else:
+        result['role_supported'] = True  # It remains auxiliary, never faculty permission.
+    return result
+
+
+@dataclass(frozen=True)
+class SourceEvidence:
+    source_url: str
+    role: str
+    status: str
+    source_html_sha256: str
+    selected_scope_sha256: str = ''
+    role_scope_sha256: str = ''
+    context_scope_sha256: str = ''
+    reason: str = ''
+    source_kind: str = ''
+    owner_name: str = ''
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def captured_source_evidence(html: str, url: str, branch: dict, target: dict,
+                             proof: dict | None = None) -> SourceEvidence:
+    current = witness(html, url, branch, target)
+    keys = ('url', *SOURCE_FIELDS, 'unit_selector', 'units_within_scope', 'source_html_sha256', 'selected_scope_sha256',
+            'role_scope_sha256', 'context_scope_sha256')
+    proven = (isinstance(proof, dict) and proof.get('confirmed') is True
+              and proof.get('dom_stable') is True and proof.get('network_idle') is True
+              and proof.get('witness_visible') is True
+              and all(proof.get(key) == current.get(key) for key in keys)
+              and current['role_supported'])
+    return SourceEvidence(url, branch.get('source_role', 'unverified_people_source'),
+                          'verified' if proven else 'unknown', current['source_html_sha256'],
+                          current.get('selected_scope_sha256', ''), current.get('role_scope_sha256', ''),
+                          current.get('context_scope_sha256', ''),
+                          '' if proven else current.get('reason', 'source_browser_proof_missing'),
+                          branch.get('source_kind') or target.get('source_kind') or '')
+
+
+def owned_profile_relationship(html: str | None, url: str, name: str, target: dict,
+                               scope_evidence: dict | None, *, unique_owner: bool) -> SourceEvidence | None:
+    """Independent current affiliation from an actually proved own profile.
+
+    This conservative reader accepts an explicit current work-unit field and
+    owned teaching job/identity field only. Education, rank alone and arbitrary
+    university mentions are not relationship evidence. No model/plan provides
+    names, quotes, titles or permission.
+    """
+    from server.profile_content import scope_profile_html
+    from server.segmented_roster import heading_shape
+    if not html or not unique_owner or not isinstance(scope_evidence, dict):
+        return None
+    proof = scope_evidence.get('profile_content_browser_evidence')
+    if not isinstance(proof, dict) or any(proof.get(key) is not True for key in
+            ('confirmed', 'container_visible', 'dom_stable', 'network_idle')):
+        return None
+    if proof.get('html_sha256') != digest(html):
+        return None
+    scoped, current, issue = scope_profile_html(html, scope_evidence.get('profile_content_selector'), url,
+                                               start_selector=scope_evidence.get('profile_content_start_selector'))
+    if issue or not current or proof.get('selected_html_sha256') != current['selected_html_sha256']:
+        return None
+    soup = BeautifulSoup(scoped, 'html.parser')
+    compact_name = re.sub(r'\s+', '', name)
+    owners = [node for node in soup.select('h1,h2,h3,h4,h5,h6')
+              if re.sub(r'\s+', '', node.get_text()) == compact_name]
+    if not owners:
+        return None
+    for node in soup.select('h1,h2,h3,h4,h5,h6,p,td,dd'):
+        text = node.get_text(' ', strip=True)
+        shape = heading_shape(text)
+        label = re.fullmatch(r'姓\s*名\s*[:：]\s*(.+)', text)
+        if ((label and re.sub(r'\s+', '', label[1]) != compact_name)
+                or (node.name.startswith('h') and shape and shape[0] != name
+                    and shape[2] in {'none', 'title', 'gender'})):
+            return None
+    academic_roles = {'教授', '副教授', '讲师', '高级讲师', '助教', '助理教授', '研究员',
+                      '副研究员', '助理研究员', '师资博士后', '名誉教授', '特聘教授', '讲座教授'}
+    role_pattern = re.compile(r'\s*(?:身份|岗位|职务|现任职务|现任岗位)\s*[:：]\s*'
+                              r'(?:(?:兼职|外聘|专任|客座|特聘)\s*)?(?:教师|'
+                              + '|'.join(re.escape(role) for role in sorted(academic_roles, key=len, reverse=True)) + r')\s*')
+    jobs = [node for node in soup.select('p,td,dd,div')
+            if not node.find(['p', 'td', 'dd', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+            and role_pattern.fullmatch(node.get_text(' ', strip=True))]
+    # An academic rank plus a university mention is insufficient. The owned
+    # current job/identity must explicitly establish the teaching relationship.
+    if not jobs:
+        return None
+    school = re.sub(r'\s+', '', str(target.get('school') or ''))
+    college = re.sub(r'\s+', '', str(target.get('college') or ''))
+    if not school or not college:
+        return None
+    units = []
+    for node in soup.select('p,td,dd,div'):
+        if node.find(['p', 'td', 'dd', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+            continue
+        match = re.fullmatch(r'\s*(?:现工作单位|工作单位|任职单位|所在单位)\s*[:：]\s*(.+)',
+                             node.get_text(' ', strip=True))
+        if match and re.sub(r'\s+', '', match[1]) == school + college:
+            units.append(node)
+    if len(units) != 1:
+        return None
+    return SourceEvidence(url, 'faculty_profile_appointment', 'verified', digest(html),
+                          current['selected_html_sha256'], digest(str(jobs[0])), digest(str(units[0])),
+                          owner_name=name)
+
+
+async def verify_source(page, branch: dict, target: dict, *, local_capture: dict | None = None) -> dict:
+    """Current browser proof shares the existing visibility/network/DOM contract."""
+    from server.profile_structure import _FACTS, verify_profile_container
+    captured = {}
+    scope = await verify_profile_container(page, branch['source_container_selector'], local_capture=captured)
+    html = captured.get('html') or await page.content()
+    value = witness(html, page.url, branch, target)
+    visible = True
+    for key in ('role_evidence_selector', 'source_context_selector'):
+        node = page.locator(branch[key])
+        visible = visible and await node.count() == 1 and await node.is_visible()
+        facts = await page.evaluate(_FACTS, {'selector': branch[key], 'start': None, 'trivialChars': 0})
+        visible = (visible and facts.get('container_visible') is True
+                   and not facts.get('hidden_content_count') and not facts.get('active_animation_count'))
+    # The containing header/footer can be visible while the identifying words
+    # inside it are hidden. Require the actual rendered affiliation, not only
+    # raw text inside an otherwise visible ancestor.
+    rendered_context = ''
+    if visible:
+        context_node = page.locator(branch['source_context_selector'])
+        rendered_context = await context_node.inner_text()
+        rendered_context += ' ' + ' '.join(await context_node.locator('img').evaluate_all(
+            "nodes => nodes.filter(n => n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden')"
+            ".map(n => n.alt || n.title || '')"))
+    rendered_affiliation = all(str(target.get(field) or '').strip()
+                               and str(target[field]).strip() in rendered_context for field in ('school', 'college'))
+    value['rendered_context_sha256'] = digest(rendered_context)
+    if branch['source_role'] == 'faculty_roster' and not rendered_affiliation:
+        value.update(role_supported=False, college_bound=False, reason='source_context_not_visible')
+    # Proof must bind the page after all witness visibility reads as well.
+    stable = scope.get('dom_stable') is True and digest(await page.content()) == value['source_html_sha256']
+    value.update(dom_stable=stable, network_idle=scope.get('network_idle') is True,
+                 witness_visible=visible, confirmed=bool(scope.get('confirmed') and stable and visible
+                                                       and value['role_supported']))
+    value['proof_sha256'] = digest(json.dumps(value, sort_keys=True, ensure_ascii=False))
+    if local_capture is not None:
+        local_capture.update(html=html)
+    return value
+
+
+def source_event_issues(branch: dict, events: list[dict]) -> list[dict]:
+    """Accept only the dedicated browser call matching this exact claim."""
+    if not source_claim_valid(branch):
+        return [{'url': branch.get('url'), 'status': 'source_role_evidence_unverified'}]
+    calls = {}
+    for event in events:
+        data = event.get('data') or {}
+        if event.get('type') == 'tool/call' and data.get('name') == 'mcp__playwright__browser_verify_source':
+            try:
+                calls[data['callId']] = json.loads(data.get('arguments') or '{}')
+            except (ValueError, KeyError):
+                continue
+        elif event.get('type') == 'tool/result':
+            for block in (data.get('message') or {}).get('content', []):
+                args = calls.get(block.get('toolCallId'))
+                if args is None or block.get('isError'):
+                    continue
+                for item in block.get('content', []):
+                    if item.get('type') != 'text':
+                        continue
+                    try:
+                        proof = json.loads(item['text'])
+                    except (ValueError, KeyError):
+                        continue
+                    if not isinstance(proof, dict) or not isinstance(args, dict):
+                        continue
+                    unit = source_unit_selector(branch)
+                    if (proof.get('url') == branch['url'] and proof.get('confirmed') is True
+                            and all(args.get(key) == branch[key] == proof.get(key) for key in SOURCE_FIELDS)
+                            and (not unit or (args.get('unit_selector') == unit
+                                              and proof.get('unit_selector') == unit and proof.get('units_within_scope') is True))
+                            and all(proof.get(key) is True for key in ('role_supported', 'witness_visible', 'dom_stable', 'network_idle'))
+                            and all(re.fullmatch(r'[0-9a-f]{64}', str(proof.get(key, ''))) for key in (
+                                'source_html_sha256', 'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256'))):
+                        return []
+    return [{'url': branch.get('url'), 'status': 'source_role_evidence_unverified',
+             'failed_condition': 'current_source_role_proof_missing',
+             'need': 'Use browser_verify_source with this exact role and witness selectors plus the current unit_selector. '
+                     'Observe the actual title/current navigation and separate school/college context. '
+                     'If faculty relationship cannot be proved, retain the source as organizational_membership or unverified_people_source.'}]

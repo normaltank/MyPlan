@@ -91,7 +91,18 @@ async def test_fixed_harvest_acceptance_contract(case, tmp_path, monkeypatch):
     browser = ReplayContext(case["pages"])
     expected = case["expected"]
 
-    report = await batch_tool.run_plan(plan, browser, tmp_path)
+    if case.get("relationship_reviews"):
+        from server import source_review
+        first = await batch_tool.run_plan(plan, browser, tmp_path / "attempt_1", task_id="fixture-relationship")
+        items = source_review.existing_items(Path(first["audit_path"]))
+        for decision in case["relationship_reviews"]:
+            item = next(item for item in items if item["profile_url"] == decision["profile_url"])
+            source_review.save_decision(tmp_path / "attempt_2" / source_review.DECISIONS_FILE, item,
+                decision["verdict"], evidence_basis="official_source", reason=decision["reason"],
+                source_refs=[decision["profile_url"]], reviewed_by=1)
+        report = await batch_tool.run_plan(plan, browser, tmp_path / "attempt_2", task_id="fixture-relationship")
+    else:
+        report = await batch_tool.run_plan(plan, browser, tmp_path)
 
     # Assert blocker first, so failure output contains no teacher biographies.
     assert report["delivery_ready"] is expected["delivery_ready"], case["id"]
@@ -224,13 +235,13 @@ async def test_run_plan_cancelled_after_profile_success_restores_only_missing_pa
     restarted = HarvestState(tmp_path / "task", plan)
     resumed_browser = ReplayContext(case["pages"])
     report = await batch_tool.run_plan(plan, resumed_browser, tmp_path / "resumed", state=restarted)
-    assert resumed_browser.visits == [second, third]
+    assert resumed_browser.visits == [plan["branches"][0]["url"], second, third]
     assert report["total"] == 3 and report["with_email"] == 2 and report["no_email"] == 1
     assert report["delivery_ready"] is True
     assert report["coverage"]["complete"] is True
     assert report["checkpoints"]["plan_digest"] == restarted.plan_digest
     assert report["checkpoints"]["restored_profiles"] == 1
-    assert report["checkpoints"]["restored_branches"] == 1
+    assert report["checkpoints"]["restored_branches"] == 0
 
 
 @pytest.mark.asyncio
@@ -311,3 +322,6 @@ async def test_run_plan_changed_plan_cannot_restore_previous_branch_bundle(tmp_p
     assert len(browser.visits) == 7
     assert report["directory_pages"] == 2 and report["total"] == 6
     assert report["checkpoints"]["restored_branches"] == report["checkpoints"]["restored_profiles"] == 0
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

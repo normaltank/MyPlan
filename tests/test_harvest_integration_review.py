@@ -210,3 +210,6 @@ def test_model_request_count_includes_failed_run_completed_usage_messages():
     metrics = agent_recon.run_metrics(events)
     assert metrics["model_calls"] == 2
     assert metrics["token_usage"] == {"uncached_input": 30, "cached_input": 6, "output": 9}
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

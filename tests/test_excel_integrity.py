@@ -132,3 +132,6 @@ async def test_harvest_keeps_full_overlong_bio_and_reports_review_without_export
     recovery = classify_issues(issues)
     assert recovery.review == issues and not recovery.structure
     assert not list(tmp_path.glob('*.xlsx'))
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

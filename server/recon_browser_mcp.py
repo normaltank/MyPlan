@@ -62,6 +62,12 @@ TOOLS = [
          "navigate calls when several candidate pages need a look.",
          {"urls": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 8}}, ("urls",)),
     tool("browser_structure", "Read repeated DOM subtree containers and counts; inspect their returned CSS paths.", RANGE),
+    tool('browser_verify_source', 'Capture the complete current source scope, actual page purpose title/current navigation and target-college context. '
+         'A role enum alone does not prove faculty membership. Unknown/organizational sources remain auxiliary observations.',
+         {'source_role': {'type': 'string', 'enum': ['faculty_roster', 'organizational_membership', 'unverified_people_source']},
+          'source_container_selector': STRING, 'role_evidence_selector': STRING, 'source_context_selector': STRING,
+          'unit_selector': STRING},
+         ('source_role', 'source_container_selector', 'role_evidence_selector', 'source_context_selector')),
     tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes and sample URLs.",
          {"card_selector": STRING, "next_selector": STRING,
           "empty_state_selector": STRING, "roster_container_selector": STRING}, ("card_selector",)),
@@ -100,10 +106,10 @@ def phase_tools(phase: str) -> list[dict]:
         submit["inputSchema"]["$defs"] = definitions
     if phase == "discovery":
         allowed = {"browser_navigate", "browser_navigation", "browser_survey", "browser_evaluate", "browser_screenshot",
-                   "browser_read_image"}
+                   "browser_read_image", 'browser_verify_source'}
     elif phase == "branch":
         allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
-                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot", "browser_read_image"}
+                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot", "browser_read_image", 'browser_verify_source'}
     else:
         return [*TOOLS, submit]
     return [*[entry for entry in TOOLS if entry["name"] in allowed], submit]
@@ -330,7 +336,7 @@ class BrowserScout:
 
     async def _browser_call(self, name: str, arguments: dict) -> dict:
         if self._dom_modified and name in {
-            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_read_image"
+            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_read_image", 'browser_verify_source'
         }:
             return {**self.text_result({"status": "browser_dom_modified",
                                        "retry": "Reload the official URL before collecting new verification evidence."}),
@@ -389,6 +395,15 @@ class BrowserScout:
             value = await self.page.evaluate(f"args => __facultyRecon.{method}(...args)", values)
             if self.phase == "discovery":
                 await self.snapshot()
+        elif name == 'browser_verify_source':
+            from server.source_qualification import verify_source
+            captured = {}
+            value = await verify_source(self.page, arguments, self.target or {}, local_capture=captured)
+            if captured.get('html'):
+                self.save('source.html', captured['html'])
+            witness_path = self.save('source-witness.json', json.dumps(value, ensure_ascii=False))
+            value['evidence_path'] = str(witness_path)
+            await self.snapshot()
         elif name == "browser_verify":
             value = await self.page.evaluate("args => __facultyRecon.check(...args)",
                                             [arguments["card_selector"], arguments.get("next_selector")])
