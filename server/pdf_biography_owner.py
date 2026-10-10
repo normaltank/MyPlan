@@ -88,13 +88,6 @@ def inspect_owner_scope(
             line.page, float("inf")
         )
 
-    owner_headings = [
-        line
-        for line in lines[:5]
-        if name_headings.get(re.sub(r"\s+", "", line.text)) == owner
-        and emphasized_line(line)
-    ]
-
     def same_heading_slot(line, anchor):
         # Page-normalized alignment survives different glyph counts and OCR
         # scaling; a left-aligned section is not a centered person's title.
@@ -113,8 +106,7 @@ def inspect_owner_scope(
         )
         return line.bold == anchor.bold and (centered or same_left)
 
-    blockers = []
-    owner_section_seen = False
+    person_evidence = []
     person_words = set(TITLE_KEYWORDS) | _HEAD_WORDS
     intro_labels = {label for label in _LABELS if label.endswith(("简介", "简历"))}
     for index, line in enumerate(lines):
@@ -186,15 +178,6 @@ def inspect_owner_scope(
                 shape and name not in _LABELS and shape[2] == "none" and own_title_field
             ):
                 role = "person_heading_with_title_field"
-            elif (
-                any(same_heading_slot(line, anchor) for anchor in owner_headings)
-                and emphasized
-                and compact not in _LABELS
-                and re.fullmatch(r"[一-鿿·•]{2,8}", compact)
-            ):
-                # A later unknown name in the observed person's heading template
-                # cannot silently become part of that person's biography.
-                role = "unknown_person_heading_template"
             elif not shape and not _TITLE_FIELD_LINE.fullmatch(line.text.strip()):
                 if introduced:
                     tokens = tokens[1:]
@@ -209,9 +192,35 @@ def inspect_owner_scope(
                     or ((emphasized or introduced) and person_role)
                 ):
                     role = "unreadable_person_heading"
-        if role and name == owner and line.page == 1:
-            owner_section_seen = True
-        elif role and name != owner:
+        person_evidence.append((line, name, role))
+
+    # First establish actual person evidence anywhere on the complete first
+    # page. Every accepted owner field/introduction/title supplies its observed
+    # layout; a short initial window or a bare-name-only lookup would lose it.
+    # An unstyled standalone author name, unlike a person field or role heading,
+    # supplies no proof that this document is that person's biography.
+    owner_headings = [
+        line
+        for line, name, role in person_evidence
+        if line.page == 1
+        and name == owner
+        and role
+        and (role != "standalone_person_heading" or emphasized_line(line))
+    ]
+    blockers = []
+    for line, name, role in person_evidence:
+        compact = re.sub(r"\s+", "", line.text)
+        if (
+            role is None
+            and emphasized_line(line)
+            and compact not in _LABELS
+            and re.fullmatch(r"[一-鿿·•]{2,8}", compact)
+            and any(same_heading_slot(line, anchor) for anchor in owner_headings)
+        ):
+            # Layout alone cannot distinguish an unfamiliar person from a short
+            # section title. Preserve this as unknown, never whitelist prose.
+            role = "unknown_person_heading_template"
+        if role and name != owner:
             blockers.append(
                 {
                     "page": line.page,
@@ -221,7 +230,7 @@ def inspect_owner_scope(
                     "name_recognized": name is not None,
                 }
             )
-    if not owner_section_seen and not blockers:
+    if not owner_headings and not blockers:
         return {
             "method": "person_heading_structure",
             "status": "unknown",

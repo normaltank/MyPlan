@@ -213,6 +213,66 @@ def test_partial_page_evidence_cannot_prove_single_owner():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("owner_heading", [OWNER + " 教授", OWNER, "姓名：" + OWNER])
+@pytest.mark.parametrize("preamble_lines", [0, 6])
+async def test_all_first_page_owner_evidence_is_a_template_for_unknown_person_sections(
+    tmp_path, owner_heading, preamble_lines
+):
+    first = [(OWNER + "，论文作者位置。", 12)] + [("单位介绍。", 12)] * preamble_lines
+    first += [(owner_heading, 16)] + [("完整本人履历。", 12)] * 6
+    data = document([first, [("哔甲", 16)] + [("另一人完整经历。", 12)] * 6])
+    result = await audit(data, tmp_path, names={OWNER})
+    assert not result["biographies"]
+    assert any(
+        item["status"] == "image_bio_owner_unresolved" for item in result["unresolved"]
+    )
+    assert result["evidence"][0]["pdf_owner_scope"]["boundaries"]
+
+
+@pytest.mark.asyncio
+async def test_unambiguous_owner_on_first_page_after_five_lines_passes_whole_media_audit(
+    tmp_path,
+):
+    data = document(
+        [
+            [("单位介绍。", 12)] * 6
+            + [(OWNER + " 教授", 16)]
+            + [("完整本人履历。", 12)] * 6
+        ]
+    )
+    result = await audit(data, tmp_path, names={OWNER})
+    assert not result["unresolved"]
+    assert result["biographies"][URL] == scan_media(data, "pdf")["text"].strip()
+
+
+@pytest.mark.asyncio
+async def test_plain_author_name_line_is_not_its_own_profile_section(tmp_path):
+    data = document(
+        [[(OWNER, 12), ("论文正文及作者信息。", 12), ("科研论文正文。", 12)]]
+    )
+    result = await audit(data, tmp_path, names={OWNER})
+    assert not result["biographies"]
+    assert any(
+        item["status"] == "image_bio_owner_unresolved" for item in result["unresolved"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_same_template_ordinary_section_remains_unknown_without_role_evidence(
+    tmp_path,
+):
+    data = document(
+        [
+            [(OWNER + " 教授", 16)] + [("完整本人履历。", 12)] * 6,
+            [("教育经历", 16)] + [("学习经历原文。", 12)] * 6,
+        ]
+    )
+    result = await audit(data, tmp_path, names={OWNER})
+    assert not result["biographies"]
+    assert result["evidence"][0]["pdf_owner_scope"]["status"] == "multiple_or_unknown"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("other", ["王芳", "哔甲"])
 async def test_matching_person_heading_template_cannot_merge_unknown_owner(
     tmp_path, other

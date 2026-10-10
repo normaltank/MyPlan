@@ -482,21 +482,26 @@ async def audit_profile_media(
                 continue
             if not text:
                 continue
-            headings = ([line["text"] for line in lines[:5]] if lines
-                        else scanned["pages"][0]["text"].splitlines()[:5])
             matched = []
-            for heading in headings:
-                compressed_heading = re.sub(r"\s+", "", heading)
-                matched = [name for name in owners[profile_url]
-                           if re.sub(r"\s+", "", name) in compressed_heading]
-                if matched:
-                    break
             pdf_scope_unverified = False
-            if ref.kind == "pdf" and len(matched) == 1 and len(owners[profile_url]) == 1:
-                from server.pdf_biography_owner import inspect_owner_scope
-                owner_scope = inspect_owner_scope(original, scanned, matched[0], known_names or set(), reviewed)
-                record['pdf_owner_scope'] = owner_scope
-                pdf_scope_unverified = owner_scope['status'] != 'single_owner'
+            if ref.kind == "pdf":
+                if len(owners[profile_url]) == 1:
+                    from server.pdf_biography_owner import inspect_owner_scope
+                    owner = next(iter(owners[profile_url]))
+                    owner_scope = inspect_owner_scope(original, scanned, owner, known_names or set(), reviewed)
+                    record['pdf_owner_scope'] = owner_scope
+                    pdf_scope_unverified = owner_scope['status'] != 'single_owner'
+                    matched = [owner]
+            else:
+                # The existing image path retains its own OCR-heading contract.
+                headings = ([line["text"] for line in lines[:5]] if lines
+                            else scanned["pages"][0]["text"].splitlines()[:5])
+                for heading in headings:
+                    compressed_heading = re.sub(r"\s+", "", heading)
+                    matched = [name for name in owners[profile_url]
+                               if re.sub(r"\s+", "", name) in compressed_heading]
+                    if matched:
+                        break
             if ref.kind == "image" and not matched and len(compact) < SCENE_TEXT_CHARS:
                 # A photo of the teacher in front of a sign or blackboard has a
                 # few lines of scene text but is not a written biography.
