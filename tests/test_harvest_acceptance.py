@@ -234,7 +234,7 @@ async def test_run_plan_cancelled_after_profile_success_restores_only_missing_pa
 
 
 @pytest.mark.asyncio
-async def test_run_plan_complete_ajax_branch_restores_all_states_and_profiles(tmp_path):
+async def test_run_plan_complete_ajax_branch_revisits_states_before_restoring_profiles(tmp_path):
     from server.harvest_state import HarvestState
 
     case = next(case for case in CASES if case["id"] == "ajax_same_url")
@@ -244,17 +244,17 @@ async def test_run_plan_complete_ajax_branch_restores_all_states_and_profiles(tm
                                         state=initial_state)
     original_capture_times = {row["url"]: row["captured_at"] for row in initial_state.list_pages("profile")}
     assert initial["directory_pages"] == 2 and initial["total"] == 6
-    restarted_browser = ReplayContext({})
+    restarted_browser = ReplayContext(case["pages"])
     restored = await batch_tool.run_plan(plan, restarted_browser, tmp_path / "restored",
                                          state=HarvestState(tmp_path / "task", plan))
-    assert restarted_browser.visits == []
+    assert restarted_browser.visits == [plan["branches"][0]["url"]]
     assert restored["directory_pages"] == 2
     assert restored["total"] == restored["with_email"] == 6
     assert restored["delivery_ready"] is True
     assert restored["coverage"]["complete"] is True
     assert restored["coverage"]["scope"] == "verified_roster_branches"
     assert restored["checkpoints"]["restored_profiles"] == 6
-    assert restored["checkpoints"]["restored_branches"] == 1
+    assert restored["checkpoints"]["restored_branches"] == 0
     restored_state = HarvestState(tmp_path / "task", plan)
     assert {row["url"]: row["captured_at"] for row in restored_state.list_pages("profile")} == original_capture_times
     assert len({page["state_id"] for page in restored["coverage"]["pages"]}) == 2

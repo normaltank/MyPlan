@@ -12,6 +12,8 @@
 
 ## 已有代码入口
 
+分页位移开发增量：`pagination_identity` 将实际前进控件绑定名录结构；多页缓存恢复重新访问前沿。机制与限制见 [说明](docs/implementation/2026-10-10-moving-pagination.md)，当前未部署、未完成真实学院验收。
+
 本次链接边界增量：`FacultyDirectoryExtractor.links_outside_cards` 检查文字叶子遗漏祖先个人链接；侦察与确定性对账共用，失败在恢复表归为结构问题。完整链接及无链接路径保持；土木的全分支、无链接成员和归属仍待重验。机制、57项相关回归及独立复核边界见 [说明](docs/implementation/2026-10-10-roster-link-boundary.md)。
 
 以下模块在该版本仓库中存在；列出入口不等于所有路径已经对齐或真实学院已验收。
