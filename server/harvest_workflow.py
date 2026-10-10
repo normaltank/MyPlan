@@ -422,6 +422,10 @@ def roster_card_reading(html: str, url: str, card_selector: str) -> dict[str, in
     """
     result = reconcile_rosters([CapturedRosterPage(url, html, {"card_selector": card_selector})],
                                {"source_kind": "university_faculty_roster"})
+    outside = next((item for item in result.unresolved
+                    if item.get('status') == 'roster_profile_link_outside_card'), None)
+    if outside is not None:
+        return {'outside_profile_links':outside['outside_profile_links']}
     mismatch = next((item for item in result.unresolved if item.get("status") == "roster_card_mismatch"), None)
     if mismatch is None:
         return None
@@ -489,6 +493,12 @@ def reconcile_rosters(
         selector = page.branch.get("card_selector")
         empty_declared = "empty_state_selector" in page.branch or "roster_container_selector" in page.branch
         if selector and not empty_declared:
+            outside_links = FacultyDirectoryExtractor.links_outside_cards(page.html,page.url,selector)
+            if outside_links:
+                unresolved.append({'url':page.url,'status':'roster_profile_link_outside_card',
+                    'selector':selector,'outside_profile_links':len(outside_links),
+                    'sample_urls':outside_links[:4]})
+                continue
             from server.name_list import is_name_list_page, reconcile_name_list
             if is_name_list_page(page.html, selector):
                 # 补充名单页：卡片是一串顿号分隔的姓名，逐项切分并逐项交代。

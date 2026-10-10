@@ -140,6 +140,8 @@ uv pip sync --python .runtime/worker-venv/Scripts/python.exe requirements.lock
 
 ## 10. 测试与历史回归记录
 
+合并前必须核对 PR 当前 head SHA 对应的全部必需检查，以及本仓库单元测试、浏览器测试与 Ruff 工作流。失败、取消、待运行或无对应检查均不能当作通过；代码或合并冲突处理发生变化后，重新核验新 head。合并后核查主线 CI，若失败则暂停后续合并并先处理。局部测试和代码审查不替代 CI，CI 通过也不替代真实工单及覆盖验收。PR #50 的流程错误与修复证据见 [事故记录](implementation/2026-10-10-pr50-ci-incident.md)。
+
 ```powershell
 uv run --no-project --with-requirements requirements-dev.lock --python 3.12 python -m pytest -q
 ```
@@ -198,6 +200,8 @@ python -m server.browser_batch_tool --plan <已核实计划.json> --output-dir s
 **个人页正文核实**：`browser_verify_profile` 可一次传入最多 3 个样例链接；不带选择器时返回候选正文容器与各样例共同通过的选择器；失败时附隐藏元素位置与已通过静态检查的替代容器；网络未静或页面仍在变化时工具内自动再看一次。
 
 **补缺范围**：审计问题都能落到已采用分支时，补缺沿用上一轮入口发现，只重新侦察出问题的分支；出问题的分支不再套用同模板兄弟分支的选择器；补缺后计划与上一轮完全相同则不再重复采集。已核实卡片上认不出的名字（外籍译名等）进入“姓名待确认”人工复核，不再交给模型补缺。
+
+`roster_profile_link_outside_card` 表示卡片只选到链接内文字叶子，遗漏其外层个人链接；它是结构补缺，不是无主页判定。须在实际浏览器中重验完整链接/卡片及个人页正文；不能只接受人数相同或给叶子自动赋祖先网址。见 [边界说明](implementation/2026-10-10-roster-link-boundary.md)。
 
 **人数与字段核对**（不拦交付，只提示）：采集结束后 worker 做两类核对，写入审计的 `field_check`、`cross_check`，任务目录另有 `cross-check.json` 明细，网页结果行显示摘要。
 

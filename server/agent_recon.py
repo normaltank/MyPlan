@@ -714,6 +714,13 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                                               "and browser_verify the same card_selector there with cards > 0; on "
                                               "the last page, nextDisabled true also proves the end.")})
         if matching and (mismatch := matching[-1][1].get("card_mismatch")):
+            if type(mismatch.get('outside_profile_links')) is int and mismatch['outside_profile_links'] > 0:
+                issues.append({'status':'roster_profile_link_outside_card','url':branch['url'],'selector':selector,
+                    **_gate_detail('profile_link_outside_card',
+                        {'outside_profile_links':mismatch['outside_profile_links']},
+                        'The selected text leaves exclude their enclosing links. Verify the enclosing anchor '
+                        'or complete card and its personal-page scope; do not drop or guess these links.')})
+                continue
             # The harvest compares the same cards with the people it reads and
             # stops on a difference; settle it here, while the scout can still act.
             issues.append({"status": "roster_card_mismatch", "url": branch["url"], "selector": selector,
