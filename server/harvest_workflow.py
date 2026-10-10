@@ -127,8 +127,9 @@ async def capture_profiles(
                     if scoped:
                         from server.browser_readiness import install_request_tracking
                         install_request_tracking(page)
-                        page.on('pageerror', lambda error: page_errors.append(
-                            {'message': str(error), 'stack': getattr(error, 'stack', '')}))
+                        if callable(getattr(page, 'on', None)):
+                            page.on('pageerror', lambda error: page_errors.append(
+                                {'message': str(error), 'stack': getattr(error, 'stack', '')}))
                     response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                     if response is not None and response.status >= 400:
                         retryable = response.status == 429 or response.status >= 500
