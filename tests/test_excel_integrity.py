@@ -11,14 +11,16 @@ def record(bio):
             '简介': bio, '主页': 'https://example.edu/person'}
 
 
-def test_overlong_biography_is_rejected_before_replacing_existing_delivery(tmp_path):
+def test_overlong_biography_is_preserved_in_the_workbook(tmp_path):
     destination = tmp_path / 'university.xlsx'
     export_dual_sheet_excel([record('完整旧简介')], str(destination))
-    before = destination.read_bytes()
-    with pytest.raises(ValueError, match='excel_cell_too_long'):
-        export_dual_sheet_excel([record('文' * 32768)], str(destination))
-    assert destination.read_bytes() == before
-    assert openpyxl.load_workbook(destination)['无邮箱教师列表']['I2'].value == '完整旧简介'
+    original = '文' * 32768
+    counts = export_dual_sheet_excel([record(original)], str(destination))
+    workbook = openpyxl.load_workbook(destination)
+    parts = [row[9] for row in list(workbook['完整简介'].values)[1:]]
+    assert ''.join(parts) == original
+    assert counts['total'] == 1 and counts['full_biographies'] == 1
+    assert workbook['无邮箱教师列表']['I2'].hyperlink.location == "'完整简介'!A2"
 
 
 def test_failed_workbook_serialization_keeps_the_previous_delivery(tmp_path):
@@ -107,11 +109,10 @@ def test_empty_workbook_save_failure_cannot_publish_a_partial_file(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_harvest_keeps_full_overlong_bio_and_reports_review_without_export(tmp_path):
+async def test_harvest_keeps_full_overlong_bio_and_exports_every_character(tmp_path):
     import json
     from pathlib import Path
     from server import browser_batch_tool as batch
-    from server.recovery_policy import classify_issues
     from test_browser_batch_tool import FakeContext, roster
 
     base = 'https://example.edu'
@@ -123,12 +124,11 @@ async def test_harvest_keeps_full_overlong_bio_and_reports_review_without_export
 
     report = await batch.run_plan(plan, context, tmp_path)
 
-    assert report['delivery_ready'] is False
+    assert report['delivery_ready'] is True
     rows = json.loads(Path(report['records_path']).read_text(encoding='utf-8'))
     assert original in rows[0]['简介']
     assert len(rows[0]['简介']) > 32767
     issues = [item for item in report['unresolved'] if item['status'] == 'excel_cell_too_long']
-    assert len(issues) == 1 and issues[0]['field'] == '简介'
-    recovery = classify_issues(issues)
-    assert recovery.review == issues and not recovery.structure
-    assert not list(tmp_path.glob('*.xlsx'))
+    assert not issues
+    workbook = openpyxl.load_workbook(report['excel_path'])
+    assert ''.join(row[9] for row in list(workbook['完整简介'].values)[1:]) == rows[0]['简介']

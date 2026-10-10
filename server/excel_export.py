@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from zipfile import BadZipFile
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +16,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from server.delivery_fields import FIELD_ALIASES, STANDARD_FIELDS
+from server import biography_workbook
 
 
 EXCEL_COLUMNS = STANDARD_FIELDS
@@ -32,13 +34,13 @@ def excel_cell_issues(records: list) -> list[dict]:
                 if value is None:
                     continue
                 text = _excel_safe_text(str(value))
-                if len(text) > EXCEL_CELL_LIMIT:
-                    issues.append({'status': 'excel_cell_too_long', 'record_index': index,
-                                   'field': column, 'length': len(text), 'limit': EXCEL_CELL_LIMIT})
-                    break
                 if _INVALID_XML_TEXT.search(text):
                     issues.append({'status': 'excel_invalid_xml_character', 'record_index': index,
                                    'field': column})
+                    break
+                if column != '简介' and biography_workbook.cell_units(text) > EXCEL_CELL_LIMIT:
+                    issues.append({'status': 'excel_cell_too_long', 'record_index': index,
+                                   'field': column, 'length': len(text), 'limit': EXCEL_CELL_LIMIT})
                     break
     return issues
 
@@ -58,6 +60,47 @@ def _store_formulas_as_text(workbook) -> None:
             for cell in row:
                 if cell.data_type == "f":
                     cell.data_type = "s"
+
+
+def biography_storage_receipt(records: list) -> dict | None:
+    """Describe lossless storage required for the normalized export records."""
+    from server.delivery_fields import normalize_export_records
+    safe = [{key: _excel_safe_text(value) for key, value in row.items()}
+            for row in normalize_export_records(records)]
+    _, _, receipts = biography_workbook.prepare(safe)
+    if not receipts:
+        return None
+    return {'schema': 1, 'sheet': biography_workbook.SHEET, 'receipts': receipts}
+
+
+def validate_biography_storage_receipt(records: list, receipt: dict | None) -> None:
+    """The leased worker must explicitly attest storage of every long biography.
+
+    This compares record-bound metadata; build_payload checks the actual workbook
+    before issuing it, and university publishing verifies its own new artifact.
+    """
+    expected = biography_storage_receipt(records)
+    if expected != receipt:
+        raise ValueError('excel_cell_too_long: complete biography storage receipt missing or changed')
+
+
+def verify_biography_storage(path: str | Path, records: list) -> dict | None:
+    """Check complete biographies in the artifact against the native records."""
+    receipt = biography_storage_receipt(records)
+    if receipt is None:
+        return None
+    from server.delivery_fields import normalize_export_records
+    safe = [{key: _excel_safe_text(value) for key, value in row.items()}
+            for row in normalize_export_records(records)]
+    try:
+        workbook = openpyxl.load_workbook(path)
+    except (BadZipFile, OSError) as exc:
+        raise ValueError('full biography workbook unavailable or invalid') from exc
+    try:
+        biography_workbook.verify(workbook, safe)
+    finally:
+        workbook.close()
+    return receipt
 
 
 def export_dual_sheet_excel(records: list, output_filepath: str) -> dict:
@@ -88,7 +131,9 @@ def export_dual_sheet_excel(records: list, output_filepath: str) -> dict:
 
 def _write_workbook(records: list, output_filepath: str) -> dict:
     """Serialize completely before the public export replaces its destination."""
-    df = pd.DataFrame(records).map(_excel_safe_text) if records else pd.DataFrame(records)
+    safe_records = [{key: _excel_safe_text(value) for key, value in row.items()} for row in records]
+    copies, full_rows, receipts = biography_workbook.prepare(safe_records)
+    df = pd.DataFrame(copies) if copies else pd.DataFrame(copies)
     columns = list(EXCEL_COLUMNS)
     if df.empty:
         empty_df = pd.DataFrame(columns=columns)
@@ -128,14 +173,26 @@ def _write_workbook(records: list, output_filepath: str) -> dict:
         if c not in df_no_email.columns:
             df_no_email[c] = ""
 
+    links = [(name, index + 2, int(row['_biography_row']))
+             for name, frame in [('教师列表', df_with_email), ('无邮箱教师列表', df_no_email)]
+             for index, row in frame.iterrows()
+             if '_biography_row' in row and pd.notna(row['_biography_row'])]
     df_with_email = df_with_email[columns]
     df_no_email = df_no_email[columns]
 
     with pd.ExcelWriter(output_filepath, engine='openpyxl') as writer:
         df_with_email.to_excel(writer, sheet_name='教师列表', index=False)
         df_no_email.to_excel(writer, sheet_name='无邮箱教师列表', index=False)
+        if full_rows:
+            pd.DataFrame(full_rows, columns=biography_workbook.HEADERS).to_excel(
+                writer, sheet_name=biography_workbook.SHEET, index=False)
 
     wb = openpyxl.load_workbook(output_filepath)
+    from openpyxl.worksheet.hyperlink import Hyperlink
+    for name, row, first in links:
+        cell = wb[name].cell(row, columns.index('简介') + 1)
+        cell.hyperlink = Hyperlink(ref=cell.coordinate,
+                                   location=f"'{biography_workbook.SHEET}'!A{first}", display=cell.value)
     _store_formulas_as_text(wb)  # must persist even if styling below fails
 
     # Style Excel Sheets with openpyxl
@@ -176,9 +233,16 @@ def _write_workbook(records: list, output_filepath: str) -> dict:
     except Exception:
         pass
     wb.save(output_filepath)
+    checked = openpyxl.load_workbook(output_filepath)
+    try:
+        biography_workbook.verify(checked, safe_records)
+    finally:
+        checked.close()
 
     return {
         "total": len(df),
         "with_email": len(df_with_email),
-        "no_email": len(df_no_email)
+        "no_email": len(df_no_email),
+        **({'full_biographies': len(receipts), 'biography_storage': {
+            'schema': 1, 'sheet': biography_workbook.SHEET, 'receipts': receipts}} if receipts else {}),
     }

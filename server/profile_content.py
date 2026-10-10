@@ -47,7 +47,12 @@ def trivial_hidden(node: Tag) -> bool:
     and still blocks, because hidden profile content may be a collapsed section.
     """
     text = node.get_text(' ', strip=True)
-    if node.find(_MEDIA_TAGS) or len(text) > TRIVIAL_HIDDEN_CHARS:
+    if node.name in _MEDIA_TAGS or node.find(_MEDIA_TAGS):
+        return False
+    from server.word_toc import decoration_kind, toc_anchor
+    if toc_anchor(node) is not None:
+        return decoration_kind(node, _inline_hidden) is not None
+    if len(text) > TRIVIAL_HIDDEN_CHARS:
         return False
     # Word marks its own never-displayed text (the '窗体顶端' / '窗体底端' form
     # boundaries of a pasted document) with mso-hide:all; no reader ever sees it.
@@ -55,7 +60,8 @@ def trivial_hidden(node: Tag) -> bool:
 
 
 def _word_hidden(node: Tag) -> bool:
-    return 'mso-hide:all' in re.sub(r'\s+', '', str(node.get('style', ''))).lower()
+    return (node.get_text('', strip=True) in {'窗体顶端', '窗体底端'}
+            and 'mso-hide:all' in re.sub(r'\s+', '', str(node.get('style', ''))).lower())
 
 
 def _node_path(node: Tag, stop: Tag | None = None) -> str:
@@ -114,11 +120,12 @@ def hidden_blockers(html: str, selector: str, *, start_selector: str | None = No
                 seen.append(item)
                 found.append({'where': 'descendant', 'path': _node_path(item, stop=node),
                               'text_chars': len(item.get_text('', strip=True)),
-                              'media': len(item.find_all(_MEDIA_TAGS))})
+                              'media': len(item.find_all(_MEDIA_TAGS)) + int(item.name in _MEDIA_TAGS)})
     return found[:limit]
 
 
-def scope_profile_html(html: str, selector: str, url: str, *, start_selector: str | None = None
+def scope_profile_html(html: str, selector: str, url: str, *, start_selector: str | None = None,
+                       allow_empty: bool = False
                        ) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
     """Return a complete selected subtree copy, evidence, or a blocking issue."""
     def fail(status: str):
@@ -167,6 +174,7 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
             if is_marker:
                 break
     placeholders = []
+    toc_decorations = []
     for item in node.find_all(True):
         if item.name in _NON_RENDERING or any(item in found.descendants for found in placeholders):
             continue
@@ -174,6 +182,12 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
             if not trivial_hidden(item):
                 return fail('profile_content_selector_hidden')
             placeholders.append(item)
+            from server.word_toc import decoration_kind
+            if kind := decoration_kind(item, _inline_hidden):
+                from server.word_toc import node_selector
+                toc_decorations.append({'path': node_selector(item), 'kind': kind,
+                    'node_sha256': hashlib.sha256(str(item).encode('utf-8')).hexdigest(),
+                    'text_chars': len(item.get_text('', strip=True))})
     for item in placeholders:  # never captured: a reader does not see them
         item.decompose()
     text_copy = BeautifulSoup(str(node), 'html.parser')
@@ -182,7 +196,8 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
     has_text = bool(text_copy.get_text(' ', strip=True))
     from server.image_biography import media_references
     has_media = bool(media_references(str(text_copy), url))
-    if not has_text and not has_media:
+    empty = not has_text and not has_media
+    if empty and not (allow_empty and start_selector is None):
         return fail('profile_content_start_selector_empty' if start_selector is not None
                     else 'profile_content_selector_empty')
     selected = str(node)
@@ -192,5 +207,8 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
                 'selected_html_sha256': hashlib.sha256(selected.encode('utf-8')).hexdigest(),
                 'attribution_scope': 'verified_profile_container',
                 'hidden_placeholders_removed': len(placeholders),
+                'word_toc_decorations_removed': len(toc_decorations),
+                'word_toc_decorations': toc_decorations,
+                'empty_container': empty,
                 'image_only_candidate': not has_text and has_media}
     return '<html><body>' + selected + '</body></html>', evidence, None
