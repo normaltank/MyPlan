@@ -11,6 +11,13 @@ import hashlib
 import re
 import statistics
 
+# Complete, explicit resume column labels; an arbitrary short heading still
+# cannot be declared a section merely because it resembles an owner's title.
+_RESUME_SECTIONS = {'个人简况', '工作和学习经历', '研究方向及兴趣',
+                    '主持的项目或课题', '代表性论文'}
+_RESUME_TITLE = re.compile(r'^([一-鿿·•]{2,8}?)(?:个人)?(?:简历|简介)'
+                           r'(?:[（(](?:word|docx?|pdf)[）)])?$', re.I)
+
 
 def inspect_owner_scope(
     original: bytes,
@@ -111,16 +118,29 @@ def inspect_owner_scope(
     person_words = set(TITLE_KEYWORDS) | _HEAD_WORDS
     intro_labels = {label for label in _LABELS if label.endswith(("简介", "简历"))}
     for index, line in enumerate(lines):
-        compact = re.sub(r"\s+", "", line.text)
-        tokens = [token for token in _SPLIT.split(line.text.strip()) if token]
+        analysis_text = line.text
+        if person_evidence:
+            previous, previous_name, previous_role = person_evidence[-1]
+            nearby = (previous.page == line.page and previous_name == owner and previous_role
+                      and abs(previous.bbox[0] - line.bbox[0]) <= max(previous.size, line.size)
+                      and 0 <= line.bbox[1] - previous.bbox[1]
+                      and line.bbox[1] - previous.bbox[3] <= max(previous.size, line.size) * 1.5)
+            # A known owner's introduction can wrap within a role word. Join
+            # it for grammar only; a following person's name is never a suffix.
+            if nearby and any(previous.text.rstrip().endswith(word[:cut])
+                              and re.match(re.escape(word[cut:]) + r'(?=$|[\s,，;；:：。、（(）)])', line.text.lstrip())
+                              for word in person_words for cut in range(1, len(word))):
+                analysis_text = previous.text + line.text.lstrip()
+        compact = re.sub(r"\s+", "", analysis_text)
+        tokens = [token for token in _SPLIT.split(analysis_text.strip()) if token]
         introduced = bool(len(tokens) > 1 and tokens[0] in intro_labels)
-        person_line = line.text
+        person_line = analysis_text
         if introduced:
-            person_line = line.text[line.text.index(tokens[0]) + len(tokens[0]) :]
+            person_line = analysis_text[analysis_text.index(tokens[0]) + len(tokens[0]) :]
             separator = _SPLIT.match(person_line)
             if separator:
                 person_line = person_line[separator.end() :]
-        shape = heading_shape(line.text)
+        shape = heading_shape(analysis_text)
         if not shape or shape[0] not in names:
             # Verified source names need no second surname-frequency test.
             # The trailing role still has to follow the shared person grammar.
@@ -156,7 +176,11 @@ def inspect_owner_scope(
         # A field explicitly naming a person is stronger than name vocabulary;
         # an unreadable or unfamiliar value is not permission to merge it.
         label = re.match(r"^\s*姓\s*名\s*[:：]?\s*(.+)$", line.text)
-        if label:
+        resume = _RESUME_TITLE.fullmatch(compact) if compact not in _LABELS else None
+        if resume:
+            name = resume[1] if resume[1] in names else None
+            role = 'person_resume_title'
+        elif label:
             if re.sub(r"\s+", "", label[1]) == re.sub(r"\s+", "", owner):
                 name = owner
             role = "name_field"
@@ -250,6 +274,7 @@ def inspect_owner_scope(
             role is None
             and emphasized_line(line)
             and compact not in _LABELS
+            and compact not in _RESUME_SECTIONS
             and re.fullmatch(r"[一-鿿·•]{2,8}", compact)
             and any(same_heading_slot(line, anchor) for anchor in owner_headings)
         ):
