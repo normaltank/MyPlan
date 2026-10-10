@@ -16,9 +16,13 @@
 
 原生 PDF 邮箱复核增量：缓存页有完整文字但无 OCR 行，导致土木三个邮箱冲突没有裁图选项；现从同一原件文字层读取坐标，保留运行时决定标识，三个真实项可见。三处归属解析由独立简历章节增量处理，邮箱选择及未决身份保持独立，未生成真实教师决定；见[说明](docs/implementation/2026-10-10-native-pdf-email-review.md)。
 
+长简介导出增量：`biography_workbook` 在同一工作簿分段保留超长正文，人员 Sheet 仍一人一行；同步核验实际文件，队列核对记录回执。相关 50 项及 70,033 字符固定原件回读通过，独立复核、CI 与实跑待核，见 [说明](docs/implementation/2026-10-10-full-biography-workbook.md)。
+
 复核证据恢复增量：`review_evidence`封存原HTML/audit/决定，以严格原生访问计数等价证书恢复媒体、身份及HTML邮箱原决定；迁移backup登记须固定audit SHA并核验原task/attempt/rawSHA。17项真实保存原件隔离回放通过。PR56首次Linux CI发现原生路径被Windows字符串改写；已修复并加2项门禁回归，metadata37项及相关浏览器6项通过，新CI尚待终态；未生产登记或加载。新侧归档SHA指物化UTF8对象，非Windows snapshot CRLF原字节，见[说明](docs/implementation/2026-10-10-review-evidence-metadata.md)。
 
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
+
+身份职称重解析增量：同源计数证书内，旧单一职称词可恢复为同一个唯一、无歧义 DOM 字段的现行完整值，保持原人工身份决定；实际四观察隔离回放恢复为一行，捏造字段／身份变化／撤回仍拒绝。未生产恢复，独立复核与本提交 CI 待核，见[边界](docs/implementation/2026-10-10-identity-title-reparse.md)。
 
 分页位移增量 [PR #53](https://github.com/normaltank/MyPlan/pull/53) 已在 abf7390 的[完整CI](https://github.com/normaltank/MyPlan/actions/runs/38036723639)和两轴独立复核通过后合并。原用户改动保留；定向重验与常驻服务加载、全院验收分别核对。机制和限制见 [说明](docs/implementation/2026-10-10-moving-pagination.md)，不能据合并宣布学院完成。
 

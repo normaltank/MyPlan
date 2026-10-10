@@ -36,10 +36,13 @@ def build_payload(report_path: str | Path, worker_id: str, lease_token: str,
     records = json.loads(Path(report["records_path"]).read_text(encoding="utf-8"))
     if not isinstance(records, list) or any(not isinstance(row, dict) or set(row) != FIELDS for row in records):
         raise ValueError("records must contain exactly the standard ten columns")
-    from server.excel_export import excel_cell_issues
+    from server.excel_export import excel_cell_issues, verify_biography_storage
     cells = excel_cell_issues(records)
     if cells:
         raise ValueError(f"delivery field validation failed: {cells}")
+    biography_storage = verify_biography_storage(excel, records)
+    if biography_storage != report.get('biography_storage'):
+        raise ValueError('biography storage receipt differs from the completed workbook')
     school = str(report.get("school", "")).strip()
     college = str(report.get("college", "")).strip()
     if not school or not college or any(
@@ -57,6 +60,8 @@ def build_payload(report_path: str | Path, worker_id: str, lease_token: str,
         "directory_pages": report["directory_pages"],
         "candidate_count": report["candidate_count"],
     }
+    if biography_storage:
+        stats['biography_storage'] = biography_storage
     for field in ("coverage_scope", "eligibility", "excluded_count", "branches", "audit_path",
                   "coverage", "coverage_path", "checkpoints", "recon_attempts", "local_access_repairs",
                   "recon_usage_alerts", "identity_reviews", "identity_review_path", "recovery", "runtime_report",
