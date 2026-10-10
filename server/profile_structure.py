@@ -6,6 +6,7 @@ import hashlib
 import time
 from typing import Any
 from urllib.parse import urlsplit
+from server.word_toc import LIVE_GUARD
 
 
 _FACTS = r"""args => {
@@ -29,10 +30,14 @@ _FACTS = r"""args => {
     && ((n.textContent||'').trim() || n.matches(media)));
   // Same rule as profile_content.trivial_hidden: an editor placeholder such as
   // 'invisible' is not hidden profile content; names, numbers, e-mails or Chinese are.
-  const wordHidden=n=>(n.getAttribute('style')||'').replace(/\s+/g,'').toLowerCase().includes('mso-hide:all');
+  const wordHidden=n=>['窗体顶端','窗体底端'].includes((n.textContent||'').trim())
+    && (n.getAttribute('style')||'').replace(/\s+/g,'').toLowerCase().includes('mso-hide:all');
+  // Bound to server-parsed Word rows in this exact capture. Revalidate the
+  // current leaf, link and content so a changed hidden name/media is never ignored.
+""" + LIVE_GUARD + r"""
   const trivial=n=>!n.matches(media) && !n.querySelector(media)
-    && (n.textContent||'').trim().length<=args.trivialChars
-    && (!/[\u4e00-\u9fff@\d]/.test(n.textContent||'') || wordHidden(n));
+    && (tocContext(n) ? toc(n) : ((n.textContent||'').trim().length<=args.trivialChars
+    && (!/[\u4e00-\u9fff@\d]/.test(n.textContent||'') || wordHidden(n))));
   const hidden=relevant.filter(n=>!visible(n) && !trivial(n)).length;
   const active=root?root.getAnimations({subtree:true}).filter(a=>
     a.playState==='running' && (a.effect?.target===root || retained.includes(a.effect?.target))).length:0;
@@ -174,13 +179,15 @@ _HIDDEN_PATHS = r"""args => {
   const media='img,picture,svg,canvas,iframe,object,embed,video,audio';
   const label=n=>n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+[...n.classList].slice(0,2).map(c=>'.'+c).join('');
   const where=n=>{const parts=[];for(let p=n;p&&p!==root&&parts.length<4;p=p.parentElement)parts.unshift(label(p));return parts.join(' > ');};
+""" + LIVE_GUARD + r"""
   const out=[];
   for(const n of root.querySelectorAll('*')){
     if(n.matches('script,style,noscript,template') || out.some(item=>item.node.contains(n))) continue;
     const text=(n.textContent||'').trim();
     if(!(text || n.matches(media)) || shown(n)) continue;
+    if(tocContext(n) && toc(n)) continue;
     if(!n.matches(media) && !n.querySelector(media) && text.length<=args.trivialChars
-       && !/[一-鿿@\d]/.test(text)) continue;
+       && !tocContext(n) && !/[一-鿿@\d]/.test(text)) continue;
     out.push({node:n, where:'descendant', path:where(n), text_chars:text.length,
       media:n.querySelectorAll(media).length+(n.matches(media)?1:0)});
     if(out.length>=3) break;
@@ -221,7 +228,9 @@ async def failure_details(page: Any, html: str, result: dict) -> dict:
         blockers = hidden_blockers(html, selector, start_selector=result.get("profile_content_start_selector"))
     elif result.get("reason") == "hidden_content":
         try:
-            blockers = await page.evaluate(_HIDDEN_PATHS, {"selector": selector, "trivialChars": TRIVIAL_HIDDEN_CHARS})
+            from server.word_toc import live_decorations
+            blockers = await page.evaluate(_HIDDEN_PATHS, {"selector": selector, "trivialChars": TRIVIAL_HIDDEN_CHARS,
+                "wordToc": live_decorations(html, selector)})
         except Exception:
             blockers = []
     else:
@@ -268,7 +277,9 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             result['scope_issue'] = result['reason'] = issue['status']
             return result
         from server.profile_content import TRIVIAL_HIDDEN_CHARS
-        args = {"selector": selector, "start": start_selector, "trivialChars": TRIVIAL_HIDDEN_CHARS}
+        from server.word_toc import live_decorations
+        args = {"selector": selector, "start": start_selector, "trivialChars": TRIVIAL_HIDDEN_CHARS,
+                "wordToc": live_decorations(html, selector)}
         first_facts = await page.evaluate(_FACTS, args)
         # A finite entrance animation is not evidence of an incomplete article.
         # Wait for two stable samples; continuing animation/DOM changes still block.
@@ -278,6 +289,7 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
             await asyncio.sleep(0.3)
             html = await page.content()
             _, evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
+            args['wordToc'] = live_decorations(html, selector)
             facts = await page.evaluate(_FACTS, args)
             settle_samples += 1
             selected_stable = bool(not issue and evidence and first_evidence
