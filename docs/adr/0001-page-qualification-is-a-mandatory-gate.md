@@ -1,11 +1,5 @@
-# Page qualification is a mandatory deterministic gate
+# 来源资格设计提案（旧 ADR 路径）
 
-> Status (2026-10-10): design intent; audit actual entry-path coverage before claiming migration is complete. Current faculty scope and delivery requirements come from [CONSTITUTION.md](../../CONSTITUTION.md). Deterministic qualification is the current implementation route, not a user-imposed ban on evidence-based architecture improvement.
+状态：历史提案入口，未作为已定且全面落地的 ADR 维护。原方案拟统一各入口的页面用途与学院归属检查；接口和迁移设计见 [page-qualification](../architecture/page-qualification.md)，实际调用覆盖须以代码审查为准。
 
-Every GUI, CLI, discovery, search, Direct Lead, and imported legacy candidate path must pass the same deterministic Page Qualification before faculty extraction. Fast-track may prioritize source validation after acceptance, but does not replace the check for other faculty branches of the college; it never grants trust, old HIGH/100 values are not authority, and LLMs do not decide qualification. This deliberately trades some speed, legacy convenience, and edge recall for college-isolation safety, reproducibility, and auditability.
-
-## Considered Options
-
-- URL fast-track as automatic admission was rejected because URL tokens do not prove page purpose or College Attribution.
-- Numeric score thresholds were rejected as the canonical decision because their additive values are not calibrated probabilities and lose hard constraints.
-- LLM adjudication was rejected because qualification must remain deterministic, reproducible, and fixture-testable.
+当前业务范围统一见 [CONTEXT.md](../../CONTEXT.md)。给定 URL 不自动证明来源合格，具体技术方案可以在既有授权内基于证据改进。原文及其被放弃的选项保留在 Git 历史；本路径保留用于旧引用，不产生额外审批要求。

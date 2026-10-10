@@ -1,4 +1,4 @@
-# 目前只放工具配置；包元数据留给 P2-12（见 docs/review-backlog.md）。
+# 当前文件保存测试与 lint 配置；项目工作项统一见 docs/improvement-plan.md。
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -20,5 +20,5 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# 包内 sys.path 拼接之后才能导入；P2-12 改成正式包后去掉。
+# 当前包内 sys.path 拼接后才能导入；若调整导入结构，同时复核此例外。
 "Opus/__init__.py" = ["E402"]
