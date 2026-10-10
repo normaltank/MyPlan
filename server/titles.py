@@ -62,19 +62,57 @@ def resolve_title(header_text: str) -> str:
 
 
 @dataclass(frozen=True)
+class TitleField:
+    """One declared field; mentions within its value are not separate fields."""
+
+    raw_value: str
+    mentions: tuple[str, ...]
+    source_lines: tuple[int, int]
+    ambiguous: bool = False
+
+    @property
+    def value(self) -> str:
+        normalized = ' '.join(self.raw_value.split())
+        english = _ENGLISH_TITLES.get(normalized.lower())
+        if english:
+            return english
+        # Only a pure known title is canonicalized. Qualifiers and compound
+        # values remain verbatim rather than losing their field boundaries.
+        if normalized in TITLE_KEYWORDS:
+            return normalized
+        return self.raw_value
+
+    @property
+    def comparison_value(self) -> str:
+        return re.sub(r'\s+', '', self.value).casefold()
+
+
+@dataclass(frozen=True)
 class TitleSelection:
     title: str
     conflicts: tuple[str, ...] = ()
 
 
-def select_title(*, explicit: Iterable[str] = (), card_title: str = '教师',
+def select_title(*, explicit: Iterable[str] = (), explicit_fields: Iterable[TitleField] = (), card_title: str = '教师',
                  body_title: str = '教师') -> TitleSelection:
     """Explicit own-profile fields > specific roster title > first body mention.
 
     Multiple distinct explicit values require review; never pick one silently.
     Inputs are canonical titles extracted by the deterministic reader.
     """
-    fields = tuple(dict.fromkeys(value for value in explicit if value and value != '教师'))
+    legacy = tuple(explicit)
+    declared = tuple(explicit_fields)
+    if legacy and declared:
+        raise ValueError('use declared fields or legacy title values, not both')
+    if declared:
+        values = {}
+        for field in declared:
+            values.setdefault(field.comparison_value, field.value)
+        fields = tuple(values.values())
+        if any(field.ambiguous for field in declared):
+            return TitleSelection('教师', fields)
+    else:
+        fields = tuple(dict.fromkeys(value for value in legacy if value and value != '教师'))
     if len(fields) > 1:
         return TitleSelection('教师', fields)
     if fields:

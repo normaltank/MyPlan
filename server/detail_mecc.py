@@ -19,9 +19,9 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from server.dom_regions import is_noise_element
 
 try:
-    from server.titles import resolve_title, select_title, title_mentions
+    from server.titles import resolve_title, select_title, title_mentions, TitleField
 except ImportError:
-    from titles import resolve_title, select_title, title_mentions
+    from titles import resolve_title, select_title, title_mentions, TitleField
 
 _OPUS = str(Path(__file__).resolve().parent.parent / "Opus")
 if _OPUS not in sys.path:
@@ -292,27 +292,36 @@ def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
 _TITLE_FIELD_LINE = re.compile(r'^(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?:\s*[:：]\s*(.*)|\s*)$')
 
 
-def explicit_title_candidates(full_bio: str) -> Tuple[str, ...]:
+def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
     """Read complete labelled fields in the parser's physical text stream.
 
     Block boundaries also preserve a table's separate label/value cells as
     consecutive lines. Prose mentioning a title label mid-sentence is not a
     labelled field. The stream must already be scoped to this person's body.
     """
-    lines = [line.strip() for line in full_bio.splitlines() if line.strip()]
-    titles = []
-    for index, line in enumerate(lines):
+    lines = [(index + 1, line.strip()) for index, line in enumerate(full_bio.splitlines()) if line.strip()]
+    fields = []
+    for index, (line_number, line) in enumerate(lines):
         match = _TITLE_FIELD_LINE.fullmatch(line)
         if not match:
             continue
         value = match.group(1)
+        value_line = line_number
         if not value and index + 1 < len(lines):
-            value = lines[index + 1]
+            value_line, value = lines[index + 1]
             # A following labelled field is not this field's value.
             if re.match(r'^[^:：]+[:：]', value):
                 continue
-        titles.extend(title_mentions(value or ''))
-    return tuple(dict.fromkeys(titles))
+        mentions = title_mentions(value or '')
+        if mentions:
+            fields.append(TitleField((value or '').strip(), mentions,
+                (line_number, value_line), bool(re.search(r'[^\s:：]+[:：]', value or ''))))
+    return tuple(fields)
+
+
+def explicit_title_candidates(full_bio: str) -> Tuple[str, ...]:
+    """Legacy mention view for callers that inspect words, not field conflicts."""
+    return tuple(dict.fromkeys(title for field in explicit_title_fields(full_bio) for title in field.mentions))
 
 
 def _find_lca(nodes: List[Tag]) -> Optional[Tag]:
@@ -446,7 +455,7 @@ class DetailMECCExtractor:
             if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
         ]
 
-        title_choice = select_title(explicit=explicit_title_candidates(full_bio),
+        title_choice = select_title(explicit_fields=explicit_title_fields(full_bio),
                                     body_title=resolve_title(full_bio))
         title = title_choice.title
 
@@ -521,7 +530,7 @@ class DetailMECCExtractor:
                 if not em.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.css', '.js'))
             ]
 
-            title_choice = select_title(explicit=explicit_title_candidates(full_bio),
+            title_choice = select_title(explicit_fields=explicit_title_fields(full_bio),
                                         body_title=resolve_title(full_bio))
             title = title_choice.title
 

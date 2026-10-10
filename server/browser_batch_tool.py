@@ -916,7 +916,7 @@ def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_eviden
 
 def _enrich_extracted_records(pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
                               verified_profile_urls=()):
-    from server.detail_mecc import explicit_title_candidates
+    from server.detail_mecc import explicit_title_fields
     from server.titles import select_title
     unresolved = []
     for record in pipeline_records:
@@ -926,7 +926,7 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
         # The record's own article text, verbatim; an image-named record keeps
         # document order, so its resume text is placed before the text below it.
         record["简介"] = segment.segment.text if segment.name_source != "ocr" else ""
-        title_choice = select_title(explicit=explicit_title_candidates(segment.segment.text),
+        title_choice = select_title(explicit_fields=explicit_title_fields(segment.segment.text),
                                     card_title=record['职称'], body_title=segment.title)
         record['职称'] = title_choice.title
         if title_choice.conflicts:
@@ -946,7 +946,7 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
             segment = segment_records.get((record['主页'], record['姓名']))
             if segment is not None and segment.name_source == 'ocr' and segment.segment.text:
                 title_body += '\n\n' + segment.segment.text
-            title_choice = select_title(explicit=explicit_title_candidates(title_body),
+            title_choice = select_title(explicit_fields=explicit_title_fields(title_body),
                                         card_title=record['职称'], body_title=parsed_image.title)
             record['职称'] = title_choice.title
             if title_choice.conflicts:

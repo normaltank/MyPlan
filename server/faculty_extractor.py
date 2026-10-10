@@ -80,7 +80,7 @@ def _annotation_token(token: str, text: str) -> bool:
 # One definition of "this address spells this teacher" and of address reading
 # for every path (profile pages, shared pages, roster cards, OCR biographies).
 from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,  # noqa: E402,F401
-                                contact_email_candidates, labeled_text_emails, explicit_title_candidates,
+                                contact_email_candidates, labeled_text_emails, explicit_title_fields,
                                 mailto_address_conflicts, find_emails,
                                 is_institutional_email, is_personal_email_for_scholar)
 DETAIL_MECC_AVAILABLE = True
@@ -462,9 +462,9 @@ class FacultyDirectoryExtractor:
             # The title vocabulary only identifies a title standing in the name slot.
             if needs_review and (name in TITLE_KEYWORDS or not rare_surname_name(name)):
                 continue
-            title = select_title(explicit=explicit_title_candidates(card), card_title=title,
+            title = select_title(explicit_fields=explicit_title_fields(card), card_title=title,
                                  body_title=resolve_title(card)).title
-            if title == '教师' and not explicit_title_candidates(card):
+            if title == '教师' and not explicit_title_fields(card):
                 title = resolve_title(section)
             url = href or base_url
             node_key = href if href else id(head)
@@ -614,7 +614,7 @@ class FacultyDirectoryExtractor:
             context = LayoutAwareTokenizer.get_clean_text(card, preserve_content=True)
             for name, title, href in (list(linked_slots.values()) if len(linked_slots) > 1 else [slot]):
                 href = href or first_href([name_scope], base_url)
-                title = select_title(explicit=explicit_title_candidates(context), card_title=title,
+                title = select_title(explicit_fields=explicit_title_fields(context), card_title=title,
                                      body_title=resolve_title(context)).title
                 reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'
                 # A rare surname standing in a column the table itself labels
@@ -805,9 +805,9 @@ class FacultyDirectoryExtractor:
                 block_title_el = parent_block.find(class_=re.compile(r'title|heading|caption', re.I)) if parent_block else None
                 block_title = block_title_el.get_text(strip=True) if block_title_el else ""
                 context_text = card_text
-                matched_title = select_title(explicit=explicit_title_candidates(card_text),
+                matched_title = select_title(explicit_fields=explicit_title_fields(card_text),
                                              body_title=resolve_title(card_text)).title
-                if matched_title == '教师' and not explicit_title_candidates(card_text):
+                if matched_title == '教师' and not explicit_title_fields(card_text):
                     matched_title = resolve_title(block_title)
                 contact_conflicts = mailto_address_conflicts(item['card']) if item['card'] is not None else ()
 
@@ -923,7 +923,7 @@ class FacultyProfileExtractor:
             if h1:
                 name = re.sub(r'\s+', '', h1.get_text(strip=True))
 
-        title = select_title(explicit=explicit_title_candidates(full_bio),
+        title = select_title(explicit_fields=explicit_title_fields(full_bio),
                              body_title=resolve_title(full_bio)).title
 
         return FacultyProfile(
@@ -1038,8 +1038,8 @@ class FacultyHarvestPipeline:
             card_text = card_texts[id(cand)]
             card_emails = card_addresses[id(cand)]
 
-            title_choice = select_title(explicit=(explicit_title_candidates(card_text)
-                                                  or explicit_title_candidates(cand.card_context)),
+            title_choice = select_title(explicit_fields=(explicit_title_fields(card_text)
+                                                  or explicit_title_fields(cand.card_context)),
                                         card_title=cand.title, body_title=resolve_title(card_text))
             matched_title = title_choice.title
             if title_choice.conflicts:
@@ -1428,8 +1428,8 @@ class FacultyHarvestPipeline:
                     assigned_emails.discard(email.lower())
                     email = ''
                 bio = prof.full_bio if prof else ""
-                title_choice = select_title(explicit=(explicit_title_candidates(bio)
-                                                      or explicit_title_candidates(cand.card_context)),
+                title_choice = select_title(explicit_fields=(explicit_title_fields(bio)
+                                                      or explicit_title_fields(cand.card_context)),
                                             card_title=cand.title, body_title=prof.title if prof else '教师')
                 title = title_choice.title
                 if title_choice.conflicts:
