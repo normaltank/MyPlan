@@ -170,9 +170,9 @@ async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
             return [{**proof, 'reason': 'pager_state_changed'}]
         activity = tracker.activity
         await asyncio.sleep(0.3)
+        stable_facts = await page.evaluate(FACTS, card_selector)
         stable_html = await page.content()
         stable = (scope_digest(stable_html, card_selector), scope_digest(stable_html, before['pager_selector']))
-        stable_facts = await page.evaluate(FACTS, card_selector)
         if (popups or page.url != before['url'] or tracker.script_errors or tracker.pending
                 or tracker.failures != failures or tracker.activity != activity
                 or tracker.failed_requests != failure_set or tracker.document_response is not document

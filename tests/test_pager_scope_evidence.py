@@ -95,7 +95,7 @@ def test_one_media_carousel_is_not_a_roster_pager():
 
 
 @pytest.mark.parametrize('reload_status', [404, 503])
-@pytest.mark.parametrize('reload_during_final', [False, True])
+@pytest.mark.parametrize('reload_during_final', [False, True, 'source_change'])
 @pytest.mark.asyncio
 @pytest.mark.browser
 async def test_same_url_reload_cannot_reuse_previous_document_controller(reload_status, reload_during_final):
@@ -131,11 +131,14 @@ async def test_same_url_reload_cannot_reuse_previous_document_controller(reload_
                     if expression == FACTS:
                         fact_calls += 1
                         if fact_calls == 3:
-                            await page.reload(wait_until='networkidle')
+                            if reload_during_final == 'source_change':
+                                await original_evaluate("document.querySelector('#wp_news_w7 li').textContent='赵强'")
+                            else:
+                                await page.reload(wait_until='networkidle')
                     return await original_evaluate(expression, arg)
                 page.evaluate = evaluate
             [proof] = await terminal_pagers(page, SELECTOR)
-            assert documents == 2
+            assert documents == (1 if reload_during_final == 'source_change' else 2)
             assert not proof['confirmed']
             assert proof['reason'] == ('pager_not_stable' if reload_during_final else 'pager_state_changed')
         finally:

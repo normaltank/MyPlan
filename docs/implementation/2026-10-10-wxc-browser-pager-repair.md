@@ -12,7 +12,7 @@
 
 ## 验证
 
-- 相关 transport、配置隔离及分页回归：46 passed。
+- 相关 transport、配置隔离及分页回归：48 passed。
 - 末轮异步取证完成后统一同步判断来源、文档及失败集合；最终 FACTS 取证中发生重导航也阻断。
 - 两个独立审查反例已关闭：探测新增 fetch 404/503 阻断；同 URL reload、脚本由 404 变 503 或保持 404 均阻断。
 - 真实后台浏览器：`https://zfxy.wxc.edu.cn/327/list.htm` HTTP 200、5 卡、两个脚本 404 保留，单页证明通过。保存诊断在开发工作树 `.planning/law-controller-check/result.json`。

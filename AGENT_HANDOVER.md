@@ -5,7 +5,7 @@
 - `server.local_service_config.browser_proxy_options` 读取显式浏览器代理配置；生产 `new_browser_context` 统一使用，离线回放与调用方显式代理不覆盖。API 的 HTTP(S)_PROXY 与浏览器传输分开；不修改系统代理或证书验证。配置与限制见 [运维手册](docs/operations.md)。
 - `server.pager_evidence` 对永久失效的脚本/样式保留失败证据；仅服务器原始名单/组件与当前 DOM 一致、四个导航控件均为发布方单页空导航、绑定跳转控件实际响应两个不同非法输入并恢复后，才允许继续原有终页证明。无控制器、暂时错误、图片/数据请求失败、脚本异常、弹窗或 DOM 变化继续阻断。没有按脚本文件名放行。
 - 皖西官网本轮 HTTP 200、5 卡、单页证明通过；这只是该分支实网诊断，不等于原工单或全院已验收。原 PR #47/#48 已合并并应用本地；本次新增行为须经测试/审查后再加载到运行服务。
-- 证明固定主文档身份与交互前的失败集合，同 URL reload 不继承旧证明；最终异步取证完成后才统一判断。46 项相关回归通过；范围和待验收项见 [修复记录](docs/implementation/2026-10-10-wxc-browser-pager-repair.md)。
+- 证明固定主文档身份与交互前的失败集合，同 URL reload 不继承旧证明；最终异步取证完成后才统一判断。48 项相关回归通过，Standards/Spec 复核通过；范围和待验收项见 [修复记录](docs/implementation/2026-10-10-wxc-browser-pager-repair.md)。
 
 ## 2026-10-10 · 姓名网格与分页证据增补（PR #48 已合并并在本机加载）
 
