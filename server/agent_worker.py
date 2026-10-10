@@ -426,6 +426,7 @@ class AgentWorker:
 
         def save_runtime(result):
             from server.harvest_runtime_report import build_runtime_report
+            result['recovery'] = classify_issues(result.get('unresolved') or []).summary()
             result["runtime_report"] = build_runtime_report(attempts, browser_runs,
                 result.get("unresolved") or [], time.monotonic() - started, budget.snapshot())
             (output_dir / "runtime-report.json").write_text(json.dumps(
