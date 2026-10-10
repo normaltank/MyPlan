@@ -1,40 +1,28 @@
-# 高校二级学院师资采集平台
+# MyPlan · 高校学院师资采集
 
-> 前台同事提交学院工单，后台智能体接单采集，按大学交付标准双 Sheet Excel。
+输入大学、学院、学院链接及可选师资链接，采集可核验的官方师资信息，按大学汇总。
 
-> 修改项目前先读 [项目宪法 CONSTITUTION.md](CONSTITUTION.md)：稳定目标、模型与数据边界、交付标准及改动权限的唯一权威文本。具体智能体作业见 [AGENTS.md](AGENTS.md)。
+> 工作指导已按用户 2026-10-10 的重新说明更新。所有 agent 从 [AGENTS.md](AGENTS.md) 开始；需求见 [CONSTITUTION.md](CONSTITUTION.md)。旧 Markdown 未经用户审核，历史记录不能覆盖最新要求。
 
-> 开发状态（2026-09-30）：已合并远端采集内核、邮箱证据、侦察提速与师资链接输入改动，审核问题已修复。当前验证与服务状态见 [本地同步审核](docs/audits/2026-09-30-git-sync-review.md)；代码同步不代表服务已部署。
+## 当前目标与状态
 
-同事在本地网页提交一个或一批学院，每个学院附官网入口 URL。后台常驻 worker 逐学院认领工单：先由大模型在真实浏览器里侦察官网结构，只产出由 URL 和 CSS 选择器组成的采集计划；再由确定性代码用浏览器访问名录和个人主页，提取十列数据并审计覆盖。审计通过的学院按大学汇总为 `server/outputs/<大学名称>.xlsx`，在网页上下载。
+采集学院官网正式师资，包括兼职、外聘等；输出姓名、职称、邮箱、大学、学院、个人主页与完整简介，官网缺失字段如实留空。给定师资链接是优先入口，仍检查其他师资分支；只有前三列时需另交四列入口映射表。
 
-## 工作流程
+同大学经证据确认是同一人时合并学院关联。已确认记录可部分交付并标明缺失范围；身份或字段归属不清的记录单列待核，不能把部分结果称为全院采齐。人工可以确认无师资，自动零采集和技术失败不能代替人工判定。
 
-```
-网页前台  server/app.py（http://127.0.0.1:8000）
-   │ 提交学院工单
-   ▼
-任务队列  server/tasks.db（SQLite，带租约）
-   │ 常驻 worker 认领，所有学院同时开工（server/agent_worker.py）
-   ▼
-侦察      server/agent_recon.py —— 全项目唯一调用大模型的地方
-   │ DeepSeek Harness + 真实浏览器；只输出 URL 与 CSS 选择器
-   ▼
-采集与审计  server/browser_batch_tool.py · harvest_workflow.py · faculty_extractor.py
-   │ 浏览器翻页、访问个人页、提取正文全文、卡片对账、覆盖账本
-   ▼
-交付      按大学汇总双 Sheet Excel，网页下载
-```
+用户反馈多个学院仍失败，尚不能开始常规业务运行。当前先统一文档，再并行进行完整代码质量审查与采集泛化验证；服务器部署、来源表治理和邮件／飞书通知后续处理。具体见 [改进计划](docs/improvement-plan.md)。
 
-## 三条红线
+上述是业务目标，当前实现仍有差距。三列入口表、可信部分交付、完整复核恢复等能力须分别查证；已存在模块及待核点见 [当前交接](AGENT_HANDOVER.md)。确定性解析、人数守恒或自动测试通过都不能单独证明采集准确且完整。
 
-1. **模型只做结构侦察**：计划里只允许 URL 与 CSS 选择器；姓名、职称、邮箱、简介一律由确定性代码从页面提取。
-2. **不写关键词黑名单，不用 AI 总结简介**：靠 DOM 结构聚类和正文容器定位去噪，简介保留原文全文。职称词表、姓氏先验只用来识别字段，不用来删改页面内容。
-3. **双 Sheet 守恒**：工作表 `教师列表`（有邮箱）+ `无邮箱教师列表` = 该大学已采集的专任教师总数；两表 10 列相同、行互斥。这只证明分表正确；有没有漏人，要看覆盖账本对名录分支、翻页终点和卡片数的核对。
+## 当前工程路线
 
-完整条文见 [AGENTS.md](AGENTS.md)，算法术语见 [CONTEXT.md](CONTEXT.md)。
+服务器 worker 组织结构侦察、浏览器访问、确定性解析／本地 OCR、证据审计、人工复核与大学汇总。现有计划仍只传递允许的结构字段，完整原文和来源由采集链路保存。技术路线可以基于代码与样本证据改进，不以旧文档中的架构“红线”阻止审查。
 
-## 快速开始（Windows 本机）
+现有 Excel 使用“教师列表”和“无邮箱教师列表”两个工作表及十列兼容格式。分表互斥和人数相加只证明输出集合内部一致，师资来源、人员身份和全院完整性仍需独立核验。
+
+## 现有本机运行方式（参考）
+
+当前阶段不以部署为前置工作。实际运行、更新或重启时核对本机配置和任务状态；以下保留已有操作入口。
 
 1. 双击 `双击启动局域网服务.bat`：启动后台接单 worker 和网页，然后打开 http://127.0.0.1:8000 。
 2. 第一次启动会要求输入 DeepSeek API Key。它用当前 Windows 账号加密保存在 `.runtime/`，以后不用再输。
@@ -48,7 +36,7 @@
 - **提交**：单个或批量学院，每个学院都要填学院主页；批量可加第四列师资链接（同一学院多行合并）；一次最多 30 个学院。格式见[运维手册](docs/operations.md#2026-09-30-批量输入token-与准确性核对)。
 - **进度**：网页右侧显示本浏览器当前的请求；旧批次在“历史工单”里查看。
 - **被挡住的工单**：提示“人工复核”时，对照原图或名录页确认或改正（图片文字、邮箱归属、生僻姓氏的人名），再点“重新采集此工单”。
-- **下载**：一所大学的目标学院全部通过审计后，生成该大学的交付表。
+- **下载**：当前实现主要在目标学院通过审计后生成大学交付表。新目标允许已确认记录部分交付并标明缺失范围，这部分状态、导出和恢复行为仍须逐项核对，不能把文档更新当作已实现。
 
 ## 页面类型
 
@@ -60,7 +48,8 @@
 | 目录型名录 | `kind: "navigation"` | 入口页链接到多张同构名录（系所、科室） |
 | 严格空名录 | `empty_state_selector` + `roster_container_selector` | 官网明确显示暂无人员 |
 | 逐人图片名录 | `card_selector` 只命中原图 | 名单是文字，每人简介是一张图，本地 OCR |
-| 海报名录 | `poster_reviews` + 人工核对人数 | 一张图里有多人（IDE 路径） |
+| 整图表格名录 | `kind: "image_table"` | 格线表格由本地 OCR 与逐格复核处理 |
+| 其他多人海报 | 保留原图和未解决项 | 需有可核实的分人／字段机制，不使用模型在计划中录入姓名 |
 | 分段平铺名录 | `kind: "segmented"` | 一篇正文里平铺多人，或姓名只写在简历图里 |
 
 ## 开发与测试
@@ -88,7 +77,7 @@ uv run --no-project --with-requirements requirements-dev.lock --python 3.12 ruff
 | 路径 | 内容 |
 | :--- | :--- |
 | `server/` | 网页、队列、worker、侦察、采集、审计与 Excel 导出 |
-| `server/recon_discovery.md`、`server/recon_instructions.md` | 两个侦察阶段的指令，由代码直接读取 |
+| `server/recon_discovery.md`、`server/recon_provided_links.md`、`server/recon_instructions.md` | 入口发现、给定链接补充及分支核实指令，由代码直接读取 |
 | `server/templates/` | 网页的主页、填姓名页与共用样式 `base.css`（静态文件，改后刷新即生效；不依赖外部 CDN） |
 | `Opus/` | 名录挖掘、邮箱匹配等算法层 |
 | `tests/` | 自动化测试 |
@@ -99,13 +88,16 @@ uv run --no-project --with-requirements requirements-dev.lock --python 3.12 ruff
 ## 文档导航
 
 - [运维手册](docs/operations.md)：启动与重启、同事访问、复核、worker 参数、资源与用量保护、测试记录、手工采集
-- [AGENTS.md](AGENTS.md)：红线与智能体派发规则
-- [AGENT_HANDOVER.md](AGENT_HANDOVER.md)：交接文档、业务规则与系统状态
+- [AGENTS.md](AGENTS.md)：所有 agent 的当前工作入口
+- [项目目标](CONSTITUTION.md)：用户重新确认的采集、核验和交付要求
+- [改进计划](docs/improvement-plan.md)：代码审查、历史回归和新学院验证
+- [文档导航](docs/README.md)：活跃文档与历史材料的边界
+- [AGENT_HANDOVER.md](AGENT_HANDOVER.md)：已有模块、需求差距和本轮核对范围
 - [CONTEXT.md](CONTEXT.md)：领域术语与页面类型定义
 - [可验证运行流程](docs/architecture/verifiable-harvest-runtime.md)：恢复、缓存、补缺与交付条件
 - [学院采集通用编排接口](docs/architecture/college-harvest-workflow.md)
 - 架构决策：[ADR 0002](docs/adr/0002-two-tier-hybrid-harvesting-and-reconciliation.md)、[ADR 0003](docs/adr/0003-cs-principled-deep-module-extraction.md)
-- [服务器端 Agent 运行时接入计划](docs/superpowers/plans/2026-09-24-server-agent-runtime.md)
+- 历史设计：[服务器端 Agent 运行时接入计划](docs/superpowers/plans/2026-09-24-server-agent-runtime.md)
 - 审计记录：[docs/audits/](docs/audits/)
 - [CHANGELOG.md](CHANGELOG.md)：按日期的变更记录
 - [审阅待办](docs/review-backlog.md)：尚未完成的改进项及顺序

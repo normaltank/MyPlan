@@ -1,3 +1,5 @@
+> 历史资料（2026-10-10 标记）：本文保留当时的方案、观察与验证记录，不作为当前工作指令、用户授权或能力验收。现行要求见 [项目目标](../../CONSTITUTION.md)，当前执行见 [改进计划](../improvement-plan.md)；使用原结论前核对代码版本、样本与原始证据。
+
 # 生产采集调用链审查（2026-10-01）
 
 - 审查提交：`main` `dbfdfb9e7b030d1ebd5493eec19e0b30c4b572a2`（Record synchronized baseline and Claude project assignments）。任务 A 合并后（`a25084c`）在新 `main` 上重跑了全部复现，结论不变；下文行号以 `a25084c` 为准。

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -75,6 +76,193 @@ def test_separate_processes_share_one_pace(clock):
     turns = sorted(float(value) for proc in procs for value in proc.communicate(timeout=60)[0].split())
     assert len(turns) == 6
     assert all(later - earlier >= 0.999 for earlier, later in zip(turns, turns[1:]))
+
+
+def test_runtime_admissions_share_one_pace_across_processes(clock, monkeypatch):
+    """Exercise real sync and async admissions, not only future reservations."""
+    monkeypatch.setenv("HARVEST_PER_SITE_INTERVAL_SECONDS", "0.15")
+    script = (
+        "import asyncio,sys,time; from server.site_limits import site_turn,wait_site_turn\n"
+        "async def main():\n"
+        " starts=[]\n"
+        " for _ in range(3):\n"
+        "  if sys.argv[1]=='async': await site_turn('https://a.z.edu.cn/')\n"
+        "  else: wait_site_turn('https://a.z.edu.cn/')\n"
+        "  starts.append(time.monotonic())\n"
+        " print(' '.join(str(value) for value in starts))\n"
+        "asyncio.run(main())\n")
+    procs = [subprocess.Popen([sys.executable, "-c", script, mode], stdout=subprocess.PIPE, text=True,
+                              cwd=Path(__file__).resolve().parents[1]) for mode in ("async", "sync")]
+    starts = []
+    for proc in procs:
+        starts.extend(float(value) for value in proc.communicate(timeout=15)[0].split())
+        assert proc.returncode == 0
+    starts.sort()
+    assert len(starts) == 6
+    assert all(later - earlier >= 0.145 for earlier, later in zip(starts, starts[1:]))
+
+
+class _RuntimeClock:
+    """Control scheduling without changing asyncio's own monotonic clock."""
+
+    def __init__(self):
+        self.wall = 1000.0
+        self.elapsed = 0.0
+
+    def time(self):
+        return self.wall
+
+    def monotonic(self):
+        return self.elapsed
+
+    def sleep(self, seconds):
+        self.wall += seconds
+        self.elapsed += seconds
+
+    async def asleep(self, seconds):
+        self.sleep(seconds)
+        await asyncio.sleep(0)
+
+
+@pytest.fixture
+def runtime_clock(monkeypatch):
+    controlled = _RuntimeClock()
+
+    async def in_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(site_limits, "time", controlled)
+    monkeypatch.setattr(site_limits, "asyncio", SimpleNamespace(to_thread=in_thread, sleep=controlled.asleep))
+    return controlled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rollback_wall", [False, True])
+async def test_late_thread_result_cannot_bunch_runtime_admissions(clock, runtime_clock, monkeypatch,
+                                                               rollback_wall):
+    """A delayed earlier caller must not use its stale turn after another caller."""
+    monkeypatch.setenv("HARVEST_PER_SITE_INTERVAL_SECONDS", "0.2")
+    issued, resume = asyncio.Event(), asyncio.Event()
+    first = True
+
+    async def delayed_thread(function, *args, **kwargs):
+        nonlocal first
+        result = function(*args, **kwargs)
+        if first:
+            first = False
+            issued.set()
+            await resume.wait()
+        return result
+
+    monkeypatch.setattr(site_limits.asyncio, "to_thread", delayed_thread)
+    late = asyncio.create_task(site_limits.site_turn("https://cs.x.edu.cn/first"))
+    await issued.wait()
+    runtime_clock.sleep(0.4)
+    await site_limits.site_turn("https://cs.x.edu.cn/second")
+    earlier_release = runtime_clock.monotonic()
+    if rollback_wall:
+        runtime_clock.wall -= 10  # must not revive an old admission window
+    resume.set()
+    await late
+    assert runtime_clock.monotonic() - earlier_release >= 0.199
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paced", [False, True])
+async def test_runtime_rechecks_freeze_extended_while_sleeping(clock, runtime_clock, monkeypatch, paced):
+    monkeypatch.setattr(site_limits, "FREEZE_BOUNDS", (0.1, 10))
+    url = "https://cs.x.edu.cn/profile.htm"
+    until = freeze_site(url, 0.2, "initial")
+    extended = False
+
+    async def extend_during_sleep(delay):
+        nonlocal until, extended
+        runtime_clock.sleep(delay)
+        if not extended:
+            extended = True
+            until = freeze_site("https://law.x.edu.cn/", 0.4, "extended while waiting")
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(site_limits.asyncio, "sleep", extend_during_sleep)
+    await site_limits.site_turn(url, paced=paced)
+    assert runtime_clock.time() >= until
+
+
+def test_sync_runtime_rechecks_freeze_extended_while_sleeping(clock, runtime_clock, monkeypatch):
+    monkeypatch.setattr(site_limits, "FREEZE_BOUNDS", (0.1, 10))
+    url = "https://cs.x.edu.cn/profile.htm"
+    until = freeze_site(url, 0.2, "initial")
+    original_sleep = runtime_clock.sleep
+    extended = False
+
+    def extend_during_sleep(delay):
+        nonlocal until, extended
+        original_sleep(delay)
+        if not extended:
+            extended = True
+            until = freeze_site("https://law.x.edu.cn/", 0.4, "extended while waiting")
+
+    monkeypatch.setattr(runtime_clock, "sleep", extend_during_sleep)
+    site_limits.wait_site_turn(url)
+    assert runtime_clock.time() >= until
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paced", [False, True])
+async def test_delayed_unpaced_decision_rechecks_new_freeze(clock, runtime_clock, monkeypatch, paced):
+    """Even with no configured pace, a stalled decision must not bypass a new freeze."""
+    monkeypatch.setattr(site_limits, "FREEZE_BOUNDS", (0.1, 10))
+    url = "https://cs.x.edu.cn/profile.htm"
+    until = 0.0
+    first = True
+
+    async def delayed_thread(function, *args, **kwargs):
+        nonlocal first, until
+        result = function(*args, **kwargs)
+        if first:
+            first = False
+            runtime_clock.sleep(0.2)
+            until = freeze_site("https://law.x.edu.cn/", 0.4, "new freeze before handoff")
+        return result
+
+    monkeypatch.setattr(site_limits.asyncio, "to_thread", delayed_thread)
+    await site_limits.site_turn(url, paced=paced)
+    assert runtime_clock.time() >= until
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paced", [False, True])
+async def test_runtime_keeps_unpaced_requests_immediate(clock, runtime_clock, monkeypatch, paced):
+    # Media ignore a configured page pace; ordinary pages retain the default of no pace.
+    monkeypatch.setenv("HARVEST_PER_SITE_INTERVAL_SECONDS", "0" if paced else "0.4")
+    for _ in range(3):
+        await site_limits.site_turn("https://cs.x.edu.cn/resource", paced=paced)
+    assert runtime_clock.monotonic() == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_handoff_does_not_block_later_admissions(clock, runtime_clock, monkeypatch):
+    monkeypatch.setenv("HARVEST_PER_SITE_INTERVAL_SECONDS", "0.2")
+    issued = asyncio.Event()
+    first = True
+
+    async def cancelled_thread(function, *args, **kwargs):
+        nonlocal first
+        result = function(*args, **kwargs)
+        if first:
+            first = False
+            issued.set()
+            await asyncio.Event().wait()
+        return result
+
+    monkeypatch.setattr(site_limits.asyncio, "to_thread", cancelled_thread)
+    pending = asyncio.create_task(site_limits.site_turn("https://cs.x.edu.cn/cancelled"))
+    await issued.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    await asyncio.wait_for(site_limits.site_turn("https://cs.x.edu.cn/next"), timeout=1)
+    assert runtime_clock.monotonic() < 1  # at most a bounded unused slot, never a held lease
 
 
 def test_freeze_holds_every_start_until_it_ends(clock):

@@ -1,14 +1,7 @@
-# Domain Docs
+# 领域文档入口
 
-Read the root `CONTEXT.md` and relevant records under `docs/adr/` before exploring or changing domain behavior.
+先读根目录 [项目目标](../../CONSTITUTION.md) 与 [AGENTS.md](../../AGENTS.md)，术语见 [CONTEXT.md](../../CONTEXT.md)，当前工作见 [改进计划](../improvement-plan.md)。
 
-This repository uses a single context:
+用户已授权更新未经审核的旧 Markdown。ADR 和历史方案用于理解设计理由，不覆盖用户最新需求；其中的实现状态需要代码和证据核对。
 
-```text
-/
-├── CONTEXT.md
-└── docs/
-    └── adr/
-```
-
-Use the glossary's canonical terms in plans, tickets, tests, and code. If a required concept is missing, use `domain-modeling` to sharpen it. Surface any conflict with an ADR explicitly.
+计划、测试和实现使用一致的来源、身份、完整性及交付术语。新增概念应先检查是否已有同义规则，避免每个 agent 再创建一套状态或判据。

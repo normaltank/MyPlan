@@ -1,3 +1,5 @@
+> 历史资料（2026-10-10 标记）：本文保留当时的方案、观察与验证记录，不作为当前工作指令、用户授权或能力验收。现行要求见 [项目目标](../../../CONSTITUTION.md)，当前执行见 [改进计划](../../improvement-plan.md)；使用原结论前核对代码版本、样本与原始证据。
+
 # 学院采集可靠性加固 Implementation Plan
 
 > For agentic workers: implement task by task in this session. This workspace has no Git metadata, so commit steps do not apply.
