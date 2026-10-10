@@ -240,6 +240,14 @@ def scan_media(data: bytes, kind: str, *, ocr_engine=None) -> dict:
             "text": "\n\n".join(page["text"] for page in pages), "pages": pages}
 
 
+class BrowserAssetError(ValueError):
+    """A browser-observed permanent HTTP failure, with a typed status."""
+    def __init__(self, status: int, url: str):
+        super().__init__(f'media HTTP {status}')
+        self.status = status
+        self.url = url
+
+
 async def fetch_browser_asset(browser_context, url: str) -> bytes:
     """Read a DOM-observed resource with the browser session and bounded retry."""
     for attempt in range(3):
@@ -248,7 +256,7 @@ async def fetch_browser_asset(browser_context, url: str) -> bytes:
             if not response.ok:
                 status = response.status
                 if status != 429 and status < 500:
-                    raise ValueError(f"media HTTP {status}")
+                    raise BrowserAssetError(status,url)
                 raise RuntimeError(f"media HTTP {status}")
             return await response.body()
         except ValueError:
@@ -281,6 +289,9 @@ async def audit_profile_media(
     media_kind_decisions_path: str | Path | None = None,
     cache_dir: str | Path | None = None,
     unpublished_media: dict[str, set[str]] | None = None,
+    missing_media_evidence: dict[str, list[dict]] | None = None,
+    profile_source_html: dict[str, str] | None = None,
+    profile_source_urls: dict[str, str] | None = None,
     asset_size: Callable[[str], Awaitable[int | None]] | None = None,
 ) -> dict:
     """Retain original assets, transcribe locally, and resolve only unique owners.
@@ -291,7 +302,7 @@ async def audit_profile_media(
     gone on two opens with no room on the page; nothing was shown there to read.
     ``asset_size`` reads a size the server declares; an image declared over
     ``MAX_PROFILE_IMAGE_BYTES`` is listed in ``oversized_media`` unread. A
-    profile whose only content is such an image still fails the image-only check.
+    capped image also stays unresolved: size cannot prove its role or content.
     """
     out = Path(output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -301,6 +312,7 @@ async def audit_profile_media(
     evidence: list[dict] = []
     skipped: list[dict] = []
     oversized: list[dict] = []
+    missing_records: list[dict] = []
     shared_ocr_engine = ocr_engine
 
     def read_cache(path: Path, digest: str, kind: str) -> dict | None:
@@ -333,7 +345,8 @@ async def audit_profile_media(
         for anchor in without_links.select("a"):
             anchor.decompose()
         has_substantial_dom_body = len(without_links.get_text(" ", strip=True)) >= 300
-        for ref in media_references(scoped_html, profile_url):
+        source_url = (profile_source_urls or {}).get(profile_url, profile_url)
+        for ref in media_references(scoped_html, source_url):
             if ref.kind == "pdf" and ref.linked and has_substantial_dom_body:
                 continue
             if ref.kind == "image" and ref.url in (unpublished_media or {}).get(profile_url, ()):
@@ -345,9 +358,14 @@ async def audit_profile_media(
                 if declared is not None and declared > MAX_PROFILE_IMAGE_BYTES:
                     oversized.append({"profile_url": profile_url, "media_url": ref.url,
                                       "status": "image_over_size_cap", "declared_bytes": declared})
+                    unresolved.append({'profile_url':profile_url,'media_url':ref.url,'kind':ref.kind,
+                        'status':'image_bio_asset_failed','reason':'declared_media_exceeds_size_cap',
+                        'declared_bytes':declared})
                     continue
             source = {"profile_url": profile_url, "media_url": ref.url,
                       "kind": ref.kind, "position": ref.position}
+            missing = next((item for item in (missing_media_evidence or {}).get(profile_url,[])
+                            if item['media_url'] == ref.url), None) if ref.kind == 'image' else None
             try:
                 original = await fetch_asset(ref.url)
                 if len(original) > 50_000_000:
@@ -384,6 +402,26 @@ async def audit_profile_media(
                         finally:
                             temporary.unlink(missing_ok=True)
             except Exception as exc:
+                if (missing is not None and isinstance(exc, BrowserAssetError)
+                        and exc.status == missing['http_status'] and exc.url == ref.url
+                        and missing.get('missing_on_two_opens') is True):
+                    from server import missing_media_review
+                    # Only the browser's repeated 404/410 observation may enter
+                    # this review; an arbitrary download exception cannot create it.
+                    from server.missing_media_review import prepare_item
+                    fresh = prepare_item((profile_source_html or {}).get(profile_url,html),missing['profile_url'],missing['profile_content_selector'],
+                        missing['profile_content_start_selector'],ref.url,missing['http_status'],
+                        requested_profile_url=profile_url)
+                    if fresh is not None and fresh['id'] == missing['id']:
+                        path = Path(media_kind_decisions_path) if media_kind_decisions_path else None
+                        missing_records.append(dict(missing))
+                        if missing_media_review.confirmed(path,missing):
+                            skipped.append({**source,'status':'image_missing_photo_human_reviewed',
+                                            'evidence_id':missing['id'],'evidence_basis':missing['evidence_basis']})
+                        else:
+                            unresolved.append({**source,'status':missing_media_review.STATUS,
+                                               'evidence_id':missing['id']})
+                        continue
                 unresolved.append({**source, "status": "image_bio_asset_failed",
                                    "error": f"{type(exc).__name__}: {exc}"})
                 continue
@@ -493,4 +531,4 @@ async def audit_profile_media(
     assigned = {key: "\n\n".join(parts) for key, parts in assigned_parts.items()}
     return {"biographies": biographies, "assigned_biographies": assigned,
             "unresolved": unresolved, "evidence": evidence, "unpublished_media": skipped,
-            "oversized_media": oversized}
+            "oversized_media": oversized, "missing_media_evidence": missing_records}

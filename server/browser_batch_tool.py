@@ -1283,6 +1283,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     ocr_cache_dir = _ocr_cache_dir(out)
     media_audit = await audit_profile_media(
         media_pages, media_owners, snapshot_dir / "profile_media",
+        profile_source_html=profile_html,
+        profile_source_urls={url: proof.get('url',url) for url,proof in profile_live_evidence.items()},
         fetch_asset=fetch_original_media, scoped_urls=set(profile_scope_evidence) | segment_media_urls,
         known_names={candidate.name for candidate in candidates},
         review_decisions_path=out / "image_bio_reviews.json",
@@ -1290,7 +1292,13 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         cache_dir=ocr_cache_dir, asset_size=declared_media_size,
         unpublished_media={url: set((evidence.get("profile_content_browser_evidence") or {})
                                     .get("unpublished_images") or ())
-                           for url, evidence in profile_scope_evidence.items()})
+                           for url, evidence in profile_scope_evidence.items()},
+        missing_media_evidence={url: (evidence.get('profile_content_browser_evidence') or {})
+                                    .get('missing_content_images',[])
+                               for url,evidence in profile_scope_evidence.items()})
+    profile_snapshots = {item['url']:item['path'] for item in snapshots if item['kind'] == 'profile'}
+    for item in media_audit['missing_media_evidence']:
+        item['snapshot_path'] = profile_snapshots[item['requested_profile_url']]
     unresolved.extend(media_audit["unresolved"])
     for url, scope_evidence in profile_scope_evidence.items():
         if not scope_evidence["image_only_candidate"]:
@@ -1473,6 +1481,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "oversized_media": media_audit["oversized_media"],
         "segment_name_evidence": segment_naming["evidence"] + pdf_reading["name_evidence"],
         "pdf_roster_evidence": pdf_reading["evidence"],
+        "missing_profile_media_evidence": media_audit['missing_media_evidence'],
         "image_table_evidence": table_reading["evidence"],
         "image_table_reviews_sha256": hashlib.sha256((out / "image_table_reviews.json").read_bytes()).hexdigest()
                                       if (out / "image_table_reviews.json").is_file() else None,

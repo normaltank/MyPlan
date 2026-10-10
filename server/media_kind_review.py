@@ -13,6 +13,7 @@ from pathlib import Path
 import time
 
 from server import review_store
+from server import missing_media_review
 
 DECISIONS_FILE = "media_kind_reviews.json"
 STATUS = "image_bio_ocr_incomplete"
@@ -81,11 +82,14 @@ def collect_items(audit_path: Path) -> list[dict]:
             "saved_verdict": saved.get(identifier, {}).get("verdict", "")}
     if {(item["profile_url"], item["media_url"]) for item in items.values()} != flagged:
         raise ValueError("media review original missing")
-    return list(items.values())
+    return list(items.values()) + missing_media_review.collect_items(audit_path)
 
 
 def save_decision(path: Path, item: dict, verdict: str, reviewed_by: int) -> None:
     """item names one verified original: profile_url, media_url, source_sha256 (its id is recomputed)."""
+    if item.get('evidence_basis') == missing_media_review.BASIS:
+        missing_media_review.save_decision(path,item,verdict,reviewed_by)
+        return
     if verdict not in {PHOTO, IRRELEVANT, UNREADABLE} or type(reviewed_by) is not int or reviewed_by <= 0:
         raise ValueError("invalid media kind decision")
     if not all(isinstance(item.get(key), str) and item[key] for key in ("profile_url", "media_url", "source_sha256")):
@@ -98,10 +102,12 @@ def save_decision(path: Path, item: dict, verdict: str, reviewed_by: int) -> Non
 
 def review_complete(audit_path: Path, items: list[dict]) -> bool:
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    missing = [item for item in items if item.get('evidence_basis') == missing_media_review.BASIS]
+    items = [item for item in items if item.get('evidence_basis') != missing_media_review.BASIS]
     flagged = [item for item in audit.get("unresolved", []) if item.get("status") == STATUS]
     if any(item.get("kind") != "image" for item in flagged):
         return False  # a PDF's empty pages cannot be classified as a portrait
     return len({(item["profile_url"], item["media_url"]) for item in items}) == len({
         (item.get("profile_url"), item.get("media_url")) for item in flagged}) and all(
         confirmed_verdict(audit_path.parent / DECISIONS_FILE, item["profile_url"], item["media_url"],
-                          item["source_sha256"]) is not None for item in items)
+                          item["source_sha256"]) is not None for item in items) and missing_media_review.review_complete(audit_path,missing)
