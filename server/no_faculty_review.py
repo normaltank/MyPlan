@@ -20,7 +20,8 @@ NAME_PREVIEW = 8
 
 def can_judge(status: str, stats: dict | None) -> bool:
     """Same rule as ``mark_no_faculty``: a finished college not judged before."""
-    return status in ("failed", "completed") and not (stats or {}).get("no_faculty")
+    return (status in ("failed", "completed") and not (stats or {}).get("no_faculty")
+            and not (stats or {}).get('official_site_issue'))
 
 
 def script(csrf_token: str) -> str:
