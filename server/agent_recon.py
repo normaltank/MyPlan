@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 from types import SimpleNamespace
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 import yaml
 
 __all__ = ["ReconError", "ReconPlanError", "PlanHygieneError", "ReconPhaseLimitExceeded",
@@ -417,7 +417,7 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
     """Pass structure failures back to the scout, never records or narrative text."""
     validate_model_plan(plan, school=plan["school"], college=plan["college"])
     issues = []
-    for item in report.get("unresolved", [])[:20]:
+    for item in report.get("unresolved", []):
         status = item.get("status", "")
         if not isinstance(status, str) or not re.fullmatch(r"[a-z_]{1,80}", status):
             continue
@@ -445,6 +445,58 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
             issue["branch_url"] = owner
         issues.append(issue)
     return {"previous_plan": plan, "issues": issues}
+
+
+def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
+    """A rejected proposal adds constraints; it cannot erase captured failures.
+
+    Both inputs are controlled structural feedback, never the model's rejected
+    response or exception text. A later successful capture replaces this set
+    with its own current audit; only that can settle a captured counterexample.
+    """
+    previous = previous or {}
+    merged = {**previous, **incoming}
+    issues = {}
+    for item in [*previous.get('issues', []), *incoming.get('issues', [])]:
+        issues[json.dumps(item, sort_keys=True, ensure_ascii=False)] = item
+    merged['issues'] = list(issues.values())
+    merged['known_urls'] = list(dict.fromkeys(url for url in [
+        *previous.get('known_urls', []), *incoming.get('known_urls', [])] if _is_structure_url(url)))
+    prior_plan = previous.get('previous_plan')
+    proposed = incoming.get('previous_plan')
+    if prior_plan:
+        try:
+            if proposed is not None:
+                validate_model_plan(proposed, school=prior_plan['school'], college=prior_plan['college'])
+        except (PlanHygieneError, KeyError, TypeError):
+            proposed = None
+        prior_urls = {branch['url'] for branch in prior_plan.get('branches', [])}
+        proposed_urls = {branch.get('url') for branch in (proposed or {}).get('branches', [])}
+        # A failed phase may return only its accepted sibling branches. That is
+        # not a replacement for the complete plan whose audit found failures.
+        if not prior_urls <= proposed_urls:
+            merged['previous_plan'] = prior_plan
+    return merged
+
+
+def profile_access_failures(issues: list[dict]) -> set[str]:
+    """URL keys of profiles this capture could not fetch, not bad containers.
+
+    A companion 'body unverified/missing' issue on the same failed fetch cannot
+    tell a scout which body selector to change. The original issues and person
+    observations stay unresolved in the harvest report.
+    """
+    return {quote(url, safe=":/?#[]@!$&'()*+,;=%") for item in issues
+            if item.get('status') in {'profile_navigation_failed', 'fetch_failed'}
+            or str(item.get('status', '')).startswith('fetch_failed:')
+            for url in [item.get('url') or item.get('主页')]
+            if isinstance(url, str) and _URL.match(url)}
+
+
+def profile_issue_is_access_only(issue: dict, failed_urls: set[str]) -> bool:
+    url = issue.get('url')
+    return (str(issue.get('status', '')).startswith('profile_content_')
+            and isinstance(url, str) and quote(url, safe=":/?#[]@!$&'()*+,;=%") in failed_urls)
 
 
 def _profile_issue_branch(plan: dict[str, Any], issue: dict[str, Any]) -> str | None:

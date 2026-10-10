@@ -51,7 +51,8 @@ from server.local_service_config import local_web_url
 from server.recovery_policy import NON_STRUCTURAL, classify_issues
 from server.agent_recon import (PlanHygieneError, ReconBudget, ReconBudgetExceeded,
                                ReconError, ReconPhaseLimitExceeded, ReconPlanError, ReconResult,
-                               build_repair_feedback, reconnoiter, run_metrics, validate_model_plan)
+                               build_repair_feedback, merge_repair_feedback, reconnoiter, run_metrics,
+                               validate_model_plan, profile_access_failures, profile_issue_is_access_only)
 
 __all__ = ["AgentWorker", "main"]
 
@@ -468,14 +469,16 @@ class AgentWorker:
             except (ReconPlanError, PlanHygieneError) as exc:
                 # Rejected output may contain teacher data: never replay it or
                 # interpolate the exception into feedback, artifacts, or logs.
-                feedback = getattr(exc, "safe_feedback", {"issues": [{"status": "plan_contract_rejected"}]})
+                rejected = getattr(exc, "safe_feedback", {"issues": [{"status": "plan_contract_rejected"}]})
+                feedback = merge_repair_feedback(feedback, rejected)
                 resume_discovery = getattr(exc, "discovery_checkpoint", None)
                 verified_branches = getattr(exc, "verified_branches", verified_branches)
                 attempts.append({**getattr(exc, "diagnostics", {}),
                                  "attempt": attempt + 1, "status": "plan_contract_rejected",
                                  "issues": feedback.get("issues", [])})
                 self._save_recon_audit(output_dir, attempts, "plan_contract_rejected")
-                report = {"delivery_ready": False, "unresolved": feedback["issues"],
+                report = {**report, "delivery_ready": False,
+                          "unresolved": [*(report.get('unresolved') or []), *rejected['issues']],
                           "recon_attempts": attempts.copy()}
                 if not classify_issues(feedback["issues"]).structure:
                     # A page fact the gate proved on two opens: another scout meets the same page.
@@ -561,7 +564,12 @@ class AgentWorker:
                 await self._attach_cross_check(task, recon.plan, report, deadline)
                 return report
             recovery = classify_issues(report.get("unresolved") or [])
-            structural = recovery.structure
+            # A failed profile fetch has no readable body to prove. Preserve
+            # its access and scope issues, but do not force a broader selector
+            # for its accessible siblings merely to fit an HTTP error page.
+            failed_profiles = profile_access_failures(report.get('unresolved') or [])
+            structural = [item for item in recovery.structure
+                          if not profile_issue_is_access_only(item, failed_profiles)]
             if recovery.stop or not structural:
                 break  # Only a person (review page) or the content itself can settle these.
             feedback = build_repair_feedback(recon.plan, {**report, "unresolved": self._with_branch_urls(
