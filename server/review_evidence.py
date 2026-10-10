@@ -539,6 +539,26 @@ def retain_current(root: Path, html: str) -> str:
     return _put(root, html.encode("utf8"), ".html")
 
 
+def _identity_title_reparse(before: str, after: str, old_value: str, new_value: str) -> dict | None:
+    """Prove one legacy title mention was truncated from the same declared field."""
+    from server.detail_mecc import declared_dom_title_fields
+    from server.titles import select_title
+
+    old_fields = declared_dom_title_fields(BeautifulSoup(before, "lxml"), preserve_content=True)
+    new_fields = declared_dom_title_fields(BeautifulSoup(after, "lxml"), preserve_content=True)
+    if old_fields != new_fields or len(new_fields) != 1:
+        return None
+    field = new_fields[0]
+    selected = select_title(explicit_fields=new_fields)
+    if (field.ambiguous or len(field.mentions) != 1 or selected.conflicts
+            or old_value != field.mentions[0] or new_value != selected.title):
+        return None
+    return {"field": "职称", "basis": "same_declared_field_legacy_mention_to_complete_value",
+            "old_value": old_value, "new_value": new_value,
+            "raw_value": field.raw_value, "mentions": list(field.mentions),
+            "source_lines": list(field.source_lines), "parser": "declared_dom_title_fields"}
+
+
 def identity_equivalence(
     bundle: ArchivedSource,
     previous: dict,
@@ -546,7 +566,7 @@ def identity_equivalence(
     source_html: dict[str, str],
     source_evidence: dict[str, dict],
 ) -> list[dict] | None:
-    """Same observations and all fields, except the proven node's biography text."""
+    """Same facts, with only certified counter text or a source-proved title repair."""
     from server.identity_review import CONTENT_FIELDS
     from server.detail_mecc import LayoutAwareTokenizer
     from server.faculty_identity import field_value
@@ -567,12 +587,15 @@ def identity_equivalence(
                 field_value(before["record"], f)
                 != field_value(observation["record"], f)
                 for f in CONTENT_FIELDS
-                if f != "简介"
+                if f not in {"简介", "职称"}
             ):
                 return None
+            old_title = field_value(before["record"], "职称")
+            new_title = field_value(observation["record"], "职称")
+            title_changed = old_title != new_title
             if before["source_sha256"] == observation["source_sha256"] and field_value(
                 before["record"], "简介"
-            ) == field_value(observation["record"], "简介"):
+            ) == field_value(observation["record"], "简介") and not title_changed:
                 continue
             original, fresh = bundle.source_html(url), source_html[url]
             old_bounds, new_bounds = (
@@ -596,6 +619,11 @@ def identity_equivalence(
             _, new_selected = selected_source(
                 fresh, url, new_bounds, observation["source_sha256"]
             )
+            if title_changed:
+                reparse = _identity_title_reparse(old_selected, new_selected, old_title, new_title)
+                if reparse is None:
+                    return None
+                proof["field_reparses"] = [reparse]
             read = lambda html: LayoutAwareTokenizer.get_clean_text(
                 BeautifulSoup(html, "lxml").body, preserve_content=True
             )

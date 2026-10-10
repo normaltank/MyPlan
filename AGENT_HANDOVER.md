@@ -16,6 +16,8 @@
 
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
 
+身份职称重解析增量：同源计数证书内，旧单一职称词可恢复为同一个唯一、无歧义 DOM 字段的现行完整值，保持原人工身份决定；实际四观察隔离回放恢复为一行，捏造字段／身份变化／撤回仍拒绝。未生产恢复，独立复核与本提交 CI 待核，见[边界](docs/implementation/2026-10-10-identity-title-reparse.md)。
+
 分页位移增量 [PR #53](https://github.com/normaltank/MyPlan/pull/53) 已在 abf7390 的[完整CI](https://github.com/normaltank/MyPlan/actions/runs/38036723639)和两轴独立复核通过后合并。原用户改动保留；定向重验与常驻服务加载、全院验收分别核对。机制和限制见 [说明](docs/implementation/2026-10-10-moving-pagination.md)，不能据合并宣布学院完成。
 
 本次链接边界增量：`FacultyDirectoryExtractor.links_outside_cards` 检查文字叶子遗漏祖先个人链接；侦察与确定性对账共用，失败在恢复表归为结构问题。完整链接及无链接路径保持；土木的全分支、无链接成员和归属仍待重验。机制、57项相关回归及独立复核边界见 [说明](docs/implementation/2026-10-10-roster-link-boundary.md)。
