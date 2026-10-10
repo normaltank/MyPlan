@@ -26,6 +26,10 @@ _FACULTY_PURPOSE = re.compile(
     r'教职工(?:名单|名录|队伍)|教授博士介绍|导师(?:名单|名录|介绍|信息|队伍|风采)|'
     r'(?:博士生|硕士生)导师|教学(?:队伍|名师)|'
     r'(?:专任|兼职|外聘|客座)教师|客座教授|faculty(?:\s+members)?|academic\s+staff)', re.I)
+_ORGANIZATIONAL_PURPOSE = re.compile(
+    r'(?:党(?:委|总支|支部)(?:成员|委员|组成|领导)?|'
+    r'[\u4e00-\u9fff]{2,30}委员会(?:成员|名单|组成)?|'
+    r'行政(?:机构|人员|领导)|现任领导|学院领导|组织机构)', re.I)
 
 
 def digest(text: str) -> str:
@@ -167,6 +171,12 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     college_bound = bool(college and college in branding['college'] and school and school in branding['school']
                          and separate_context and institutional_context)
     result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
+    # A positive, source-bound organizational purpose can retire an old roster
+    # claim. Merely failing the faculty vocabulary is never negative evidence.
+    result['non_faculty_purpose'] = bool(
+        branch['source_role'] == 'organizational_membership' and college_bound
+        and ((title_bound and _ORGANIZATIONAL_PURPOSE.fullmatch(_purpose_label(title, target)))
+             or any(_ORGANIZATIONAL_PURPOSE.fullmatch(_purpose_label(text, target)) for text in own_links)))
     if branch['source_role'] == 'faculty_roster':
         purpose = bool((title_bound and faculty_purpose(title, target))
                        or any(faculty_purpose(text, target) for text in own_links))
@@ -312,6 +322,8 @@ async def verify_source(page, branch: dict, target: dict, *, local_capture: dict
     value['rendered_context_sha256'] = digest(rendered_context)
     if branch['source_role'] == 'faculty_roster' and not rendered_affiliation:
         value.update(role_supported=False, college_bound=False, reason='source_context_not_visible')
+    if not rendered_affiliation:
+        value['non_faculty_purpose'] = False
     # Proof must bind the page after all witness visibility reads as well.
     stable = scope.get('dom_stable') is True and digest(await page.content()) == value['source_html_sha256']
     value.update(dom_stable=stable, network_idle=scope.get('network_idle') is True,
@@ -323,11 +335,11 @@ async def verify_source(page, branch: dict, target: dict, *, local_capture: dict
     return value
 
 
-def source_event_issues(branch: dict, events: list[dict]) -> list[dict]:
+def source_event_proof(branch: dict, events: list[dict]) -> dict | None:
     """Accept only the dedicated browser call matching this exact claim."""
     if not source_claim_valid(branch):
-        return [{'url': branch.get('url'), 'status': 'source_role_evidence_unverified'}]
-    calls = {}
+        return None
+    calls, candidate = {}, None
     for event in events:
         data = event.get('data') or {}
         if event.get('type') == 'tool/call' and data.get('name') == 'mcp__playwright__browser_verify_source':
@@ -349,6 +361,9 @@ def source_event_issues(branch: dict, events: list[dict]) -> list[dict]:
                         continue
                     if not isinstance(proof, dict) or not isinstance(args, dict):
                         continue
+                    if (proof.get('url') == branch['url']
+                            and all(args.get(key) == branch[key] for key in SOURCE_FIELDS)):
+                        candidate = None
                     unit = source_unit_selector(branch)
                     if (proof.get('url') == branch['url'] and proof.get('confirmed') is True
                             and all(args.get(key) == branch[key] == proof.get(key) for key in SOURCE_FIELDS)
@@ -357,9 +372,63 @@ def source_event_issues(branch: dict, events: list[dict]) -> list[dict]:
                             and all(proof.get(key) is True for key in ('role_supported', 'witness_visible', 'dom_stable', 'network_idle'))
                             and all(re.fullmatch(r'[0-9a-f]{64}', str(proof.get(key, ''))) for key in (
                                 'source_html_sha256', 'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256'))):
-                        return []
+                        candidate = proof
+    return candidate
+
+
+def source_event_issues(branch: dict, events: list[dict]) -> list[dict]:
+    if source_event_proof(branch, events) is not None:
+        return []
     return [{'url': branch.get('url'), 'status': 'source_role_evidence_unverified',
              'failed_condition': 'current_source_role_proof_missing',
              'need': 'Use browser_verify_source with this exact role and witness selectors plus the current unit_selector. '
                      'Observe the actual title/current navigation and separate school/college context. '
                      'If faculty relationship cannot be proved, retain the source as organizational_membership or unverified_people_source.'}]
+
+
+async def capture_source_dispositions(context, plan: dict, output_dir) -> tuple[list[dict], list[dict]]:
+    """Fresh originals for inactive/pending sources, independent of scout claims."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from server.recon_browser_mcp import BrowserScout
+    from server.recon_contract import disposition_event_issues, navigation_observations
+    issues, evidence = [], []
+    items = plan.get('source_dispositions', [])
+    if not plan.get('branches'):
+        issues.append({'status': 'no_active_roster_sources'})
+    if not items:
+        return issues, evidence
+    root = Path(output_dir) / 'source-dispositions'
+    page = await context.new_page()
+    await page.add_init_script(Path(__file__).with_name('recon_dom_probe.js').read_text(encoding='utf-8'))
+    scout = BrowserScout(page, root, 'discovery', plan)
+    try:
+        for item in items:
+            await scout.call('browser_navigate', {'url': item['url']})
+            visit = navigation_observations(scout.events).get(item['url'], {})
+            if source_claim_valid(item) and not visit.get('error'):
+                try:
+                    await scout.call('browser_verify_source', {key: item[key] for key in SOURCE_FIELDS})
+                except Exception as exc:
+                    visit['error'] = type(exc).__name__
+            valid = not disposition_event_issues({'source_dispositions': [item]}, scout.events)
+            proof = source_event_proof(item, scout.events) if source_claim_valid(item) else None
+            status = ('inactive' if valid and item['reason'] == 'not_faculty_roster' else
+                      'unavailable' if valid and item['reason'] == 'source_unreadable' else
+                      'pending' if valid else 'unverified')
+            evidence.append({**item, 'status': status, 'method': 'browser_navigate',
+                             'observed_at': datetime.now(timezone.utc).isoformat(),
+                             'http_status': visit.get('status'), 'error_kind': visit.get('error'),
+                             'source_html_sha256': (proof or visit).get('source_html_sha256'),
+                             'original_path': (proof or visit).get('original_path'),
+                             'browser_proof': proof})
+            if status != 'inactive':
+                issues.append({'url': item['url'], 'status': item['reason'] if valid else 'source_disposition_unverified'})
+        event_path = root / 'events.json'
+        event_path.write_bytes(json.dumps(scout.events, ensure_ascii=False, indent=2).encode('utf-8'))
+        event_sha = hashlib.sha256(event_path.read_bytes()).hexdigest()
+        for item in evidence:
+            item.update(navigation_evidence_path=str(event_path), navigation_evidence_sha256=event_sha)
+    finally:
+        await page.close()
+    return issues, evidence

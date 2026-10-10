@@ -33,6 +33,8 @@ def _validate_structure(plan: dict, entry_url: str, discovery_pages: list[dict])
     from server.browser_batch_tool import _validate_plan
     if not isinstance(plan, dict):
         raise ValueError("invalid cached plan")
+    if plan.get('source_dispositions'):
+        raise ValueError('source dispositions require fresh discovery')
     _validate_plan(plan)
     validate_model_plan(plan, school=plan["school"], college=plan["college"])
     if not isinstance(discovery_pages, list) or not discovery_pages or not _is_structure_url(entry_url):

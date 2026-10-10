@@ -526,7 +526,13 @@ class AgentWorker:
             attempts.append(recon.summary())
             self._save_recon_audit(output_dir, attempts, "recon_completed")
             self._save_active_plan(task, output_dir, recon, attempts)
+            previous_source_audit = report.get('audit_path')
             report = await capture(recon.plan, attempt_dir, 0)
+            if (recon.plan.get('source_dispositions') and previous_source_audit
+                    and previous_source_audit != report.get('audit_path') and Path(previous_source_audit).is_file()):
+                # Historical people/source observations stay in their original
+                # audit; a current inactive scope does not rewrite those facts.
+                report['previous_source_audit_path'] = previous_source_audit
             harvested_plan = recon.plan
             harvested_keys.add(self._capture_plan_key(recon.plan))
             local_attempts = []
@@ -552,6 +558,8 @@ class AgentWorker:
                 saved.update(recon=report["recon"], recon_attempts=report["recon_attempts"],
                              local_access_repairs=local_attempts, recovery=report["recovery"],
                              runtime_report=report["runtime_report"])
+                if report.get('previous_source_audit_path'):
+                    saved['previous_source_audit_path'] = report['previous_source_audit_path']
                 if budget.alerts:
                     saved["recon_usage_alerts"] = budget.alerts
                 Path(audit).write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")

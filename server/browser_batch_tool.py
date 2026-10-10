@@ -41,8 +41,10 @@ def _validate_plan(plan: dict[str, Any]) -> None:
     if not str(plan.get("school", "")).strip() or not str(plan.get("college", "")).strip():
         raise ValueError("plan requires school and college")
     branches = plan.get("branches")
-    if not isinstance(branches, list) or not branches:
-        raise ValueError("plan requires at least one branch")
+    if not isinstance(branches, list):
+        raise ValueError("plan requires a branches array")
+    from server.recon_contract import validate_source_dispositions
+    validate_source_dispositions(plan)
     allowed_sources = {"university_faculty_roster", "hospital_doctor_roster"}
     if plan.get("source_kind") is not None and plan["source_kind"] not in allowed_sources:
         raise ValueError("invalid source_kind")
@@ -1094,6 +1096,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     out = Path(output_dir).resolve()
     task_id = task_id or (out.parent.name if out.name.startswith('attempt-') else 'local-' + hashlib.sha256(str(out).encode()).hexdigest()[:24])
     out.mkdir(parents=True, exist_ok=True)
+    from server.source_qualification import capture_source_dispositions
+    disposition_issues, disposition_evidence = await capture_source_dispositions(browser_context, plan, out)
     cached_profile_urls = {row["url"] for row in state.list_pages("profile")} if state else set()
     restored_profiles = len(cached_profile_urls)
     source_capture, source_checkpoints = await _capture_sources_with_state(plan, browser_context, state)
@@ -1107,7 +1111,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             if cards and all(card.name == "img" for card in cards):
                 image_roster_cards[captured_page.url] = len(cards)
     navigation_pages = source_capture.navigation_pages
-    unresolved: list[dict] = list(source_capture.unresolved)
+    unresolved: list[dict] = [*source_capture.unresolved, *disposition_issues]
     branches = source_capture.branches
 
     candidates = []
@@ -1294,7 +1298,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             unresolved.append({"url": url, "status": "profile_content_browser_unverified"})
     name = _safe_name(f"{plan['school']}_{plan['college']}")
     snapshot_dir, snapshots = _save_capture_snapshots(out, name, navigation_pages, all_pages, profile_html)
-    base_url = all_pages[0][0] if all_pages else plan["branches"][0]["url"]
+    base_url = all_pages[0][0] if all_pages else (
+        plan['branches'] or plan['source_dispositions'])[0]['url']
     # Preserve raw captures above; only the parser receives the verified subtree copy.
     scoped_profile_html, profile_scope_evidence, scope_issues = _scope_captured_profiles(
         profile_html, roster_reconciliation.profile_content_selectors,
@@ -1579,6 +1584,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "excluded_count": sum(item["status"] == "excluded" for item in eligibility),
         "eligibility": eligibility,
         'task_id': task_id, 'source_review_items': source_review_items,
+        'source_dispositions': plan.get('source_dispositions', []),
+        'source_disposition_evidence': disposition_evidence,
         'source_relationship_reviews': source_relationship_reviews,
         'source_qualification_evidence': [
             {'source_url': page.url, 'source_role': page.branch.get('source_role', 'unverified_people_source'),
