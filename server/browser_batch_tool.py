@@ -1298,7 +1298,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     # Preserve raw captures above; only the parser receives the verified subtree copy.
     scoped_profile_html, profile_scope_evidence, scope_issues = _scope_captured_profiles(
         profile_html, roster_reconciliation.profile_content_selectors,
-        profile_live_evidence, roster_reconciliation.profile_content_sources, admitted)
+        profile_live_evidence, roster_reconciliation.profile_content_sources, candidates)
     unresolved.extend(scope_issues)
     finish_stage("profile_capture_and_scope")
     from server.image_biography import (audit_profile_media, browser_asset_size, fetch_browser_asset,
