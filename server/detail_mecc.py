@@ -425,6 +425,16 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
             continue
         if id(node) in consumed or (not preserve_content and is_noise_element(node)):
             continue
+        if not preserve_content:
+            ignored = False
+            for ancestor in node.parents:
+                if is_noise_element(ancestor):
+                    ignored = True
+                    break
+                if ancestor is root:
+                    break
+            if ignored:
+                continue
         # A table cell is a physical field unit even when Word nests paragraphs
         # inside it; an outer article containing many fields is not one unit.
         if node.name in {'section', 'article', 'main', 'body'} or (

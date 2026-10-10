@@ -144,6 +144,21 @@ def test_person_heading_inside_a_table_field_is_not_a_safe_compound_value():
     assert any(issue['status'] == 'title_field_conflict' for issue in result['unresolved'])
 
 
+@pytest.mark.parametrize('noise', ['<nav>{}</nav>', '<footer>{}</footer>',
+                                '<header>{}</header>'])
+def test_title_field_inside_ignored_ancestor_cannot_reenter_the_profile(noise):
+    url = 'https://faculty.example.edu/p/1'
+    html = ('<main><h1>王芳</h1>' + noise.format('<p>职称：教授</p>')
+            + '<article><p>本人为讲师，完整科研履历。</p></article></main>')
+    detail = DetailMECCExtractor.extract_single(html, url, '王芳')
+    assert '职称：教授' not in detail.full_bio and not detail.title_fields
+    result = FacultyHarvestPipeline.harvest_candidates(
+        [FacultyCandidate('王芳', url, '讲师')], profile_fetcher=lambda _: html,
+        base_url='https://faculty.example.edu/list')
+    row, = result['sheet1_with_email'] + result['sheet2_no_email']
+    assert result['delivery_ready'] and row['职称'] == '讲师'
+
+
 def test_shared_media_append_consumes_the_existing_person_field_evidence(tmp_path):
     from server.browser_batch_tool import _enrich_extracted_records
     url = 'https://faculty.example.edu/shared'
