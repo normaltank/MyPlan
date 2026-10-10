@@ -1,6 +1,6 @@
 # Page Qualification Architecture
 
-> Status (2026-10-10): interface and migration design. Whether every production entry path follows this design remains a code-audit question, not an implementation guarantee. Current user requirements are in [CONSTITUTION.md](../../CONSTITUTION.md); work follows [the improvement plan](../improvement-plan.md). A supplied URL prioritizes validation but never removes the duty to inspect other faculty branches.
+> Status (2026-10-10): interface and migration design. Whether every production entry path follows this design remains a code-audit question, not an implementation guarantee. Current user requirements are in [CONSTITUTION.md](../../CONSTITUTION.md); task-specific routing is in [AGENTS.md](../../AGENTS.md). A supplied URL prioritizes validation but never removes the duty to inspect other faculty branches.
 
 ## Decision
 

@@ -6,18 +6,19 @@
 | --- | --- |
 | 项目做什么，关键术语是什么意思 | [CONTEXT.md](../CONTEXT.md)：目标、术语和关键契约 |
 | Agent 如何开始和结束工作 | [AGENTS.md](../AGENTS.md)：简短入口、执行边界与验证要求；[CLAUDE.md](../CLAUDE.md) 仅转向它 |
-| 现在做哪项工作，证据和阻塞是什么 | [五项改进任务](improvement-plan.md)：一份任务与状态清单 |
+| 采集维护 agent 现在处理什么 | 用户当前任务及对应采集报错、工单、PR；路由见 [AGENTS.md](../AGENTS.md) |
+| 全链路审查 agent 的任务、证据和阻塞是什么 | [审查专用五项计划](improvement-plan.md)：仅该专项的任务与状态清单 |
 | 代码在哪里 | [模块索引](../AGENT_HANDOVER.md)：稳定导航；细节查调用者、测试和 CLI |
 | 怎样运行、核验环境或排障 | [运维手册](operations.md)：当前操作入口 |
 | 具体提交、开放 PR、CI 到什么状态 | Git 与 GitHub；不在多份 Markdown 里复制动态状态 |
 | 为什么作出某项长期取舍 | 对应 ADR；实现说明见 [architecture](architecture/) |
 | 某个反例、实验或审查如何复现 | 对应 [audits](audits/)、[implementation](implementation/) 或 [site-types](site-types/) 记录 |
 
-[CONSTITUTION.md](../CONSTITUTION.md) 与 [review-backlog.md](review-backlog.md) 保留兼容入口，不维护第二份目标或待办。[技能工作项路由](agents/issue-tracker.md) 也指向上述计划。
+[CONSTITUTION.md](../CONSTITUTION.md) 与 [review-backlog.md](review-backlog.md) 分别保留项目目标和专项审查待办的兼容入口。[技能工作项路由](agents/issue-tracker.md) 按当前任务定位材料，不将专项计划分配给所有 agent。
 
 ## 修改时只更新负责该信息的地方
 
-业务目标或术语改变，更新 CONTEXT；任务进展改变，更新计划中的对应行和证据链接；接口或操作改变，更新实际受影响的技术／运维说明。其他入口只需保持正确指向。
+业务目标或术语改变，更新 CONTEXT；采集维护进展写入对应工单、PR 或已有问题记录，专项审查进展由审查 agent 更新五项计划；接口或操作改变，更新实际受影响的技术／运维说明。其他入口只需保持正确指向。
 
 PR 描述写问题、变化与验证；CI 保存检查结果。只有需要复用的反例、复现过程或重要取舍才新增独立文档，并从相关任务或模块链接。普通维护不要求同时追加 handover、backlog、operations、changelog 四份流水账。
 
@@ -43,7 +44,7 @@ ADR 记录已选定、需要保留理由的重要工程取舍：背景、决定�
 
 [recon_discovery.md](../server/recon_discovery.md)、[recon_provided_links.md](../server/recon_provided_links.md)、[recon_instructions.md](../server/recon_instructions.md) 由程序直接加载，属于运行逻辑。它们必须自包含，不能依赖模型另读根目录规则。修改时验证实际加载、结构 Schema、浏览器工具与证据契约。
 
-项目 [采集 skill](../.agents/skills/faculty-browser-harvest/SKILL.md) 和 [TOOLS.md](../.agents/skills/faculty-browser-harvest/TOOLS.md) 服务实际采集作业。通用技能按任务使用，其默认的文档数量、审批步骤或保存位置须与本项目约定对齐。
+DS 使用上述三份运行提示词；旧 `faculty-browser-harvest/SKILL.md` 未被当前运行时加载，已移除以免被开发 agent 自动发现并误用。原文从 Git 历史追溯。[TOOLS.md](../.agents/skills/faculty-browser-harvest/TOOLS.md) 保留执行层接口参考，原目录中的退役脚本保留明确拒绝旧调用的兼容行为。开发维护与全链路审查 agent 将运行指令作为源码资料维护，通用开发技能按当前任务使用。
 
 ## 历史记录与证据
 
