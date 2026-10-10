@@ -12,6 +12,8 @@
 
 ## 已有代码入口
 
+复核证据恢复增量：`review_evidence`封存原HTML/audit/决定，以严格原生访问计数等价证书恢复媒体、身份及HTML邮箱原决定；迁移backup登记须固定audit SHA并核验原task/attempt/rawSHA。35项新增测试和PR54接线106项通过，17项真实保存原件隔离回放通过；尚未生产登记、加载、提交或CI，见[说明](docs/implementation/2026-10-10-review-evidence-metadata.md)。
+
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
 
 分页位移增量 [PR #53](https://github.com/normaltank/MyPlan/pull/53) 已在 abf7390 的[完整CI](https://github.com/normaltank/MyPlan/actions/runs/38036723639)和两轴独立复核通过后合并。原用户改动保留；定向重验与常驻服务加载、全院验收分别核对。机制和限制见 [说明](docs/implementation/2026-10-10-moving-pagination.md)，不能据合并宣布学院完成。

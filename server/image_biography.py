@@ -414,13 +414,14 @@ async def audit_profile_media(
                         requested_profile_url=profile_url)
                     if fresh is not None and fresh['id'] == missing['id']:
                         path = Path(media_kind_decisions_path) if media_kind_decisions_path else None
-                        missing_records.append(dict(missing))
-                        if missing_media_review.confirmed(path,missing):
+                        if missing_media_review.confirmed(path,missing,
+                                source_html=(profile_source_html or {}).get(profile_url,html)):
                             skipped.append({**source,'status':'image_missing_photo_human_reviewed',
                                             'evidence_id':missing['id'],'evidence_basis':missing['evidence_basis']})
                         else:
                             unresolved.append({**source,'status':missing_media_review.STATUS,
                                                'evidence_id':missing['id']})
+                        missing_records.append(dict(missing))
                         continue
                 unresolved.append({**source, "status": "image_bio_asset_failed",
                                    "error": f"{type(exc).__name__}: {exc}"})
