@@ -486,10 +486,11 @@ class AgentTaskQueue:
             aliases = alias_issues(records)
             if aliases:
                 raise ValueError(f'delivery field validation failed: {aliases}')
-            from server.excel_export import excel_cell_issues
+            from server.excel_export import excel_cell_issues, validate_biography_storage_receipt
             cells = excel_cell_issues(records)
             if cells:
                 raise ValueError(f'delivery field validation failed: {cells}')
+            validate_biography_storage_receipt(records, stats.get('biography_storage'))
 
             # Strict conservation: stats must explicitly contain total, with_email, and no_email (no auto-inferring)
             for req_field in ("total", "with_email", "no_email"):
