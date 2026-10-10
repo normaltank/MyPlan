@@ -2,7 +2,7 @@
 
 输入大学、学院、学院链接及可选师资链接，采集有来源证据的官方师资信息，按大学汇总。
 
-**当前仍在改进采集准确度与完整性，多个学院尚不能可靠完成，未进入常规业务验收。** 项目目标与术语见 [CONTEXT.md](CONTEXT.md)，当前进度和实际差距见 [五项改进任务](docs/improvement-plan.md)。开发 agent 从 [AGENTS.md](AGENTS.md) 开始。
+**当前仍在改进采集准确度与完整性，多个学院尚不能可靠完成，未进入常规业务验收。** 项目目标与术语见 [CONTEXT.md](CONTEXT.md)。开发 agent 从 [AGENTS.md](AGENTS.md) 按任务分工：采集维护处理实际报错与脚本优化；全链路审查 agent 执行其 [五项计划](docs/improvement-plan.md)。
 
 ## 现有本机使用入口
 
@@ -37,7 +37,7 @@ uv pip sync requirements-dev.lock
 | 需要了解 | 入口 |
 | --- | --- |
 | 目标、术语与交付含义 | [CONTEXT.md](CONTEXT.md) |
-| 五项工作与当前证据 | [改进计划](docs/improvement-plan.md) |
+| 全链路审查 agent 的五项工作与证据 | [专项计划](docs/improvement-plan.md) |
 | 代码调用边界与模块 | [模块索引](AGENT_HANDOVER.md) |
 | 文档职责、ADR 与历史资料 | [文档导航](docs/README.md) |
 | 运行、复核和排障 | [运维手册](docs/operations.md) |

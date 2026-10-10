@@ -1,6 +1,6 @@
 # MyPlan 模块索引
 
-本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务状态、缺口和证据统一见 [五项改进任务](docs/improvement-plan.md)。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
+本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务按 [AGENTS.md](AGENTS.md) 分工，采集维护状态与证据见对应工单和 PR，全链路审查 agent 的专项状态见 [五项计划](docs/improvement-plan.md)。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
 
 ## 按调用链定位
 
