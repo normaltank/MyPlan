@@ -460,8 +460,9 @@ def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
     for item in [*previous.get('issues', []), *incoming.get('issues', [])]:
         issues[json.dumps(item, sort_keys=True, ensure_ascii=False)] = item
     merged['issues'] = list(issues.values())
-    merged['known_urls'] = list(dict.fromkeys(url for url in [
-        *previous.get('known_urls', []), *incoming.get('known_urls', [])] if _is_structure_url(url)))
+    if 'known_urls' in previous or 'known_urls' in incoming:
+        merged['known_urls'] = list(dict.fromkeys(url for url in [
+            *previous.get('known_urls', []), *incoming.get('known_urls', [])] if _is_structure_url(url)))
     prior_plan = previous.get('previous_plan')
     proposed = incoming.get('previous_plan')
     if prior_plan:
