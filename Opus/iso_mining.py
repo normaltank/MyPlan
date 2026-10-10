@@ -51,7 +51,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
@@ -445,15 +445,25 @@ def url_template(url: str) -> str:
     return url_templates([url])[0]
 
 
+def _profile_href(href: str) -> bool:
+    # Some CMSs put rendered error markup in href instead of a URL.
+    if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+        return False
+    if '<' in href or '>' in href:
+        return False
+    path = unquote(urlparse(href).path)
+    return not re.search(r'<([A-Za-z][\w:-]*)(?:\s[^<>]*)?>[^<>]*</\1>', path)
+
+
 def first_href(nodes: list[Tag], base: Optional[str]) -> Optional[str]:
     for n in nodes:
         if isinstance(n, VirtualNode):
-            if n.href and not n.href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            if _profile_href(n.href or ''):
                 return urljoin(base, n.href) if base else n.href
             continue
         for a in ([n] if n.name == "a" else []) + n.find_all("a"):
             h = (a.get("href") or "").strip()
-            if h and not h.startswith(("#", "javascript:", "mailto:", "tel:")):
+            if _profile_href(h):
                 return urljoin(base, h) if base else h
     return None
 
