@@ -416,7 +416,8 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
     its flattened biography, which no longer distinguishes those boundaries.
     """
     field_pattern = re.compile(_TITLE_FIELD_LINE.pattern, re.S)
-    blocks = {'p', 'div', 'li', 'dt', 'dd', 'td', 'th', 'section', 'article', 'main', 'body'}
+    blocks = {'p', 'div', 'li', 'dt', 'dd', 'td', 'th', 'section', 'article', 'main', 'body',
+              'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
     structural = (BLOCK_ELEMENTS | blocks) - {'br'}
     fields, consumed = [], set()
     for node in [root, *root.find_all(blocks)]:

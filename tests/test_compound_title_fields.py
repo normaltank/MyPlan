@@ -123,6 +123,17 @@ def test_definition_list_declares_a_complete_title_field():
     assert result['delivery_ready'] and row['职称'] == '教授/研究员'
 
 
+@pytest.mark.parametrize('tag', ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+def test_declared_heading_field_overrides_the_roster_title(tag):
+    url = 'https://faculty.example.edu/p/1'
+    html = f'<article><p>王芳</p><{tag}>职称：教授/研究员</{tag}></article>'
+    result = FacultyHarvestPipeline.harvest_candidates(
+        [FacultyCandidate('王芳', url, '讲师')], profile_fetcher=lambda _: html,
+        base_url='https://faculty.example.edu/list', verified_profile_urls={url})
+    row, = result['sheet1_with_email'] + result['sheet2_no_email']
+    assert result['delivery_ready'] and row['职称'] == '教授/研究员'
+
+
 def test_person_heading_inside_a_table_field_is_not_a_safe_compound_value():
     url = 'https://faculty.example.edu/p/1'
     html = '<article><h1>王芳</h1><table><tr><td>职称：教授<h2>李华</h2><p>副教授</p></td></tr></table></article>'
