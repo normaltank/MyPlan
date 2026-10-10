@@ -52,9 +52,9 @@ except ImportError:
         L1_AVAILABLE = False
 
 try:
-    from server.titles import TITLE_KEYWORDS, resolve_title, select_title
+    from server.titles import TITLE_KEYWORDS, resolve_title, select_title, TitleField
 except ImportError:
-    from titles import TITLE_KEYWORDS, resolve_title, select_title
+    from titles import TITLE_KEYWORDS, resolve_title, select_title, TitleField
 
 TEMPLATE_NAME_PRIOR = 0.7
 _NAME_SHAPED = re.compile(r"[\u4e00-\u9fff]{2,4}|[\u4e00-\u9fff]{1,8}(?:[·•][\u4e00-\u9fff]{1,8}){1,3}")
@@ -80,7 +80,8 @@ def _annotation_token(token: str, text: str) -> bool:
 # One definition of "this address spells this teacher" and of address reading
 # for every path (profile pages, shared pages, roster cards, OCR biographies).
 from server.detail_mecc import (DetailMECCExtractor, ProfileDetail, LayoutAwareTokenizer,  # noqa: E402,F401
-                                contact_email_candidates, labeled_text_emails, explicit_title_candidates,
+                                contact_email_candidates, labeled_text_emails, explicit_title_fields,
+                                declared_dom_title_fields,
                                 mailto_address_conflicts, find_emails,
                                 is_institutional_email, is_personal_email_for_scholar)
 DETAIL_MECC_AVAILABLE = True
@@ -172,6 +173,7 @@ class FacultyCandidate:
     name_review_reason: str = ""
     mailto_conflicts: Tuple[Tuple[str, ...], ...] = ()
     table_row: Optional[dict] = None
+    title_fields: Tuple[TitleField, ...] = ()
 
 @dataclass(frozen=True)
 class FacultyProfile:
@@ -182,6 +184,7 @@ class FacultyProfile:
     emails: tuple = ()          # every address inside the content container, in order
     contact_emails: tuple = ()
     status: str = 'ok'
+    title_fields: Tuple[TitleField, ...] = ()
 
 
 def html_table_rows(soup: BeautifulSoup) -> dict[int, dict]:
@@ -462,9 +465,11 @@ class FacultyDirectoryExtractor:
             # The title vocabulary only identifies a title standing in the name slot.
             if needs_review and (name in TITLE_KEYWORDS or not rare_surname_name(name)):
                 continue
-            title = select_title(explicit=explicit_title_candidates(card), card_title=title,
+            title_fields = (explicit_title_fields(card) if isinstance(head, VirtualNode) else
+                            tuple(field for node in r for field in declared_dom_title_fields(node, preserve_content=True)))
+            title = select_title(explicit_fields=title_fields, card_title=title,
                                  body_title=resolve_title(card)).title
-            if title == '教师' and not explicit_title_candidates(card):
+            if title == '教师' and not title_fields:
                 title = resolve_title(section)
             url = href or base_url
             node_key = href if href else id(head)
@@ -475,7 +480,7 @@ class FacultyDirectoryExtractor:
                 conflict for node in r if isinstance(node, Tag)
                 for conflict in mailto_address_conflicts(node)))
             candidate = FacultyCandidate(name=name, url=url, title=title, card_context=card,
-                                         mailto_conflicts=contact_conflicts)
+                                         mailto_conflicts=contact_conflicts, title_fields=title_fields)
             (review if needs_review else out).append(candidate)
         return out
 
@@ -612,16 +617,22 @@ class FacultyDirectoryExtractor:
             if slot is None:
                 continue
             context = LayoutAwareTokenizer.get_clean_text(card, preserve_content=True)
+            title_fields = declared_dom_title_fields(card, preserve_content=True)
+            if len(linked_slots) > 1:
+                # Preserve the common field and both people, but its container
+                # proves no individual owner. A later own-profile field can
+                # supersede this ambiguity under the existing precedence rule.
+                title_fields = tuple(replace(field, ambiguous=True) for field in title_fields)
             for name, title, href in (list(linked_slots.values()) if len(linked_slots) > 1 else [slot]):
                 href = href or first_href([name_scope], base_url)
-                title = select_title(explicit=explicit_title_candidates(context), card_title=title,
+                title = select_title(explicit_fields=title_fields, card_title=title,
                                      body_title=resolve_title(context)).title
                 reason = '' if name_prob(name) >= 0.5 or rare_surname_name(name) else 'unrecognized_name_slot'
                 # A rare surname standing in a column the table itself labels
                 # 姓名 is a name (badr 2026-10-09); elsewhere a person confirms it.
                 labelled_name = name_scope is not card and rare_surname_name(name)
                 slots.append((FacultyCandidate(name, href or base_url, title, context, reason,
-                                                mailto_address_conflicts(card), table.get('evidence')),
+                                                mailto_address_conflicts(card), table.get('evidence'), title_fields),
                               name_prob(name), labelled_name))
         trusted = sum(prob >= 0.5 for _, prob, _ in slots)
         linked = sum(person.url != base_url for person, _, _ in slots)
@@ -805,9 +816,11 @@ class FacultyDirectoryExtractor:
                 block_title_el = parent_block.find(class_=re.compile(r'title|heading|caption', re.I)) if parent_block else None
                 block_title = block_title_el.get_text(strip=True) if block_title_el else ""
                 context_text = card_text
-                matched_title = select_title(explicit=explicit_title_candidates(card_text),
+                title_fields = (declared_dom_title_fields(item['card'], preserve_content=True)
+                                if item['card'] is not None else ())
+                matched_title = select_title(explicit_fields=title_fields,
                                              body_title=resolve_title(card_text)).title
-                if matched_title == '教师' and not explicit_title_candidates(card_text):
+                if matched_title == '教师' and not title_fields:
                     matched_title = resolve_title(block_title)
                 contact_conflicts = mailto_address_conflicts(item['card']) if item['card'] is not None else ()
 
@@ -818,6 +831,7 @@ class FacultyDirectoryExtractor:
                             candidates[idx_c] = replace(
                                 existing_c, title=matched_title if upgrade else existing_c.title,
                                 card_context=context_text if upgrade else existing_c.card_context,
+                                title_fields=title_fields if upgrade else existing_c.title_fields,
                                 mailto_conflicts=tuple(dict.fromkeys(
                                     (*existing_c.mailto_conflicts, *contact_conflicts))))
                             break
@@ -831,6 +845,7 @@ class FacultyDirectoryExtractor:
                     title=matched_title,
                     card_context=card_text,
                     mailto_conflicts=contact_conflicts,
+                    title_fields=title_fields,
                 ))
 
         return candidates
@@ -870,6 +885,7 @@ class FacultyProfileExtractor:
                     emails=detail.emails,
                     contact_emails=detail.contact_emails,
                     status=detail.status,
+                    title_fields=detail.title_fields,
                 )
             except Exception as ex:
                 log.warning("DetailMECCExtractor.extract_single failed: %s; falling back", ex)
@@ -923,8 +939,9 @@ class FacultyProfileExtractor:
             if h1:
                 name = re.sub(r'\s+', '', h1.get_text(strip=True))
 
-        title = select_title(explicit=explicit_title_candidates(full_bio),
-                             body_title=resolve_title(full_bio)).title
+        title_fields = declared_dom_title_fields(mecc, preserve_content=preserve_content)
+        title_choice = select_title(explicit_fields=title_fields, body_title=resolve_title(full_bio))
+        title = title_choice.title
 
         return FacultyProfile(
             name=name,
@@ -933,7 +950,9 @@ class FacultyProfileExtractor:
             full_bio=full_bio,
             emails=tuple(emails),
             contact_emails=contacts,
-            status='mailto_address_conflict' if mailto_address_conflicts(mecc) else 'ok',
+            title_fields=title_fields,
+            status=('mailto_address_conflict' if mailto_address_conflicts(mecc) else
+                    'title_field_conflict' if title_choice.conflicts else 'ok'),
         )
 
 
@@ -1038,8 +1057,11 @@ class FacultyHarvestPipeline:
             card_text = card_texts[id(cand)]
             card_emails = card_addresses[id(cand)]
 
-            title_choice = select_title(explicit=(explicit_title_candidates(card_text)
-                                                  or explicit_title_candidates(cand.card_context)),
+            card = cand_cards.get(id(cand))
+            declared_fields = ((declared_dom_title_fields(card, preserve_content=preserve_content)
+                                                        if card is not None else ())
+                               or cand.title_fields or explicit_title_fields(cand.card_context))
+            title_choice = select_title(explicit_fields=declared_fields,
                                         card_title=cand.title, body_title=resolve_title(card_text))
             matched_title = title_choice.title
             if title_choice.conflicts:
@@ -1100,6 +1122,7 @@ class FacultyHarvestPipeline:
                 flag("ambiguous_email_assignment", matches=unowned)
 
             results[id(cand)] = {
+                'title_fields': declared_fields,
                 "email": '' if contact_conflicts else email,
                 "title": matched_title,
                 "bio": card_text
@@ -1145,6 +1168,7 @@ class FacultyHarvestPipeline:
         date_str: str = "",
         profileless_urls: Optional[Set[str]] = None,
         verified_profile_urls: Optional[Set[str]] = None,
+        title_field_evidence: Optional[Dict[Tuple[str, str], Tuple[TitleField, ...]]] = None,
     ) -> Dict:
         import datetime
         if not date_str:
@@ -1297,11 +1321,13 @@ class FacultyHarvestPipeline:
             email = ""
             title = cand.title
             bio = ""
+            declared_fields = ()
 
             if id(cand) in shared_results_by_cand_id:
                 s_res = shared_results_by_cand_id[id(cand)]
                 email = s_res["email"]
                 title = s_res["title"]
+                declared_fields = s_res['title_fields']
                 bio = s_res["bio"]
                 if email:
                     assigned_emails.add(email.lower())
@@ -1428,8 +1454,9 @@ class FacultyHarvestPipeline:
                     assigned_emails.discard(email.lower())
                     email = ''
                 bio = prof.full_bio if prof else ""
-                title_choice = select_title(explicit=(explicit_title_candidates(bio)
-                                                      or explicit_title_candidates(cand.card_context)),
+                declared_fields = ((prof.title_fields if prof else ())
+                                   or cand.title_fields or explicit_title_fields(cand.card_context))
+                title_choice = select_title(explicit_fields=declared_fields,
                                             card_title=cand.title, body_title=prof.title if prof else '教师')
                 title = title_choice.title
                 if title_choice.conflicts:
@@ -1445,6 +1472,8 @@ class FacultyHarvestPipeline:
                 "学校": school, "学院": college, "采集人": agent_name, "采集日期": date_str,
                 "简介": bio, "主页": cand.url, "_cand_idx": cand_idx
             }
+            if title_field_evidence is not None:
+                title_field_evidence[(cand.url, cand.name)] = declared_fields
             if email:
                 record["序号"] = len(sheet1_with_email) + 1
                 sheet1_with_email.append(record)
