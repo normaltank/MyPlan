@@ -1,7 +1,3 @@
 # 领域文档入口
 
-先读根目录 [项目目标](../../CONSTITUTION.md) 与 [AGENTS.md](../../AGENTS.md)，术语见 [CONTEXT.md](../../CONTEXT.md)，当前工作见 [改进计划](../improvement-plan.md)。
-
-用户已授权更新未经审核的旧 Markdown。ADR 和历史方案用于理解设计理由，不覆盖用户最新需求；其中的实现状态需要代码和证据核对。
-
-计划、测试和实现使用一致的来源、身份、完整性及交付术语。新增概念应先检查是否已有同义规则，避免每个 agent 再创建一套状态或判据。
+项目目标、术语及关键契约统一在 [CONTEXT.md](../../CONTEXT.md)。工作从 [AGENTS.md](../../AGENTS.md) 开始，当前工作项与证据见 [五项改进任务](../improvement-plan.md)。本文件不复制领域定义。
