@@ -154,14 +154,15 @@ def register_source(
     if expected_audit_sha256 is not None and sha(raw) != expected_audit_sha256:
         raise ValueError("review audit differs from the pinned original")
     audit = json.loads(raw)
-    declared_audit = PureWindowsPath(
-        str(audit.get("audit_path", path if source_root is None else ""))
-    )
+    declared_path = str(audit.get("audit_path", path if source_root is None else ""))
+    # Imported Windows paths still need lexical task/attempt checks on POSIX,
+    # but real local paths must retain the host's spelling when resolved.
+    declared_audit = PureWindowsPath(declared_path)
     if (declared_audit.parent.parent.name != task_id
             or declared_audit.parent.parent.parent.name != "tasks"
             or not re.fullmatch(r"attempt-[1-9]\d*", declared_audit.parent.name)):
         raise ValueError("review audit belongs to another task")
-    if not imported and Path(str(declared_audit)).resolve() != path:
+    if not imported and Path(declared_path).resolve() != path:
         raise ValueError("review audit's declared original differs from its actual source")
     local = Path(source_root).resolve() if source_root else path.parent
     if path.parent != local:

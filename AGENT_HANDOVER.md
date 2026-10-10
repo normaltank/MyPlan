@@ -12,7 +12,7 @@
 
 ## 已有代码入口
 
-复核证据恢复增量：`review_evidence`封存原HTML/audit/决定，以严格原生访问计数等价证书恢复媒体、身份及HTML邮箱原决定；迁移backup登记须固定audit SHA并核验原task/attempt/rawSHA。35项新增测试和PR54接线106项通过，17项真实保存原件隔离回放通过；尚未生产登记、加载、提交或CI，见[说明](docs/implementation/2026-10-10-review-evidence-metadata.md)。
+复核证据恢复增量：`review_evidence`封存原HTML/audit/决定，以严格原生访问计数等价证书恢复媒体、身份及HTML邮箱原决定；迁移backup登记须固定audit SHA并核验原task/attempt/rawSHA。17项真实保存原件隔离回放通过。PR56首次Linux CI发现原生路径被Windows字符串改写；已修复并加2项门禁回归，metadata37项及相关浏览器6项通过，新CI尚待终态；未生产登记或加载。新侧归档SHA指物化UTF8对象，非Windows snapshot CRLF原字节，见[说明](docs/implementation/2026-10-10-review-evidence-metadata.md)。
 
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
 

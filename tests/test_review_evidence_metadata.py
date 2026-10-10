@@ -84,6 +84,41 @@ def test_resume_seals_reviewed_original_before_same_attempt_overwrite(tmp_path):
     )
 
 
+def test_local_registration_resolves_native_declared_path_without_windows_rewriting(tmp_path, monkeypatch):
+    from pathlib import Path
+    from server import review_evidence
+
+    root, attempt, audit, snapshot, item = source(tmp_path)
+    value = json.loads(audit.read_text(encoding="utf8"))
+    declared = audit.as_posix()
+    value["audit_path"] = declared
+    audit.write_text(json.dumps(value), encoding="utf8")
+    native_strings = []
+
+    def native_path(value):
+        if isinstance(value, str):
+            native_strings.append(value)
+        return Path(value)
+
+    monkeypatch.setattr(review_evidence, "Path", native_path)
+    review_evidence.register_source(root, audit, root.name)
+    # On POSIX, str(PureWindowsPath(declared)) introduces backslashes and the
+    # actual containment/equality check rejects an otherwise valid native path.
+    assert declared in native_strings
+
+
+def test_local_registration_rejects_a_different_declared_audit(tmp_path):
+    from server import review_evidence
+
+    root, attempt, audit, snapshot, item = source(tmp_path)
+    value = json.loads(audit.read_text(encoding="utf8"))
+    value["audit_path"] = (attempt / "other_audit.json").as_posix()
+    audit.write_text(json.dumps(value), encoding="utf8")
+    with pytest.raises(ValueError, match="declared original differs"):
+        review_evidence.register_source(root, audit, root.name)
+    assert not list((root / "review-evidence" / "sources").glob("*.json"))
+
+
 def test_same_reviewed_photo_survives_only_native_counter_change(tmp_path):
     root, attempt, audit, snapshot, item = source(tmp_path)
     prepare_review_resume(audit, root.name)

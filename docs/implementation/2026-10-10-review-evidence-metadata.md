@@ -1,6 +1,6 @@
 # 复核恢复：原件封存与访问计数等价证书
 
-状态：开发实现，尚未提交、CI、生产加载或工单交付。用户已保存决定不应因浏览次数变化而重复复核；这不允许忽略实际来源变化。
+状态：开发实现，PR56 草稿；首次 Linux CI 的路径缺陷已修复，本轮 CI 尚待最终结果，未生产加载或工单交付。用户已保存决定不应因浏览次数变化而重复复核；这不允许忽略实际来源变化。
 
 ## 固定失败及定位
 
@@ -14,7 +14,7 @@
 
 `server/review_evidence.py` 负责不可变来源存储和唯一严格等价判据。`prepare_review_resume` 先封存原audit、HTML文件字节与决定文件，marker记录源bundle；旧marker在carry前补封存，尤其同一attempt随后会覆盖相同snapshot文件名的情况。显式 `register_source(..., source_root=...)` 可登记有完整原件的同任务迁移backup；不会改决定值/id，不会把不可得来源当等价。
 
-对象按SHA保存，manifest原子发布，读取时复算SHA，限制任务归属与路径。Windows snapshot写入CRLF，文本按原`Path.read_text`的通用换行规则读取；同时保存实际文件字节SHA。浏览器HTML文本SHA、选区原SHA与归档文件字节SHA分别记录，不相互冒充。
+对象按SHA保存，manifest原子发布，读取时复算SHA，限制任务归属与路径。Windows snapshot写入CRLF，文本按原`Path.read_text`的通用换行规则读取；登记旧来源时保留实际文件字节及SHA。当前输入HTML由`retain_current`物化为UTF-8对象，其`new_original_file_sha256`是该对象字节SHA，不是现有snapshot的CRLF原字节SHA。当前snapshot仍由capture保存，并在后续prepare/carry登记时按文件字节封存。浏览器HTML文本SHA、选区绑定SHA与原生片段SHA、归档对象字节SHA分别记录，不相互冒充。
 
 证书只支持该已观察原生控制器：同来源URL、同CSS、相邻精确controller调用、同wbnews owner/article，生成span只允许id/name与纯数值内容。先从当前原件复算既有消费者的选择器/包装SHA绑定；该解析后SHA不冒充原始片段哈希。再将唯一选中节点的原source坐标交给原生HTMLParser，截取完整、显式平衡的原文字串，不重新序列化属性、引号或实体。未知/不能定位的片段和任何start_selector暂拒绝复用。
 
@@ -32,7 +32,7 @@
 
 35个合成测试覆盖同attempt覆写保全、原ID保持、正文/owner/resource/status/selector/未知数字变化、原件篡改、决定撤回、当前不确定决定优先、未知controller、Windows换行、身份结果JSON往返重验、邮箱候选变化、迁移task/attempt/原件/rawSHA绑定、外部登记遗漏参数/未知schema、audit/snapshot/decision/ledger四类实际symlink外逃、真实scoped消费者属性顺序变化及不支持start边界拒绝。去除计数节点保留其余原字符串，不能用DOM重新序列化掩盖未知差异。原失败数据在独立task存储回放：media 15/15恢复，identity pending0/1证书，按用户原same决定4观察成为1且证书重验成功，HTML邮箱1恢复；实际registry三类complete=true，prepare/carry成功且原决定文件未改变。没有动生产任务/决定/审计，没有真实学院重跑。
 
-初版相关复核/恢复集合107项通过；快进合入PR54的main `387e6d49e5e31f933417e6ea74f510f300d64a0f` 后，新增模块、职称字段、复核registry及worker缓存接线集合106项通过。远端最终CI仍未执行；不能以固定材料回放代替实际交付/范围验收。旧来源尚未封存的任务需先通过可验证源登记恢复真实原件，不允许手改决定SHA来匹配新内容。
+初版相关复核/恢复集合107项通过；快进合入PR54的main `387e6d49e5e31f933417e6ea74f510f300d64a0f` 后，新增模块、职称字段、复核registry及worker缓存接线集合106项通过。首轮Linux CI在`register_source`中把POSIX原生audit路径先转为Windows字符串，随后按POSIX解析，造成封存拒绝、重试409及下游浏览器等待超时。修复仅让真实路径比较保留原声明字符串；迁移来源的Windows词法task/attempt校验与所有门禁继续保留。新增路径拼写回归在旧实现本机失败，修复后通过；另核验不同声明audit仍拒绝发布。相关单元122项、最终metadata37项及本次失败涉及的浏览器集合6项通过，无平台skip或断言放宽。新版本远端CI仍待终态；不能以固定材料回放代替实际交付/范围验收。旧来源尚未封存的任务需先通过可验证源登记恢复真实原件，不允许手改决定SHA来匹配新内容。
 
 ## 原件登记的受限恢复步骤
 
