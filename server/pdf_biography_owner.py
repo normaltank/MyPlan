@@ -20,6 +20,7 @@ def inspect_owner_scope(
     reviewed: set[tuple[int, int]],
 ) -> dict:
     from server.detail_mecc import _TITLE_FIELD_LINE
+    from server.name_list import _HAN_NAME, _MINORITY_NAME
     from server.pdf_roster import EMPHASIS_RATIO, layout_lines
     from server.segmented_roster import _HEAD_WORDS, _LABELS, _SPLIT, heading_shape
     from server.titles import TITLE_KEYWORDS
@@ -159,6 +160,9 @@ def inspect_owner_scope(
             if re.sub(r"\s+", "", label[1]) == re.sub(r"\s+", "", owner):
                 name = owner
             role = "name_field"
+        elif introduced and name_headings.get(re.sub(r"\s+", "", person_line)):
+            name = name_headings[re.sub(r"\s+", "", person_line)]
+            role = "person_introduction"
         elif (
             shape
             and name not in _LABELS
@@ -173,24 +177,56 @@ def inspect_owner_scope(
             # is an unresolved section lead, regardless of its page position.
             standalone = name_headings.get(compact)
             if standalone:
-                name, role = standalone, "standalone_person_heading"
+                name = standalone
+                role = (
+                    "person_heading_with_title_field"
+                    if own_title_field
+                    else "standalone_person_heading"
+                )
             elif (
                 shape and name not in _LABELS and shape[2] == "none" and own_title_field
             ):
                 role = "person_heading_with_title_field"
-            elif not shape and not _TITLE_FIELD_LINE.fullmatch(line.text.strip()):
+            elif not _TITLE_FIELD_LINE.fullmatch(line.text.strip()):
                 if introduced:
                     tokens = tokens[1:]
                 possible_name = bool(
                     tokens
                     and re.fullmatch(r"[一-鿿·•]{2,8}", tokens[0])
                     and tokens[0] not in _LABELS
+                    and tokens[0] not in person_words
                 )
-                person_role = len(tokens) > 1 and tokens[1] in person_words
+                # Use the shared grammar's actual role token, not an arbitrary
+                # word suffix: an institution post or education value can end
+                # in that same word. A normal labelled metadata field is not a
+                # person introduction. Glyph-spaced names retain their tokens.
+                role_index = next(
+                    (i for i, token in enumerate(tokens) if token in person_words), None
+                )
+                prefix_tokens = tokens[:role_index] if role_index else []
+                prefix = "".join(prefix_tokens)
+                # Reuse name syntax without surname confidence. Multiple full
+                # tokens are not one person's name; only glyph-spaced runs can
+                # stand for a single name. Body locations and field values must
+                # not be invented into an identity because a later token is a role.
+                one_name = len(prefix_tokens) == 1 or (
+                    prefix_tokens and all(len(token) == 1 for token in prefix_tokens)
+                )
+                person_role = bool(
+                    one_name
+                    and (
+                        _HAN_NAME.fullmatch(prefix) or _MINORITY_NAME.fullmatch(prefix)
+                    )
+                    and prefix not in _LABELS
+                    and (introduced or not re.match(r"^\s*[^:：]+[:：]", person_line))
+                )
+                possible_name = possible_name or person_role
                 if possible_name and (
-                    (len(tokens) == 1 and own_title_field)
-                    or ((emphasized or introduced) and person_role)
+                    (len(tokens) == 1 and (own_title_field or introduced))
+                    or person_role
                 ):
+                    if person_role:
+                        name = None
                     role = "unreadable_person_heading"
         person_evidence.append((line, name, role))
 

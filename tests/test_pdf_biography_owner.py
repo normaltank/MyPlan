@@ -273,6 +273,53 @@ async def test_same_template_ordinary_section_remains_unknown_without_role_evide
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["王芳", "哔甲"])
+@pytest.mark.parametrize("role", ["教授", "博士", "男"])
+@pytest.mark.parametrize(
+    ("separator", "size"), [(" ", 12), ("", 16), ("glyph_spaces", 12)]
+)
+async def test_name_and_role_cannot_be_ignored_because_name_is_unfamiliar(
+    tmp_path, name, role, separator, size
+):
+    heading = (
+        " ".join(name) + " " + role
+        if separator == "glyph_spaces"
+        else name + separator + role
+    )
+    data = document(
+        [
+            [(OWNER + " 教授", 16)] + [("完整本人履历。", 12)] * 6,
+            [(heading, size)] + [("另一人的履历。", 12)] * 6,
+        ]
+    )
+    result = await audit(data, tmp_path, names={OWNER})
+    assert not result["biographies"]
+    assert any(
+        issue["status"] == "image_bio_owner_unresolved"
+        for issue in result["unresolved"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_verified_plain_name_with_adjacent_title_field_proves_owner_without_font_emphasis(
+    tmp_path,
+):
+    data = document(
+        [
+            [
+                (OWNER, 12),
+                ("职称：教授", 12),
+                ("完整本人经历。", 12),
+                ("完整研究内容。", 12),
+            ]
+        ]
+    )
+    result = await audit(data, tmp_path, names={OWNER})
+    assert not result["unresolved"]
+    assert result["biographies"][URL] == scan_media(data, "pdf")["text"].strip()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("other", ["王芳", "哔甲"])
 async def test_matching_person_heading_template_cannot_merge_unknown_owner(
     tmp_path, other
