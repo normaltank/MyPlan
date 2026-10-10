@@ -193,16 +193,8 @@ def _is_banner_arrow(control: Tag, roster_nodes: list[Tag]) -> bool:
 
 
 def _in_pager(control: Tag) -> bool:
-    ancestor = control
-    while ancestor is not None and getattr(ancestor, "name", None):
-        if ancestor.name in {"body", "html", "main"}:
-            return False
-        tokens = " ".join(ancestor.get("class", [])) + " " + str(ancestor.get("id", ""))
-        label = str(ancestor.get("aria-label", ""))
-        if re.search(r"(?:^|[-_\s])(?:pagination|pager|pages)(?:$|[-_\s])", tokens, re.I) or "pagination" in label.lower():
-            return True
-        ancestor = ancestor.parent
-    return False
+    from server.pagination_identity import pager_ancestor
+    return pager_ancestor(control) is not None
 
 
 def _banner_arrow_outside_roster(control: Tag, roster_nodes: list[Tag]) -> bool:
@@ -690,7 +682,9 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             next_control = page.locator(next_selector)
             count = await next_control.count()
             if forward_identity is not None and count==0:
-                displaced = displaced_controls(html,_unit_selector(branch),forward_identity,page.url)
+                visited_urls = {source_url for source_url, _ in captured}
+                displaced = displaced_controls(html,_unit_selector(branch),forward_identity,page.url,
+                    visited_urls=visited_urls if len(visited_urls) == len(captured) else None)
                 if displaced:
                     unresolved.append({'url':page.url,'page':page_number,'status':'pagination_not_verified',
                         'reason':'next_control_moved_outside_selector','selector':next_selector,

@@ -263,6 +263,81 @@ async def test_direct_forward_link_does_not_bind_to_a_shared_widgets_wrapper():
 
 @pytest.mark.asyncio
 @pytest.mark.browser
+async def test_empty_old_slot_cannot_hide_explicit_next_in_the_same_pager():
+    from playwright.async_api import async_playwright
+    from server.browser_batch_tool import _capture_branch
+
+    second = SECOND.replace(
+        '<span class="next"><a href="/list/3">Next</a></span>',
+        '<span class="next"></span><span class="shifted"><a rel="next" href="/list/3">Next</a></span>',
+    )
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            context = await context_for(
+                browser, [], {URL: FIRST, "https://faculty.example.edu/list/2": second}
+            )
+            pages, errors, evidence = await _capture_branch(
+                context, {"url": URL, "card_selector": CARDS, "next_selector": STABLE}
+            )
+            assert len(pages) == 2 and errors[0]["status"] == "pagination_not_verified"
+            assert evidence["end"] == "next_selector_not_verified"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_terminal_numeric_links_to_visited_documents_are_not_forward():
+    from playwright.async_api import async_playwright
+    from server.browser_batch_tool import _capture_branch
+
+    numbers = "".join(f'<a class="number" href="/list/{i}">{i}</a>' for i in (1, 2, 3))
+    bodies = {}
+    for index, name in enumerate(("张伟", "李明", "陈明"), 1):
+        forward = (
+            f'<a class="next" href="/list/{index + 1}">Next</a>' if index < 3 else ""
+        )
+        bodies[f"https://faculty.example.edu/list/{index}"] = (
+            f'<main><ul><li>{name}</li></ul><div class="pages">{numbers}{forward}</div></main>'
+        )
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            context = await context_for(browser, [], bodies)
+            pages, errors, evidence = await _capture_branch(
+                context,
+                {
+                    "url": URL,
+                    "card_selector": CARDS,
+                    "next_selector": ".pages > a.next",
+                },
+            )
+            assert len(pages) == 3 and not errors
+            assert evidence["end"] == "next_control_absent"
+        finally:
+            await browser.close()
+
+
+def test_unvisited_numeric_target_and_same_url_state_are_not_ignored():
+    first = '<main><li>张伟</li><div class="pages"><a class="next" href="/list/2">Next</a></div></main>'
+    identity = next_identity(first, "main li", ".next")
+    html = first.replace(
+        '<a class="next" href="/list/2">Next</a>', '<a href="/list/3">3</a>'
+    )
+    assert displaced_controls(
+        html,
+        "main li",
+        identity,
+        URL,
+        visited_urls={URL, "https://faculty.example.edu/list/2"},
+    ) == ["https://faculty.example.edu/list/3"]
+    ajax = html.replace("/list/3", "/list/1")
+    assert displaced_controls(ajax, "main li", identity, URL) == [URL]
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
 @pytest.mark.parametrize("selector,expected_count", [(FRAGILE, 2), (STABLE, 3)])
 async def test_actual_browser_cannot_treat_shifted_next_as_end(
     selector, expected_count
