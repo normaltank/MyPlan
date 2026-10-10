@@ -13,6 +13,14 @@ from server.source_qualification import source_event_issues
 
 FIXTURES = Path(__file__).parent/'fixtures'/'source-qualification'
 PLAN = {'school': '皖西学院', 'college': '法学院', 'source_kind': 'university_faculty_roster'}
+
+
+@pytest.mark.parametrize('label', ['导师队伍', '博士生导师', '硕士生导师', '教学队伍', '教学名师'])
+def test_actual_adviser_and_teaching_roster_labels_support_faculty_purpose(label):
+    from server.source_qualification import faculty_purpose
+    assert faculty_purpose(label, PLAN)
+    assert not faculty_purpose(label + '招聘公告', PLAN)
+    assert not faculty_purpose(label + '获奖新闻', PLAN)
 CASES = [
     ('https://zfxy.wxc.edu.cn/2019/0620/c323a114577/page.htm', '73b37664977d55a513c59e31c133a06123f3a6868a822705469b4bb22cf3b62c', 'div.wp_articlecontent > div.Article_Content > p.MsoNormal', 'organizational_membership'),
     ('https://zfxy.wxc.edu.cn/2009/1001/c323a20946/page.htm', 'b7ab38d9765d4386e3bbc9943836989fc0b7af0d2124fab7f22e3d2177f6389c', 'div.Article_Content > p[style*="widow-orphan"]:has(> span)', 'organizational_membership'),
