@@ -905,7 +905,8 @@ def _save_capture_snapshots(out, name, navigation_pages, all_pages, profile_html
     return snapshot_dir, snapshots
 
 
-def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_evidence, selector_sources):
+def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_evidence, selector_sources,
+                             candidates=()):
     unresolved = []
     from server.profile_content import scope_profile_html
     scoped_profile_html = dict(profile_html)
@@ -922,6 +923,19 @@ def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_eviden
             continue
         scoped, evidence, issue = scope_profile_html(profile_html[url], selector, url,
                                                    start_selector=start_selector)
+        if issue and issue['status'] == 'profile_content_selector_empty':
+            from server.empty_profile import EmptyProfileEvidence
+            empty = EmptyProfileEvidence.verify(url, profile_html[url], selector,
+                profile_live_evidence.get(url), candidates, selector_sources.get(url, []))
+            # Keep the raw capture for review; never let a known empty subtree
+            # turn into the full page's navigation in the observed record.
+            scoped_profile_html[url], _, _ = scope_profile_html(profile_html[url], selector, url, allow_empty=True)
+            if empty is not None:
+                scoped, evidence, issue = scope_profile_html(profile_html[url], selector, url, allow_empty=True)
+                evidence['empty_profile_evidence'] = empty.audit()
+            else:
+                issue['reason'] = 'empty_profile_evidence_unverified'
+                issue['browser_evidence'] = profile_live_evidence.get(url)
         if issue:
             unresolved.append(issue)
         else:
@@ -1268,7 +1282,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     # Preserve raw captures above; only the parser receives the verified subtree copy.
     scoped_profile_html, profile_scope_evidence, scope_issues = _scope_captured_profiles(
         profile_html, roster_reconciliation.profile_content_selectors,
-        profile_live_evidence, roster_reconciliation.profile_content_sources)
+        profile_live_evidence, roster_reconciliation.profile_content_sources, admitted)
     unresolved.extend(scope_issues)
     finish_stage("profile_capture_and_scope")
     from server.image_biography import (audit_profile_media, browser_asset_size, fetch_browser_asset,
@@ -1520,6 +1534,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "segment_name_evidence": segment_naming["evidence"] + pdf_reading["name_evidence"],
         "pdf_roster_evidence": pdf_reading["evidence"],
         "missing_profile_media_evidence": media_audit['missing_media_evidence'],
+        "missing_fields": [{"url": url, "name": evidence['empty_profile_evidence']['name'],
+                            "field": "简介", "status": "browser_verified_empty_profile"}
+                           for url, evidence in profile_scope_evidence.items()
+                           if evidence.get('empty_profile_evidence')],
         "image_table_evidence": table_reading["evidence"],
         "image_table_reviews_sha256": hashlib.sha256((out / "image_table_reviews.json").read_bytes()).hexdigest()
                                       if (out / "image_table_reviews.json").is_file() else None,
