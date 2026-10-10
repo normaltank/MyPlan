@@ -19,9 +19,9 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from server.dom_regions import is_noise_element
 
 try:
-    from server.titles import resolve_title, select_title, title_mentions, TitleField
+    from server.titles import resolve_title, select_title, title_mentions, title_expression_tail, TitleField
 except ImportError:
-    from titles import resolve_title, select_title, title_mentions, TitleField
+    from titles import resolve_title, select_title, title_mentions, title_expression_tail, TitleField
 
 _OPUS = str(Path(__file__).resolve().parent.parent / "Opus")
 if _OPUS not in sys.path:
@@ -290,6 +290,30 @@ def contact_email_candidates(root: Tag) -> Tuple[str, ...]:
 
 
 _TITLE_FIELD_LINE = re.compile(r'^(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?:\s*[:：]\s*(.*)|\s*)$')
+_BARE_TITLE_LABEL = re.compile(r'(?:^|[\s;；,，])(?:职\s*称|专\s*业\s*技\s*术\s*职\s*务)(?=\s|[:：]|$)')
+
+
+def _outside_title_groups(value: str) -> tuple[str, bool]:
+    """Separate parenthetical qualifications from top-level field boundaries."""
+    closes = {'(': ')', '（': '）', '[': ']', '【': '】'}
+    stack, outside = [], []
+    invalid = False
+    for char in value:
+        if char in closes:
+            stack.append(closes[char])
+            outside.append(' ')
+        elif char in closes.values():
+            if not stack or stack.pop() != char:
+                invalid = True
+            outside.append(' ')
+        else:
+            outside.append(' ' if stack else char)
+    return ''.join(outside), bool(stack) or invalid
+
+
+def _title_continuation(value: str) -> bool:
+    _, incomplete_group = _outside_title_groups(value)
+    return incomplete_group or value.rstrip().endswith(('/', '／', '、', '|'))
 
 
 def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
@@ -312,10 +336,31 @@ def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
             # A following labelled field is not this field's value.
             if re.match(r'^[^:：]+[:：]', value):
                 continue
-        mentions = title_mentions(value or '')
+        value = (value or '').strip()
+        cursor = index + (value_line != line_number)
+        # A dangling list operator or open qualification is not a complete
+        # field. Keep its following physical lines until the expression closes;
+        # a new explicit field remains a boundary rather than a continuation.
+        while _title_continuation(value) and cursor + 1 < len(lines):
+            next_number, next_line = lines[cursor + 1]
+            outside, _ = _outside_title_groups(next_line)
+            if (_TITLE_FIELD_LINE.fullmatch(next_line) or _BARE_TITLE_LABEL.search(outside)
+                    or re.search(r'[^\s:：]+[:：]', outside)):
+                break
+            # Continuations must contain a title, or only close an already
+            # open qualification. Unknown prose cannot complete a field.
+            if not title_expression_tail(next_line) and not re.fullmatch(r'[)）\]】\s]+', next_line):
+                break
+            value += '\n' + next_line
+            value_line = next_number
+            cursor += 1
+        outside, invalid_group = _outside_title_groups(value)
+        ambiguous = (invalid_group or _title_continuation(value)
+            or bool(re.search(r'[^\s:：]+[:：]', outside))
+            or bool(_BARE_TITLE_LABEL.search(outside)))
+        mentions = title_mentions(value)
         if mentions:
-            fields.append(TitleField((value or '').strip(), mentions,
-                (line_number, value_line), bool(re.search(r'[^\s:：]+[:：]', value or ''))))
+            fields.append(TitleField(value, mentions, (line_number, value_line), ambiguous))
     return tuple(fields)
 
 

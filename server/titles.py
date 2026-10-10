@@ -61,6 +61,13 @@ def resolve_title(header_text: str) -> str:
     return mentions[0] if mentions else '教师'
 
 
+def title_expression_tail(text: str) -> bool:
+    """Only title tokens and expression punctuation can extend a field line."""
+    alternatives = sorted([*TITLE_KEYWORDS, *_ENGLISH_TITLES], key=len, reverse=True)
+    remainder = re.sub('|'.join(re.escape(word) for word in alternatives), '', text, flags=re.I)
+    return bool(title_mentions(text)) and bool(re.fullmatch(r'[\s/／、|,，;；()（）\[\]【】]*', remainder))
+
+
 @dataclass(frozen=True)
 class TitleField:
     """One declared field; mentions within its value are not separate fields."""
