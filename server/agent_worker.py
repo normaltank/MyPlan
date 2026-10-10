@@ -48,10 +48,11 @@ import httpx
 
 from server.agent_queue import AgentTaskQueue
 from server.local_service_config import local_web_url
-from server.recovery_policy import NON_STRUCTURAL, classify_issues
+from server.recovery_policy import NON_STRUCTURAL, classify_issues, safe_failure_code, safe_failure_issues
 from server.agent_recon import (PlanHygieneError, ReconBudget, ReconBudgetExceeded,
                                ReconError, ReconPhaseLimitExceeded, ReconPlanError, ReconResult,
-                               build_repair_feedback, reconnoiter, run_metrics, validate_model_plan)
+                               build_repair_feedback, merge_repair_feedback, reconnoiter, run_metrics,
+                               validate_model_plan)
 
 __all__ = ["AgentWorker", "main"]
 
@@ -358,6 +359,7 @@ class AgentWorker:
                 task,
                 reason,
                 failure_codes=[u.get("status") for u in unresolved],
+                failure_issues=unresolved,
             )
             return
 
@@ -424,6 +426,7 @@ class AgentWorker:
 
         def save_runtime(result):
             from server.harvest_runtime_report import build_runtime_report
+            result['recovery'] = classify_issues(result.get('unresolved') or []).summary()
             result["runtime_report"] = build_runtime_report(attempts, browser_runs,
                 result.get("unresolved") or [], time.monotonic() - started, budget.snapshot())
             (output_dir / "runtime-report.json").write_text(json.dumps(
@@ -468,14 +471,16 @@ class AgentWorker:
             except (ReconPlanError, PlanHygieneError) as exc:
                 # Rejected output may contain teacher data: never replay it or
                 # interpolate the exception into feedback, artifacts, or logs.
-                feedback = getattr(exc, "safe_feedback", {"issues": [{"status": "plan_contract_rejected"}]})
+                rejected = getattr(exc, "safe_feedback", {"issues": [{"status": "plan_contract_rejected"}]})
+                feedback = merge_repair_feedback(feedback, rejected)
                 resume_discovery = getattr(exc, "discovery_checkpoint", None)
                 verified_branches = getattr(exc, "verified_branches", verified_branches)
                 attempts.append({**getattr(exc, "diagnostics", {}),
                                  "attempt": attempt + 1, "status": "plan_contract_rejected",
                                  "issues": feedback.get("issues", [])})
                 self._save_recon_audit(output_dir, attempts, "plan_contract_rejected")
-                report = {"delivery_ready": False, "unresolved": feedback["issues"],
+                report = {**report, "delivery_ready": False,
+                          "unresolved": [*(report.get('unresolved') or []), *rejected['issues']],
                           "recon_attempts": attempts.copy()}
                 if not classify_issues(feedback["issues"]).structure:
                     # A page fact the gate proved on two opens: another scout meets the same page.
@@ -873,7 +878,8 @@ class AgentWorker:
 
     # ── 失败出口（三要素围栏）────────────────────────────────────────────
     async def _mark_failed(self, task: Any, reason: str,
-                           failure_codes: list[str | None] | None = None) -> None:
+                           failure_codes: list[str | None] | None = None,
+                           failure_issues: list[dict] | None = None) -> None:
         """把工单标记为终态失败。
 
         注意：**绝不修改内存里的 `task.status`。**
@@ -886,8 +892,9 @@ class AgentWorker:
         try:
             stats = {"total": 0, "with_email": 0, "no_email": 0}
             if failure_codes:
-                stats["failure_codes"] = sorted({code for code in failure_codes
-                                                  if isinstance(code, str)})
+                stats["failure_codes"] = sorted({safe_failure_code(code) for code in failure_codes})
+            if failure_issues is not None:
+                stats['failure_issues'] = safe_failure_issues(failure_issues)
             path = self.output_dir / "tasks" / task.task_id / "recon-attempts.json"
             if path.is_file():
                 stats.update(recon_audit_path=str(path),

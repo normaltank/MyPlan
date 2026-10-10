@@ -424,7 +424,7 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
     """Pass structure failures back to the scout, never records or narrative text."""
     validate_model_plan(plan, school=plan["school"], college=plan["college"])
     issues = []
-    for item in report.get("unresolved", [])[:20]:
+    for item in report.get("unresolved", []):
         status = item.get("status", "")
         if not isinstance(status, str) or not re.fullmatch(r"[a-z_]{1,80}", status):
             continue
@@ -452,6 +452,39 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
             issue["branch_url"] = owner
         issues.append(issue)
     return {"previous_plan": plan, "issues": issues}
+
+
+def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
+    """A rejected proposal adds constraints; it cannot erase captured failures.
+
+    Both inputs are controlled structural feedback, never the model's rejected
+    response or exception text. A later successful capture replaces this set
+    with its own current audit; only that can settle a captured counterexample.
+    """
+    previous = previous or {}
+    merged = {**previous, **incoming}
+    issues = {}
+    for item in [*previous.get('issues', []), *incoming.get('issues', [])]:
+        issues[json.dumps(item, sort_keys=True, ensure_ascii=False)] = item
+    merged['issues'] = list(issues.values())
+    if 'known_urls' in previous or 'known_urls' in incoming:
+        merged['known_urls'] = list(dict.fromkeys(url for url in [
+            *previous.get('known_urls', []), *incoming.get('known_urls', [])] if _is_structure_url(url)))
+    prior_plan = previous.get('previous_plan')
+    proposed = incoming.get('previous_plan')
+    if prior_plan:
+        try:
+            if proposed is not None:
+                validate_model_plan(proposed, school=prior_plan['school'], college=prior_plan['college'])
+        except (PlanHygieneError, KeyError, TypeError):
+            proposed = None
+        prior_urls = {branch['url'] for branch in prior_plan.get('branches', [])}
+        proposed_urls = {branch.get('url') for branch in (proposed or {}).get('branches', [])}
+        # A failed phase may return only its accepted sibling branches. That is
+        # not a replacement for the complete plan whose audit found failures.
+        if not prior_urls <= proposed_urls:
+            merged['previous_plan'] = prior_plan
+    return merged
 
 
 def _profile_issue_branch(plan: dict[str, Any], issue: dict[str, Any]) -> str | None:
