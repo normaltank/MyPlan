@@ -1,6 +1,6 @@
 """Multi-person PDF rosters: several people written into one browser-observed PDF.
 
-Type (CONTEXT.md, 多人 PDF 名录): a verified roster card holds only a PDF
+Type (多人 PDF 名录): a verified roster card holds only a PDF
 (a PDF.js viewer, an ``<object>``/``<embed>`` or a download link) and no
 person.  The PDF itself is the roster.  This module reads the original the
 browser session fetched, page by page, and cuts it into one record per person

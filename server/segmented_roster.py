@@ -1,6 +1,6 @@
 """Segmented article rosters: several people written into one flat article body.
 
-Type (CONTEXT.md, 分段平铺名录): the verified article body has no wrapper per
+Type (分段平铺名录): the verified article body has no wrapper per
 person.  Each record begins at an element matched by ``record_start_selector``
 (a portrait or resume image, or a name heading) and runs, in document order,
 until the next start.  Content before the first start is the preamble and

@@ -5,7 +5,7 @@
 Date: 2026-09-22
 
 ## Status
-Accepted
+Historical / partially superseded. The original 2026-09-22 record said Accepted; it is retained below as historical rationale, not a current implementation or accuracy guarantee.
 
 ## Context and Problem Statement
 Earlier implementations of faculty list extraction and profile harvesting suffered from recurring issues:
