@@ -657,6 +657,13 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
     def tried(url, found):
         return {"proofs_on_url": sum(resolve(result.get("url")) == resolve(url) for _, result, _ in found)}
 
+    def completed(result, index, selector, found):
+        # An earlier absence observation cannot erase a later forward control.
+        return pagination_termination_valid(result, selector) and not any(
+            later_index > index and resolve(later.get('url')) == resolve(result.get('url'))
+            and (args.get('card_selector') or args.get('container_selector')) == selector
+            for args, later, later_index in found)
+
     for branch in plan["branches"]:
         issues.extend(source_event_issues(branch, events))
         if branch.get("kind") == "image_table":
@@ -668,8 +675,8 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 and (result["image_table"]["image_count"] > 0)
                 and result["image_table"]["image_count"] == result.get("cardCount")
                 and len(result["image_table"].get("image_urls", [])) == result["image_table"]["image_count"]
-                and pagination_termination_valid(result, branch.get("card_selector"))
-                for args, result, _ in observations)
+                and completed(result, index, branch.get("card_selector"), observations)
+                for args, result, index in observations)
             if not verified:
                 issues.append({"status": "table_image_selector_unverified", "url": branch["url"],
                                "selector": branch["card_selector"],
@@ -686,8 +693,8 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 and resolve(result.get("url")) == resolve(branch["url"])
                 and result.get("structure_ok") is True
                 and type(result.get("segment_count")) is int and result["segment_count"] > 0
-                and pagination_termination_valid(result, branch.get("container_selector"))
-                for args, result, _ in segment_observations)
+                and completed(result, index, branch.get("container_selector"), segment_observations)
+                for args, result, index in segment_observations)
             if not verified:
                 issues.append({"status": "segments_not_verified", "url": branch["url"],
                                "selector": branch.get("record_start_selector"),
@@ -703,10 +710,10 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 all(args.get(key) == branch.get(key) for key in SELECTORS)
                 and resolve(result.get("url")) == resolve(branch["url"])
                 and type(result.get("cardCount")) is int and result["cardCount"] == 0
-                and pagination_termination_valid(result, selector)
+                and completed(result, index, selector, observations)
                 and empty_roster_proof_valid(result.get("empty_roster"), branch,
                                             url=result.get("url"))
-                for args, result, _ in observations)
+                for args, result, index in observations)
             if not verified:
                 issues.append({"status": "empty_roster_not_verified", "url": branch["url"], "selector": selector,
                                **_gate_detail("empty_roster_proof_missing", tried(branch["url"], observations),
@@ -722,8 +729,7 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         if not matching:
             issues.append({"status": "selector_not_verified", "url": branch["url"], "selector": selector,
                            **_card_detail(branch, selector, observations, resolve)})
-        elif branch.get("single_page") and not any(pagination_termination_valid(result, selector)
-                                                  for _, result, _ in matching):
+        elif branch.get("single_page") and not completed(matching[-1][1], matching[-1][2], selector, observations):
             issues.append({"status": "single_page_pagination_unverified", "url": branch["url"], "selector": selector,
                            **_gate_detail("pagination_termination_unverified", {"pagination_total": (
                                matching[-1][1].get("pagination") or {}).get("total")},

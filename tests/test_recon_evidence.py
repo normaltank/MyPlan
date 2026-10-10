@@ -67,6 +67,18 @@ def test_candidate_zero_without_terminal_observation_cannot_prove_single_page():
     assert agent_recon.selector_evidence_issues(PLAN, events)[0]['status'] == 'single_page_pagination_unverified'
 
 
+def test_earlier_candidate_zero_cannot_erase_later_observed_forward_control():
+    first, later = verification(), verification()
+    later[0]['data']['callId'] = 'later'
+    later[1]['data']['message']['content'][0]['toolCallId'] = 'later'
+    block = later[1]['data']['message']['content'][0]['content'][0]
+    result = json.loads(block['text'])
+    result['pagination_termination'].update(confirmed=False, unresolved_forward_controls=1)
+    # Even a zero candidate count cannot override the complete-page observation.
+    block['text'] = json.dumps(result)
+    assert agent_recon.selector_evidence_issues(PLAN, first + later)[0]['status'] == 'single_page_pagination_unverified'
+
+
 def test_discovered_urls_require_successful_browser_observation():
     events = verification()
     events[0]["data"]["name"] = "mcp__playwright__browser_navigation"

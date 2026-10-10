@@ -1,5 +1,6 @@
 """Profile-container proof in one call: candidates, failure details, multi-sample proof."""
 import json
+from pagination_contract_fixture import termination
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -127,7 +128,7 @@ async def test_one_call_proposes_common_candidates_and_proves_both_samples(tmp_p
     roster = ("browser_verify", {"card_selector": "ul > li"},
               {"content": [{"type": "text", "text": json.dumps({
                   "url": branch["url"], "cardCount": 2, "linkedSamples": [f"{base}/old/1", samples[1]],
-                  "nextCount": 0, "pagination": {"total": 0}})}], "isError": False})
+                  "nextCount": 0, "pagination": {"total": 0}, "pagination_termination": termination(branch["url"], "ul > li")})}], "isError": False})
     plan = {"school": "某大学", "college": "某学院", "branches": [branch]}
     # The multi-sample proof counts per page, and the redirect it followed maps
     # the roster's link to the page it proved.
