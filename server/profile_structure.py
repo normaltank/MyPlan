@@ -6,6 +6,7 @@ import hashlib
 import time
 from typing import Any
 from urllib.parse import urlsplit
+from server.word_toc import LIVE_GUARD
 
 
 _FACTS = r"""args => {
@@ -29,10 +30,14 @@ _FACTS = r"""args => {
     && ((n.textContent||'').trim() || n.matches(media)));
   // Same rule as profile_content.trivial_hidden: an editor placeholder such as
   // 'invisible' is not hidden profile content; names, numbers, e-mails or Chinese are.
-  const wordHidden=n=>(n.getAttribute('style')||'').replace(/\s+/g,'').toLowerCase().includes('mso-hide:all');
+  const wordHidden=n=>['窗体顶端','窗体底端'].includes((n.textContent||'').trim())
+    && (n.getAttribute('style')||'').replace(/\s+/g,'').toLowerCase().includes('mso-hide:all');
+  // Bound to server-parsed Word rows in this exact capture. Revalidate the
+  // current leaf, link and content so a changed hidden name/media is never ignored.
+""" + LIVE_GUARD + r"""
   const trivial=n=>!n.matches(media) && !n.querySelector(media)
-    && (n.textContent||'').trim().length<=args.trivialChars
-    && (!/[\u4e00-\u9fff@\d]/.test(n.textContent||'') || wordHidden(n));
+    && (tocContext(n) ? toc(n) : ((n.textContent||'').trim().length<=args.trivialChars
+    && (!/[\u4e00-\u9fff@\d]/.test(n.textContent||'') || wordHidden(n))));
   const hidden=relevant.filter(n=>!visible(n) && !trivial(n)).length;
   const active=root?root.getAnimations({subtree:true}).filter(a=>
     a.playState==='running' && (a.effect?.target===root || retained.includes(a.effect?.target))).length:0;
@@ -48,7 +53,10 @@ _FACTS = r"""args => {
     return [s.display,s.visibility,s.opacity,s.contentVisibility,s.transform];
   });
   return {container_count:nodes.length,container_visible:visible(root),
-    hidden_content_count:hidden,start_valid:startValid,active_animation_count:active+ancestorActive,styles};
+    hidden_content_count:hidden,start_valid:startValid,active_animation_count:active+ancestorActive,styles,
+    document_complete:document.readyState==='complete',
+    identity_headings:args.allowEmpty?[...document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+      .filter(n=>!n.closest('nav,header,footer,aside') && visible(n)).map(n=>n.textContent||''):[]};
 }"""
 
 
@@ -174,13 +182,15 @@ _HIDDEN_PATHS = r"""args => {
   const media='img,picture,svg,canvas,iframe,object,embed,video,audio';
   const label=n=>n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+[...n.classList].slice(0,2).map(c=>'.'+c).join('');
   const where=n=>{const parts=[];for(let p=n;p&&p!==root&&parts.length<4;p=p.parentElement)parts.unshift(label(p));return parts.join(' > ');};
+""" + LIVE_GUARD + r"""
   const out=[];
   for(const n of root.querySelectorAll('*')){
     if(n.matches('script,style,noscript,template') || out.some(item=>item.node.contains(n))) continue;
     const text=(n.textContent||'').trim();
     if(!(text || n.matches(media)) || shown(n)) continue;
+    if(tocContext(n) && toc(n)) continue;
     if(!n.matches(media) && !n.querySelector(media) && text.length<=args.trivialChars
-       && !/[一-鿿@\d]/.test(text)) continue;
+       && !tocContext(n) && !/[一-鿿@\d]/.test(text)) continue;
     out.push({node:n, where:'descendant', path:where(n), text_chars:text.length,
       media:n.querySelectorAll(media).length+(n.matches(media)?1:0)});
     if(out.length>=3) break;
@@ -221,7 +231,9 @@ async def failure_details(page: Any, html: str, result: dict) -> dict:
         blockers = hidden_blockers(html, selector, start_selector=result.get("profile_content_start_selector"))
     elif result.get("reason") == "hidden_content":
         try:
-            blockers = await page.evaluate(_HIDDEN_PATHS, {"selector": selector, "trivialChars": TRIVIAL_HIDDEN_CHARS})
+            from server.word_toc import live_decorations
+            blockers = await page.evaluate(_HIDDEN_PATHS, {"selector": selector, "trivialChars": TRIVIAL_HIDDEN_CHARS,
+                "wordToc": live_decorations(html, selector)})
         except Exception:
             blockers = []
     else:
@@ -234,7 +246,8 @@ async def failure_details(page: Any, html: str, result: dict) -> dict:
 async def verify_profile_container(page: Any, selector: str, start_selector: str | None = None,
                                    *, local_capture: dict[str, Any] | None = None,
                                    recurring_failures: list[tuple[str, str]] | None = None,
-                                   recurring_missing_media: list[tuple[str, str, int]] | None = None) -> dict:
+                                   recurring_missing_media: list[tuple[str, str, int]] | None = None,
+                                   allow_empty: bool = False) -> dict:
     """Return compact facts; an optional Python-only sink retains the bound HTML.
 
     Browser tools do not expose the sink. It prevents a second page.content()
@@ -263,12 +276,15 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         activity, image_activity = tracker.activity, tracker.image_activity
         initially_idle = tracker.available and tracker.navigation_observed
         html = await page.content()
-        _, first_evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
+        _, first_evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector,
+                                                     allow_empty=allow_empty)
         if issue:
             result['scope_issue'] = result['reason'] = issue['status']
             return result
         from server.profile_content import TRIVIAL_HIDDEN_CHARS
-        args = {"selector": selector, "start": start_selector, "trivialChars": TRIVIAL_HIDDEN_CHARS}
+        from server.word_toc import live_decorations
+        args = {"selector": selector, "start": start_selector, "trivialChars": TRIVIAL_HIDDEN_CHARS,
+                "wordToc": live_decorations(html, selector), "allowEmpty": first_evidence['empty_container']}
         first_facts = await page.evaluate(_FACTS, args)
         # A finite entrance animation is not evidence of an incomplete article.
         # Wait for two stable samples; continuing animation/DOM changes still block.
@@ -277,7 +293,10 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         while True:
             await asyncio.sleep(0.3)
             html = await page.content()
-            _, evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
+            _, evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector,
+                                                   allow_empty=allow_empty)
+            args['wordToc'] = live_decorations(html, selector)
+            args['allowEmpty'] = bool(evidence and evidence['empty_container'])
             facts = await page.evaluate(_FACTS, args)
             settle_samples += 1
             selected_stable = bool(not issue and evidence and first_evidence
@@ -386,6 +405,8 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                                                 != tracker.activity - tracker.image_activity),
                       hidden_content_count=facts['hidden_content_count'], start_valid=facts['start_valid'],
                       active_animation_count=facts['active_animation_count'])
+        result['document_complete'] = facts['document_complete']
+        result['script_error_count'] = tracker.script_errors
         result['settle_samples'] = settle_samples
         if page_blocking:
             result['page_blocking_requests'] = [
@@ -393,6 +414,12 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                 for url, kind, status in page_blocking[:3]]
         if evidence:
             result['selected_html_sha256'] = evidence['selected_html_sha256']
+            result['empty_container'] = evidence['empty_container']
+            if evidence['empty_container']:
+                # Only visible article headings can establish an empty page's
+                # identity. Navigation text and the document title cannot.
+                from server.empty_profile import heading_digest
+                result['visible_identity_heading_sha256'] = [heading_digest(text) for text in facts['identity_headings']]
         if issue:
             result['scope_issue'] = issue['status']
         result["confirmed"] = (facts["container_count"] == 1 and facts["container_visible"]
