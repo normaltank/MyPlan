@@ -2,9 +2,9 @@
 
 Real CMS pages seen in production: a Word-pasted <style style="display:none"> inside the
 body, an editor's hidden 'invisible' placeholder, a theme stylesheet or script that the
-server answers 404, or that fails the same way again when the page is opened anew,
-and a leftover editor image answered 404 on both opens that the page gives no room.
+server answers 404, or that fails the same way again when the page is opened anew.
 Content requests, script-built bodies and hidden text that could be content still block.
+Missing body images require media review even when the DOM scope is confirmed.
 """
 import json
 
@@ -112,10 +112,32 @@ async def test_script_built_content_and_profile_media_still_block(tmp_path):
     rewritten = await verify(tmp_path, '<script src="/gone.js"></script><article><p>加载中</p></article>'
                                        f'<script>document.querySelector("article").innerHTML={json.dumps(BODY)}</script>')
     assert rewritten["confirmed"] is False and rewritten["server_rendered_content"] is False
-    # a portrait the page gives room to; an unsized one gone on both opens showed nothing
-    missing_portrait = await verify(tmp_path, f'<article><img src="/photo.jpg" width="120" height="160">{BODY}</article>')
-    assert missing_portrait["confirmed"] is False
-    assert missing_portrait["blocking_requests"][0]["type"] == "image"
+    # Scope proof preserves the missing image evidence; the media audit blocks
+    # delivery until a human establishes its role, regardless of its dimensions.
+    from server.image_biography import BrowserAssetError, audit_profile_media
+
+    html = f'<article><img src="/photo.jpg" width="120" height="160">{BODY}</article>'
+    missing_portrait = await verify(tmp_path, html)
+    assert missing_portrait["confirmed"] is True
+    assert missing_portrait["unpublished_images"] == []
+    [missing] = missing_portrait["missing_content_images"]
+    media_url = "https://scope.example.edu/photo.jpg"
+    assert missing["profile_url"] == URL and missing["media_url"] == media_url
+    assert missing["http_status"] == 404 and missing["missing_on_two_opens"] is True
+    scoped, _, issue = scope_profile_html(html, "article", URL)
+    assert issue is None
+
+    async def fetch_asset(url):
+        assert url == media_url
+        raise BrowserAssetError(404, url)
+
+    audit = await audit_profile_media(
+        {URL: scoped}, {URL: {"张三"}}, tmp_path / "media", fetch_asset=fetch_asset,
+        scoped_urls={URL}, missing_media_evidence={URL: [missing]},
+        profile_source_html={URL: html})
+    assert [item["status"] for item in audit["unresolved"]] == ["missing_profile_media_needs_review"]
+    assert audit["missing_media_evidence"][0]["id"] == missing["id"]
+    assert audit["unpublished_media"] == []
 
 
 @pytest.mark.asyncio
