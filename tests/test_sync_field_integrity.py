@@ -30,7 +30,7 @@ def test_empty_email_receipt_matches_no_email_counts(tmp_path, email):
 def test_long_biography_receipt_is_rejected_without_editing_source(tmp_path):
     path, root = _report(tmp_path)
     change_record(path, 简介='甲' * 32768)
-    with pytest.raises(ValueError, match='excel_cell_too_long'):
+    with pytest.raises(ValueError, match='full biography workbook'):
         build_payload(path, 'worker', 'lease', root)
     assert len(json.loads((tmp_path / 'records.json').read_text(encoding='utf-8'))[0]['简介']) == 32768
 

@@ -12,6 +12,8 @@
 
 ## 已有代码入口
 
+长简介导出增量：`biography_workbook` 在同一工作簿分段保留超长正文，人员 Sheet 仍一人一行；同步核验实际文件，队列核对记录回执。相关 50 项及 70,033 字符固定原件回读通过，独立复核、CI 与实跑待核，见 [说明](docs/implementation/2026-10-10-full-biography-workbook.md)。
+
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
 
 分页位移增量 [PR #53](https://github.com/normaltank/MyPlan/pull/53) 已在 abf7390 的[完整CI](https://github.com/normaltank/MyPlan/actions/runs/38036723639)和两轴独立复核通过后合并。原用户改动保留；定向重验与常驻服务加载、全院验收分别核对。机制和限制见 [说明](docs/implementation/2026-10-10-moving-pagination.md)，不能据合并宣布学院完成。

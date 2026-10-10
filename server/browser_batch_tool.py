@@ -1481,6 +1481,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     records_path = out / f"{name}_records.json"
     records_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     excel_path = None
+    biography_storage = None
     if ready:
         excel = out / f"{name}.xlsx"
         excel_path = commit_records(
@@ -1488,9 +1489,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             str(excel),
             exporter=excel_export.export_dual_sheet_excel,
         )
+        biography_storage = excel_export.verify_biography_storage(excel_path, records)
 
     finish_stage("coverage_and_delivery")
     report = {
+        **({'biography_storage': biography_storage} if biography_storage else {}),
         "stage_seconds": stage_seconds,
         "status": "completed" if ready else "needs_agent_review",
         "delivery_ready": ready,
