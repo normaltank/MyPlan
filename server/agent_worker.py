@@ -915,6 +915,9 @@ class AgentWorker:
             if runtime_path.is_file():
                 with contextlib.suppress(OSError, ValueError):
                     stats["runtime_report"] = json.loads(runtime_path.read_text(encoding="utf-8"))
+                    for field in ('source_dispositions', 'source_disposition_evidence', 'previous_source_audit_path'):
+                        if field in stats['runtime_report']:
+                            stats[field] = stats['runtime_report'][field]
             self.queue.sync_task_result(
                 task.task_id, [], stats,
                 "", reason,
