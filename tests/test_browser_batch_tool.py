@@ -8,6 +8,7 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+from bs4 import BeautifulSoup
 
 import server.browser_batch_tool as batch_tool
 from server.browser_batch_tool import _capture_branch, _roster_signature, _validate_plan, run_plan
@@ -68,7 +69,14 @@ class FakePage:
         return Response()
 
     async def content(self):
-        return self.context.pages[self.url][self.index]
+        html = self.context.pages[self.url][self.index]
+        # The fake locator's advancing control must also exist in its HTML.
+        # Real browsers cannot click a control absent from the captured DOM.
+        if (self.context.synthetic_pagination
+                and self.index < len(self.context.pages[self.url]) - 1
+                and not BeautifulSoup(html, 'html.parser').select('.next')):
+            html = html.replace('</main>', '<button class="next">Next</button></main>')
+        return html
 
     def locator(self, selector):
         return FakeLocator(self, selector)
@@ -78,11 +86,12 @@ class FakePage:
 
 
 class FakeContext:
-    def __init__(self, pages, stuck=(), assets=None):
+    def __init__(self, pages, stuck=(), assets=None, *, synthetic_pagination=False):
         self.pages = {url: [html] if isinstance(html, str) else html for url, html in pages.items()}
         self.stuck = set(stuck)
         self.visits = []
         self.assets = assets or {}
+        self.synthetic_pagination = synthetic_pagination
 
         class Request:
             async def get(_, url, **_kwargs):
@@ -202,7 +211,7 @@ async def test_browser_batch_captures_all_pages_profiles_and_full_bio(tmp_path):
     pages = {f"{base}/roster": [roster(first), roster(second)]}
     pages.update({f"{base}/p/{i}.htm": profile(name, f"{i:010d}@example.edu")
                   for i, name in first + second})
-    browser = FakeContext(pages)
+    browser = FakeContext(pages, synthetic_pagination=True)
     plan = {"school": "样本大学", "college": "样本学院", "branches": [
         {"url": f"{base}/roster", "next_selector": ".next", "max_pages": 3,
          "card_selector": "main li"}
@@ -430,7 +439,8 @@ async def test_hospital_current_university_appointment_admits_only_proven_person
 async def test_unchanged_pagination_is_unresolved_and_blocks_export(tmp_path):
     url = "https://faculty.example.edu/roster"
     browser = FakeContext({url: [roster([(1, "张富有"), (2, "刘圣洁"), (3, "孙洁")]),
-                                 roster([(4, "赵文成"), (5, "王英华"), (6, "周立新")])]}, stuck=[url])
+                                 roster([(4, "赵文成"), (5, "王英华"), (6, "周立新")])]}, stuck=[url],
+                          synthetic_pagination=True)
     plan = {"school": "样本大学", "college": "样本学院", "branches": [
                         {"url": url, "next_selector": ".next", "max_pages": 3,
                          "card_selector": "main li"}
@@ -449,9 +459,9 @@ async def test_pagination_that_only_changes_page_chrome_is_unresolved(tmp_path):
     names = [(1, "张富有"), (2, "刘圣洁"), (3, "孙洁")]
     first = roster(names)
     browser = FakeContext({url: [first + "<footer>clock 1</footer>",
-                                 first + "<footer>clock 2</footer>"]})
+                                 first + "<footer>clock 2</footer>"]}, synthetic_pagination=True)
     plan = {"school": "样本大学", "college": "样本学院", "branches": [
-        {"url": url, "next_selector": ".next", "max_pages": 3}
+        {"url": url, "next_selector": ".next", "max_pages": 3, "card_selector": "main li"}
     ]}
 
     result = await run_plan(plan, browser, tmp_path)

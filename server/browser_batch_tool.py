@@ -582,6 +582,8 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
     unresolved: list[dict] = []
     evidence = {"url": url, "visited_pages": 0, "next_clicks": 0, "end": "unresolved",
                 "restored_pages": 0}
+    from server.pagination_identity import next_identity, same_identity, displaced_controls
+    forward_identity = None
     try:
         saved = resume_pages or []
         start_page = 1
@@ -607,6 +609,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 captured = [(row["url"], row["html"]) for row in saved]
                 start_page = len(saved)
                 evidence.update(restored_pages=len(saved), resumed_from_page=start_page)
+                forward_identity = next_identity(saved[0]['html'],_unit_selector(branch),branch['next_selector'])
             else:
                 evidence["resume_rejected"] = "frontier_changed_or_unavailable"
         if not evidence["restored_pages"]:
@@ -686,6 +689,16 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             next_selector = branch["next_selector"]
             next_control = page.locator(next_selector)
             count = await next_control.count()
+            if forward_identity is not None and count==0:
+                displaced = displaced_controls(html,_unit_selector(branch),forward_identity,page.url)
+                if displaced:
+                    unresolved.append({'url':page.url,'page':page_number,'status':'pagination_not_verified',
+                        'reason':'next_control_moved_outside_selector','selector':next_selector,
+                        'sample_urls':[target for target in displaced if target]})
+                    evidence['end']='next_selector_not_verified'
+                    evidence['pagination_identity_failure']={'source_sha256':hashlib.sha256(html.encode()).hexdigest(),
+                        'page':page_number,'planned_control_matches':0,'displaced_control_count':len(displaced)}
+                    break
             if count == 0 and page_number == 1:
                 # Recon verified exactly one next control on the entry page; its
                 # absence here is unproven, not the end of the roster.
@@ -698,6 +711,19 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             if count != 1:
                 unresolved.append({"url": page.url, "page": page_number,
                                    "status": "next_control_not_unique", "selector": next_selector})
+                break
+            current_identity = next_identity(html,_unit_selector(branch),next_selector)
+            if current_identity is None or current_identity.get('binding_count') != 1:
+                unresolved.append({'url':page.url,'page':page_number,'status':'pagination_not_verified',
+                    'reason':'next_control_binding_ambiguous','selector':next_selector})
+                evidence['end']='next_selector_not_verified'
+                break
+            if forward_identity is None:
+                forward_identity = current_identity
+            elif not same_identity(forward_identity,current_identity):
+                unresolved.append({'url':page.url,'page':page_number,'status':'pagination_not_verified',
+                    'reason':'next_control_identity_changed','selector':next_selector})
+                evidence['end']='next_selector_not_verified'
                 break
             if not await next_control.is_enabled():
                 evidence["end"] = "next_control_disabled"
@@ -827,7 +853,7 @@ async def _capture_sources_with_state(plan, browser_context, state):
                         valid = False
                         break
                     saved.append(record)
-            if valid and bundle["sha256"] == saved[0]["sha256"]:
+            if valid and bundle["sha256"] == saved[0]["sha256"] and branch.get('single_page'):
                 restored_branches += 1
                 evidence = {**proof, "restored": True,
                             "captured_at": bundle["captured_at"]}
