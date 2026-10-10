@@ -25,6 +25,18 @@ python -m server.site_type_registry --audit <保存的学院审计.json> --db <�
 ```
 Windows 本机也可双击 `双击启动局域网服务.bat`。它会检查后台接单心跳，缺少在线消费者时启动常驻 `server.agent_worker`，然后启动网页；已在线的消费者或已监听的网页不会重复启动。两者都已在运行时，窗口会打开网页并提示后等待回车，不会一闪而过。worker 启动自检未通过时，网页顶部会显示"后台接单离线 · 启动自检未通过"和第一条原因。**更新代码后请双击 `重启本地服务.bat`**：它只结束本项目虚拟环境里的接单进程与网页进程（含子进程），再按同样流程重新启动；旧的网页窗口会显示已退出，直接关闭即可。每次启动的过程记录在 `.runtime/launcher.log`。首次启动接单服务时，窗口会要求输入 DeepSeek API Key（输入不回显），并用当前 Windows 账号加密保存在本机 `.runtime/deepseek-api-key.dpapi`；此文件不能复制到其他账号或服务器当作凭据。当前账号后续双击无需重输。worker 日志在 `.runtime/local-worker.out.log` 和 `.runtime/local-worker.err.log`。网页默认端口 8000，本机地址 `http://127.0.0.1:8000`，同事访问见第 2 节。
 
+### 显式浏览器代理（2026-10-10，开发增补）
+
+浏览器与 Harness API 是不同网络客户端，HTTP_PROXY/HTTPS_PROXY 不自动配置 Chromium。需要代理访问官网时，可在不进入 Git 的 `.runtime/local-services.json` 添加 `browser_proxy`，例如：
+
+```json
+{"port":18000,"browser_proxy":{"server":"http://127.0.0.1:7897","bypass":"localhost,127.0.0.1,.example.edu"}}
+```
+
+例中的端口和直连域名必须按本机实际网络配置填写，不使用学校专用源码规则。也可显式设置 `HARVEST_BROWSER_PROXY` 和 `HARVEST_BROWSER_PROXY_BYPASS`；环境配置优先。代理服务器须为带端口的 http/https/socks5 URL；凭据只通过独立 `username`/`password` 字段提供，不嵌入 URL、日志或 Git。启动器先校验本地配置，再停止旧服务。没有设置时仍直接访问；离线 `polite=False` 回放不继承配置，调用方显式 proxy 参数优先。HTTPS 证书验证不因代理而关闭。
+
+该配置经新 worker/浏览器上下文加载；现有租约运行时不要盲目重启。与上述 Web 端口、worker 回传地址相互独立。WebPlus 单页遇到脚本/样式 404/410 时，须有原始服务器名单与组件摘要一致、完整单页导航和真实跳转控制器响应，随后继续点击 next 和稳定性取证；无控件、临时请求失败、未读图片、数据请求或脚本异常不能据此豁免。
+
 ### 本机端口覆盖
 
 Windows 若将默认 8000 列入 TCP 排除范围，可在 `.runtime/local-services.json` 中设置可用端口，例如 `{"port":18000}`，然后使用正式启动／重启 BAT。该文件不进入 Git，项目默认端口仍取自 `server/config.json`。Web、worker 默认回传地址、手动同步 CLI 和启动脚本共同读取此配置；显式 `--base-url` 优先于默认地址。端口必须是 1 至 65535 的整数，错误配置会在重启停止旧服务之前拒绝执行。端口变了，同事访问地址也跟着变。
