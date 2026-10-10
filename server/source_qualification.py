@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from typing import Literal
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -84,6 +84,34 @@ def _institution_context(node) -> bool:
     return bool(re.search(r'版权所有|copyright', node.get_text(' ', strip=True), re.I))
 
 
+def _branding_text(context, url: str, field: str) -> str:
+    """Read this site's branding rather than a link to another institution."""
+    fragment = BeautifulSoup(str(context), 'html.parser')
+    current = urlsplit(url)
+    host = (current.hostname or '').removeprefix('www.')
+    for anchor in list(fragment.select('a[href]')):
+        href = str(anchor['href']).strip()
+        destination = urlsplit(urljoin(url, href))
+        linked_host = (destination.hostname or '').removeprefix('www.')
+        institution_home = (bool(linked_host) and len(linked_host.split('.')) >= 2
+                            and (host == linked_host or host.endswith('.' + linked_host)))
+        same_site = destination.hostname == current.hostname
+        page_path = destination.path.rstrip('/')
+        local_section = (same_site and (not page_path or current.path == destination.path
+                                        or current.path.startswith(page_path + '/')))
+        navigation = any(parent.name == 'nav' or parent.get('role') == 'navigation'
+                         or re.search(r'(?:^|[-_\s])(?:nav(?:igation|bar)?|menu)(?:$|[-_\s])',
+                                      ' '.join([str(parent.get('id') or ''), *parent.get('class', [])]), re.I)
+                         for parent in anchor.parents)
+        logo = same_site and anchor.find('img') is not None and not navigation
+        allowed = institution_home if field == 'school' else local_section or logo
+        if (destination.scheme not in {'http', 'https'} or not href or href.startswith('#')
+                or not allowed):
+            anchor.decompose()
+    return fragment.get_text(' ', strip=True) + ' ' + ' '.join(
+        str(image.get('alt') or image.get('title') or '') for image in fragment.find_all('img'))
+
+
 def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     """Read complete local witnesses; a model supplies only role and CSS."""
     result = {'url': url, **{key: branch.get(key) for key in SOURCE_FIELDS},
@@ -125,9 +153,8 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
                  if urljoin(url, a['href']) == url]
     if heading.name == 'a' and heading.get('href') and urljoin(url, heading['href']) == url:
         own_links.append(heading_text)
-    context_text = ' '.join(context.get_text(' ', strip=True) + ' ' + ' '.join(
-        str(node.get('alt') or node.get('title') or '') for node in context.find_all(['img', 'a']))
-        for context in contexts)
+    branding = {field: ' '.join(_branding_text(context, url, field) for context in contexts)
+                for field in ('school', 'college')}
     college = str(target.get('college') or '').strip()
     school = str(target.get('school') or '').strip()
     # Schools often put university and college branding in separate page
@@ -136,7 +163,7 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     separate_context = all(scope is not context and scope not in context.descendants
                            and context not in scope.descendants for context in contexts)
     institutional_context = all(_institution_context(context) for context in contexts)
-    college_bound = bool(college and college in context_text and school and school in context_text
+    college_bound = bool(college and college in branding['college'] and school and school in branding['school']
                          and separate_context and institutional_context)
     result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
     if branch['source_role'] == 'faculty_roster':
