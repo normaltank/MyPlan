@@ -123,9 +123,12 @@ async def capture_profiles(
                 retryable = True
                 try:
                     page = await browser_context.new_page()
+                    page_errors = []
                     if scoped:
                         from server.browser_readiness import install_request_tracking
                         install_request_tracking(page)
+                        page.on('pageerror', lambda error: page_errors.append(
+                            {'message': str(error), 'stack': getattr(error, 'stack', '')}))
                     response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                     if response is not None and response.status >= 400:
                         retryable = response.status == 429 or response.status >= 500
@@ -156,7 +159,11 @@ async def capture_profiles(
                             proof = await verify_profile_container(page, selector, start_selector,
                                                                    local_capture=local_capture,
                                                                    recurring_failures=recurring,
-                                                                   recurring_missing_media=recurring_missing)
+                                                                   recurring_missing_media=recurring_missing,
+                                                                   allow_empty=True)
+                            # Raw page errors remain in the local audit; structure
+                            # proof still decides whether the profile is settled.
+                            proof['page_errors'] = page_errors
                             if len(scope_pairs) > 1:
                                 proof["equivalent_profile_content_selectors"] = sorted(
                                     selector for selector, _ in scope_pairs)

@@ -124,7 +124,8 @@ def hidden_blockers(html: str, selector: str, *, start_selector: str | None = No
     return found[:limit]
 
 
-def scope_profile_html(html: str, selector: str, url: str, *, start_selector: str | None = None
+def scope_profile_html(html: str, selector: str, url: str, *, start_selector: str | None = None,
+                       allow_empty: bool = False
                        ) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
     """Return a complete selected subtree copy, evidence, or a blocking issue."""
     def fail(status: str):
@@ -195,7 +196,8 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
     has_text = bool(text_copy.get_text(' ', strip=True))
     from server.image_biography import media_references
     has_media = bool(media_references(str(text_copy), url))
-    if not has_text and not has_media:
+    empty = not has_text and not has_media
+    if empty and not (allow_empty and start_selector is None):
         return fail('profile_content_start_selector_empty' if start_selector is not None
                     else 'profile_content_selector_empty')
     selected = str(node)
@@ -207,5 +209,6 @@ def scope_profile_html(html: str, selector: str, url: str, *, start_selector: st
                 'hidden_placeholders_removed': len(placeholders),
                 'word_toc_decorations_removed': len(toc_decorations),
                 'word_toc_decorations': toc_decorations,
+                'empty_container': empty,
                 'image_only_candidate': not has_text and has_media}
     return '<html><body>' + selected + '</body></html>', evidence, None

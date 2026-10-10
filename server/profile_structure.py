@@ -53,7 +53,10 @@ _FACTS = r"""args => {
     return [s.display,s.visibility,s.opacity,s.contentVisibility,s.transform];
   });
   return {container_count:nodes.length,container_visible:visible(root),
-    hidden_content_count:hidden,start_valid:startValid,active_animation_count:active+ancestorActive,styles};
+    hidden_content_count:hidden,start_valid:startValid,active_animation_count:active+ancestorActive,styles,
+    document_complete:document.readyState==='complete',
+    identity_headings:args.allowEmpty?[...document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+      .filter(n=>!n.closest('nav,header,footer,aside') && visible(n)).map(n=>n.textContent||''):[]};
 }"""
 
 
@@ -243,7 +246,8 @@ async def failure_details(page: Any, html: str, result: dict) -> dict:
 async def verify_profile_container(page: Any, selector: str, start_selector: str | None = None,
                                    *, local_capture: dict[str, Any] | None = None,
                                    recurring_failures: list[tuple[str, str]] | None = None,
-                                   recurring_missing_media: list[tuple[str, str, int]] | None = None) -> dict:
+                                   recurring_missing_media: list[tuple[str, str, int]] | None = None,
+                                   allow_empty: bool = False) -> dict:
     """Return compact facts; an optional Python-only sink retains the bound HTML.
 
     Browser tools do not expose the sink. It prevents a second page.content()
@@ -272,14 +276,15 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         activity, image_activity = tracker.activity, tracker.image_activity
         initially_idle = tracker.available and tracker.navigation_observed
         html = await page.content()
-        _, first_evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
+        _, first_evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector,
+                                                     allow_empty=allow_empty)
         if issue:
             result['scope_issue'] = result['reason'] = issue['status']
             return result
         from server.profile_content import TRIVIAL_HIDDEN_CHARS
         from server.word_toc import live_decorations
         args = {"selector": selector, "start": start_selector, "trivialChars": TRIVIAL_HIDDEN_CHARS,
-                "wordToc": live_decorations(html, selector)}
+                "wordToc": live_decorations(html, selector), "allowEmpty": first_evidence['empty_container']}
         first_facts = await page.evaluate(_FACTS, args)
         # A finite entrance animation is not evidence of an incomplete article.
         # Wait for two stable samples; continuing animation/DOM changes still block.
@@ -288,8 +293,10 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
         while True:
             await asyncio.sleep(0.3)
             html = await page.content()
-            _, evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector)
+            _, evidence, issue = scope_profile_html(html, selector, page.url, start_selector=start_selector,
+                                                   allow_empty=allow_empty)
             args['wordToc'] = live_decorations(html, selector)
+            args['allowEmpty'] = bool(evidence and evidence['empty_container'])
             facts = await page.evaluate(_FACTS, args)
             settle_samples += 1
             selected_stable = bool(not issue and evidence and first_evidence
@@ -398,6 +405,8 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                                                 != tracker.activity - tracker.image_activity),
                       hidden_content_count=facts['hidden_content_count'], start_valid=facts['start_valid'],
                       active_animation_count=facts['active_animation_count'])
+        result['document_complete'] = facts['document_complete']
+        result['script_error_count'] = tracker.script_errors
         result['settle_samples'] = settle_samples
         if page_blocking:
             result['page_blocking_requests'] = [
@@ -405,6 +414,12 @@ async def verify_profile_container(page: Any, selector: str, start_selector: str
                 for url, kind, status in page_blocking[:3]]
         if evidence:
             result['selected_html_sha256'] = evidence['selected_html_sha256']
+            result['empty_container'] = evidence['empty_container']
+            if evidence['empty_container']:
+                # Only visible article headings can establish an empty page's
+                # identity. Navigation text and the document title cannot.
+                from server.empty_profile import heading_digest
+                result['visible_identity_heading_sha256'] = [heading_digest(text) for text in facts['identity_headings']]
         if issue:
             result['scope_issue'] = issue['status']
         result["confirmed"] = (facts["container_count"] == 1 and facts["container_visible"]
