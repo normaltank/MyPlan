@@ -109,7 +109,10 @@ def failure_disposition(error: str | None, stats: dict[str, Any] | None) -> str:
     except ImportError:  # imported as top-level ``agent_queue`` from server/
         from recovery_policy import failure_disposition as disposition
         from site_type_registry import classify_failure
-    return disposition(classify_failure(error or "", stats or {})[0])
+    stats = stats or {}
+    context = stats.get('failure_issues')
+    return disposition(classify_failure(error or "", stats)[0],
+                       context if isinstance(context, list) else None)
 
 
 def scout_found_no_roster(error: str | None, stats: dict[str, Any] | None) -> bool:
