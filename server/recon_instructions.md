@@ -52,3 +52,5 @@ browser_navigate 的 page 摘要已给出标题、常见正文容器（命中数
 整份名单在一张或多张表格图片中时，使用 kind=image_table、single_page=true 和命中正文表格图片的 card_selector。
 先 browser_verify，须 image_table.valid=true 且无分页候选。不得填教师姓名、表头原文、字段值或人工核数。
 图片数量只证明资源覆盖，不等于教师人数；本地确定性程序按格 OCR，人工纠字，未解决项继续阻断交付。
+
+source_context_selector允许逗号组合同一已访问页面的学校品牌与学院页头/导航/页脚身份，不要求两者在同一子树；须真实读取每个区域并共同绑定当前URL/HTML。教师履历中的学校名称不能代替机构branding，主标题用途与完整正文证明仍须独立通过。

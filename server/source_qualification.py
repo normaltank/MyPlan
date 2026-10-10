@@ -61,6 +61,22 @@ def source_unit_selector(branch: dict) -> str | None:
     return branch.get('card_selector')
 
 
+def _institution_context(node) -> bool:
+    """Site identity in a header/navigation/logo/footer, not a person's prose."""
+    lineage = [node, *node.parents]
+    if any(parent.name == 'article' for parent in lineage):
+        return False
+    for parent in lineage:
+        if parent.name in {'html', 'body', '[document]'}:
+            break
+        if parent.name in {'header', 'footer', 'nav'}:
+            return True
+        tokens = ' '.join([str(parent.get('id') or ''), *parent.get('class', [])])
+        if re.search(r'(?:^|[-_\s])(?:head(?:er)?|foot(?:er)?|top|bottom|copy|logo|nav|brand|school|college|institution|affiliation)(?:$|[-_\s])', tokens, re.I):
+            return True
+    return bool(re.search(r'版权所有|copyright', node.get_text(' ', strip=True), re.I))
+
+
 def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     """Read complete local witnesses; a model supplies only role and CSS."""
     result = {'url': url, **{key: branch.get(key) for key in SOURCE_FIELDS},
@@ -75,9 +91,9 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     except Exception:
         return {**result, 'reason': 'source_selector_invalid'}
     result.update(scope_count=len(scopes), role_count=len(headings), context_count=len(contexts))
-    if any(len(nodes) != 1 for nodes in (scopes, headings, contexts)):
+    if len(scopes) != 1 or len(headings) != 1 or not contexts:
         return {**result, 'reason': 'source_witness_not_unique'}
-    scope, heading, context = scopes[0], headings[0], contexts[0]
+    scope, heading = scopes[0], headings[0]
     unit_selector = source_unit_selector(branch)
     units_within = True
     if unit_selector:
@@ -88,7 +104,7 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
             units_within = False
     result.update(unit_selector=unit_selector, units_within_scope=units_within)
     result.update(selected_scope_sha256=digest(str(scope)), role_scope_sha256=digest(str(heading)),
-                  context_scope_sha256=digest(str(context)))
+                  context_scope_sha256=digest(''.join(str(context) for context in contexts)))
     title = soup.title.get_text(' ', strip=True) if soup.title else ''
     heading_text = heading.get_text(' ', strip=True)
     # A document heading matching its own title or an explicit current-page
@@ -101,14 +117,19 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
                  if urljoin(url, a['href']) == url]
     if heading.name == 'a' and heading.get('href') and urljoin(url, heading['href']) == url:
         own_links.append(heading_text)
-    context_text = context.get_text(' ', strip=True) + ' ' + ' '.join(
+    context_text = ' '.join(context.get_text(' ', strip=True) + ' ' + ' '.join(
         str(node.get('alt') or node.get('title') or '') for node in context.find_all(['img', 'a']))
+        for context in contexts)
     college = str(target.get('college') or '').strip()
     school = str(target.get('school') or '').strip()
-    # An entire body or a person's biography mentioning the target college is
-    # not site-affiliation context. It must be a separate visible witness.
-    separate_context = scope is not context and scope not in context.descendants and context not in scope.descendants
-    college_bound = bool(college and college in context_text and school and school in context_text and separate_context)
+    # Schools often put university and college branding in separate page
+    # regions. Read and bind all selected institution regions from this page;
+    # an entire body or a person's biography is not institutional branding.
+    separate_context = all(scope is not context and scope not in context.descendants
+                           and context not in scope.descendants for context in contexts)
+    institutional_context = all(_institution_context(context) for context in contexts)
+    college_bound = bool(college and college in context_text and school and school in context_text
+                         and separate_context and institutional_context)
     result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
     if branch['source_role'] == 'faculty_roster':
         purpose = bool((title_bound and faculty_purpose(title, target))
@@ -232,22 +253,24 @@ async def verify_source(page, branch: dict, target: dict, *, local_capture: dict
     html = captured.get('html') or await page.content()
     value = witness(html, page.url, branch, target)
     visible = True
-    for key in ('role_evidence_selector', 'source_context_selector'):
-        node = page.locator(branch[key])
-        visible = visible and await node.count() == 1 and await node.is_visible()
-        facts = await page.evaluate(_FACTS, {'selector': branch[key], 'start': None, 'trivialChars': 0})
-        visible = (visible and facts.get('container_visible') is True
-                   and not facts.get('hidden_content_count') and not facts.get('active_animation_count'))
-    # The containing header/footer can be visible while the identifying words
-    # inside it are hidden. Require the actual rendered affiliation, not only
-    # raw text inside an otherwise visible ancestor.
     rendered_context = ''
-    if visible:
-        context_node = page.locator(branch['source_context_selector'])
-        rendered_context = await context_node.inner_text()
-        rendered_context += ' ' + ' '.join(await context_node.locator('img').evaluate_all(
-            "nodes => nodes.filter(n => n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden')"
-            ".map(n => n.alt || n.title || '')"))
+    for key in ('role_evidence_selector', 'source_context_selector'):
+        selected = page.locator(branch[key])
+        count = await selected.count()
+        visible = visible and (count == 1 if key == 'role_evidence_selector' else count > 0)
+        for index in range(count):
+            node = selected.nth(index)
+            facts = await page.evaluate(_FACTS, {'selector': branch[key], 'index': index,
+                                                'start': None, 'trivialChars': 0})
+            visible = (visible and await node.is_visible() and facts.get('container_visible') is True
+                       and not facts.get('hidden_content_count') and not facts.get('active_animation_count'))
+            if key == 'source_context_selector' and visible:
+                # Read the actual visible branding from every selected region.
+                # Hidden child text is still rejected by the shared facts above.
+                rendered_context += ' ' + await node.inner_text()
+                rendered_context += ' ' + ' '.join(await node.locator('img').evaluate_all(
+                    "nodes => nodes.filter(n => n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden')"
+                    ".map(n => n.alt || n.title || '')"))
     rendered_affiliation = all(str(target.get(field) or '').strip()
                                and str(target[field]).strip() in rendered_context for field in ('school', 'college'))
     value['rendered_context_sha256'] = digest(rendered_context)

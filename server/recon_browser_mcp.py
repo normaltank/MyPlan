@@ -400,7 +400,7 @@ class BrowserScout:
             captured = {}
             value = await verify_source(self.page, arguments, self.target or {}, local_capture=captured)
             if captured.get('html'):
-                self.save('source.html', captured['html'])
+                self.save('source.html', captured['html'].encode('utf-8'))
             witness_path = self.save('source-witness.json', json.dumps(value, ensure_ascii=False))
             value['evidence_path'] = str(witness_path)
             await self.snapshot()

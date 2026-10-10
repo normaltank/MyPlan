@@ -298,3 +298,35 @@ def test_independent_owned_current_profile_relationship(change, eligible):
     if eligible:
         independent = decisions[0]['source_evidence'][-1]
         assert independent['role'] == 'faculty_profile_appointment' and independent['owner_name'] == '王芳'
+
+
+def test_saved_normal_faculty_page_combines_separate_institution_branding():
+    directory = Path(__file__).parent/"fixtures"/"harvest_acceptance"
+    metadata = json.loads((directory/"real_source.json").read_text(encoding="utf8"))
+    raw = (directory/"real_hnucm_directory.html").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == metadata["sha256"]
+    html = raw.decode("utf8")
+    target = {"school": "湖南中医药大学", "college": "信息科学与工程学院"}
+    branch = {"url": metadata["url"], "card_selector": metadata["selector"], "source_role": "faculty_roster",
+              "source_container_selector": "div.list-box ul.list-name", "role_evidence_selector": "ul.current",
+              "source_context_selector": ".top-box,.bottom-box"}
+    observed = witness(html, branch["url"], branch, target)
+    assert observed["role_supported"] and observed["context_count"] == 2
+    proof = {**observed, "confirmed": True, "dom_stable": True, "network_idle": True, "witness_visible": True}
+    parsed = reconcile_rosters([CapturedRosterPage(branch["url"], html, branch, source_role_evidence=proof)], target)
+    admitted, _, pending = classify_candidates(parsed.candidates, parsed.candidate_sources, {}, target)
+    assert len(parsed.candidates) == len(admitted) == 60 and not pending
+    assert html == raw.decode("utf8")
+
+
+@pytest.mark.parametrize("variant", ["news", "biography_only"])
+def test_combined_context_does_not_make_news_or_biography_school_mentions_a_faculty_source(variant):
+    html = '<title>教师名单</title><header>皖西学院</header><nav>法学院</nav><h1>教师名单</h1><main><li>王芳</li></main>'
+    branch = {"url": "https://example.edu/list", "card_selector": "main li", "source_role": "faculty_roster",
+              "source_container_selector": "main", "role_evidence_selector": "h1", "source_context_selector": "header,nav"}
+    if variant == "news":
+        html = html.replace("教师名单", "新闻：师资队伍建设交流")
+    else:
+        html = html.replace('<header>皖西学院</header><nav>法学院</nav>', '<div class="bio"><p>王芳毕业于皖西学院法学院。</p></div>')
+        branch["source_context_selector"] = ".bio"
+    assert not witness(html, branch["url"], branch, PLAN)["role_supported"]

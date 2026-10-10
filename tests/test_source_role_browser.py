@@ -127,3 +127,48 @@ async def test_actual_capture_preserves_original_and_people_when_purpose_proof_t
     original = tmp_path/"source.html"
     original.write_bytes(pages[0][1].encode("utf8"))
     assert "法学专业建设与发展委员会" in original.read_text(encoding="utf8")
+
+
+@pytest.mark.browser
+@pytest.mark.asyncio
+async def test_saved_normal_faculty_branding_is_verified_in_actual_browser_and_preserves_all_observations(tmp_path):
+    import hashlib
+    from server.harvest_workflow import CapturedRosterPage, reconcile_rosters
+    from server.harvest_eligibility import classify_candidates
+    from test_source_role_qualification import events_for
+    from server.source_qualification import source_event_issues
+    directory = Path(__file__).parent/"fixtures"/"harvest_acceptance"
+    metadata = json.loads((directory/"real_source.json").read_text(encoding="utf8"))
+    original = (directory/"real_hnucm_directory.html").read_bytes()
+    assert hashlib.sha256(original).hexdigest() == metadata["sha256"]
+    target = {"school": "湖南中医药大学", "college": "信息科学与工程学院"}
+    branch = {"url": metadata["url"], "card_selector": metadata["selector"], "source_role": "faculty_roster",
+              "source_container_selector": "div.list-box ul.list-name", "role_evidence_selector": "ul.current",
+              "source_context_selector": ".top-box,.bottom-box"}
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context()
+        async def serve(route):
+            if route.request.url == branch["url"]:
+                await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=original)
+            else:
+                await route.fulfill(status=404, body="")
+        await context.route("**/*", serve)
+        page = await context.new_page()
+        scout = BrowserScout(page, tmp_path/"saved-normal", "branch", target)
+        await page.goto(branch["url"], wait_until="networkidle")
+        args = {key: branch[key] for key in SOURCE_FIELDS}
+        args["unit_selector"] = branch["card_selector"]
+        reply = await scout.call("browser_verify_source", args)
+        proof = json.loads(reply["content"][0]["text"])
+        assert proof["confirmed"] and proof["context_count"] == 2, proof
+        assert not source_event_issues(branch, events_for(branch, proof))
+        html = await page.content()
+        parsed = reconcile_rosters([CapturedRosterPage(branch["url"], html, branch, source_role_evidence=proof)], target)
+        admitted, _, pending = classify_candidates(parsed.candidates, parsed.candidate_sources, {}, target)
+        assert len(parsed.candidates) == len(admitted) == parsed.observations[0]["visible_cards"] == 60
+        assert not pending
+        saved, = (tmp_path/"saved-normal").glob("*.source.html")
+        assert saved.read_bytes() == html.encode("utf8")
+        assert (directory/"real_hnucm_directory.html").read_bytes() == original
+        await browser.close()

@@ -7,7 +7,7 @@ browser_navigate 已返回页面摘要（标题、标题行、常见正文容器
 找到全部相关来源并保存本轮来源用途见证后立即结束。与师资身份或范围核验相关的委员会、机构人员名单保留为辅助/未知角色，不把其组织关系当师资关系；明确无关的历史新闻仍不扩展调查。此阶段不要验证卡片 CSS、逐页翻阅教师名单、访问个人主页或导出数据。图片或特殊名录仍保留实际核实的入口，不能假装普通文本名录。
 未找到名录、页面失败或零候选都不等于学院无师资；“无师资学院”需要人工确认，不能由本阶段自行结案。
 补缺反馈中的 known_urls 是此前已核实的分支，必须重新检查并全部保留，不得通过删分支规避错误；重定向应实际打开验证。
-每个相关人员来源先用 browser_verify_source 证明：source_role 为 faculty_roster、organizational_membership 或 unverified_people_source；source_container_selector 指完整实际正文/名录容器，role_evidence_selector 指实际主标题或指向当前页的导航位置，source_context_selector 指独立于正文的学院归属上下文。两个用途见证与完整容器须唯一可见、DOM稳定、请求结束且绑定当前URL/HTML。faculty_roster 还须标题/当前页导航中的正向师资关系及目标学院上下文；同页侧栏“师资”链接或学校域名本身不够。栏目用途不明或只有组织/委员会成员关系时保留来源并选择辅助/未知角色，不删人、不声称学院无师资。兼职外聘正式师资来源仍可通过同一证明。
+每个相关人员来源先用 browser_verify_source 证明：source_role 为 faculty_roster、organizational_membership 或 unverified_people_source；source_container_selector 指完整实际正文/名录容器，role_evidence_selector 指实际主标题或指向当前页的导航位置，source_context_selector 指独立于正文的学院归属上下文。用途主标题与完整容器须唯一可见；source_context_selector可用逗号组合本页实际学校品牌和学院页头/导航/页脚区域，逐区域可见、DOM稳定、请求结束并共同绑定当前URL/HTML。不得用教师履历提到的学校或正文整页代替机构branding。faculty_roster 还须标题/当前页导航中的正向师资关系及目标学院上下文；同页侧栏“师资”链接或学校域名本身不够。栏目用途不明或只有组织/委员会成员关系时保留来源并选择辅助/未知角色，不删人、不声称学院无师资。兼职外聘正式师资来源仍可通过同一证明。
 使用 submit_plan 提交 JSON：顶层 school、college、branches，可保留旧source_kind作兼容形态元数据，它不证明师资资格。branches 每项包含 url 和上述四个来源结构字段，必须与成功 browser_verify_source 参数逐字一致。不得附加 name、label、说明、确认布尔值、正文引用、SHA或教师数据；证据由浏览器工具保存。
 工具即时检查格式、目标与本轮浏览器证据。accepted:false 时按 issues 的字段路径和错误码修正；accepted:true 后立即结束，回复“计划已提交”，无需再次抄写 JSON。
 提交参数示例（示例 URL 必须替换为本轮实际核实的 URL）：

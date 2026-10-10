@@ -19,3 +19,5 @@ source_qualification 为共同策略。Discovery/branch严格Schema、计划卫�
 当前机制验证有真实staged gate（固定模型事件边界）、实际run_plan原件与字段保存、原生PDF证据传播、HTTP登录/保存/重试/携带/原生恢复/撤回整合。本地Chromium全部URL由固定原件与404路由覆盖，无官网外联或付费模型。仍无提交/CI、实网、学院完整性或部署验收。
 
 本轮完整相关采集pipeline42文件终态512 passed/1 skipped（缺本机旧医院生产快照），队列/登录复核/身份门禁/worker/receipt/下载版本/运行隔离补充77 passed。用途选择器抛错会丢已读页面的实际Chromium反例已跑红，修复保留完整页面/13候选与既有source_role_evidence_unverified阻挡，定向终态见本轮开发证据。组件替身只代替可信source-proof生产者，不降低原结构/字段断言或给生产skip入口。
+
+PR59正常站点兼容修正：已保存湖南中医药大学信息科学与工程学院师资页（SHA eb18c971322ec011d3bc6074998f7c4aaf28b41c0fdb4056134d65bedfdeb4f7）因学校/学院标识分处底部官网链接/页头logo，旧单一context要求误阻断。source_context_selector现允许同页多个实际机构branding区域的CSS组合，逐区可见并绑定同一URL、完整DOM与组合SHA；教师履历与整个body不作branding。原件红回归后恢复该页全部60个来源观察的资格，原始HTML不裁剪；原生正文、分页、身份、邮箱及全院完整性仍独立核验。用途证明工具保存UTF8原字节，Windows不再改换行导致SHA不一致。委员会与新闻用途反例仍拒绝，未放宽来源用途或人物字段判据。
