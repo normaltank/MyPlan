@@ -935,10 +935,26 @@ def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_eviden
 
 
 def _enrich_extracted_records(pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
-                              verified_profile_urls=()):
-    from server.detail_mecc import explicit_title_candidates
+                              verified_profile_urls=(), title_field_evidence=None):
+    from server.detail_mecc import explicit_title_fields, declared_dom_title_fields
     from server.titles import select_title
     unresolved = []
+
+    def text_fields(record, segment):
+        # Use only this person's already scoped DOM. A shared page's other
+        # profiles must never donate their explicit fields to this record.
+        key = (record['主页'], record['姓名'])
+        if segment is None and title_field_evidence is not None and key in title_field_evidence:
+            return title_field_evidence[key]
+        sole_owner = (record['主页'] in verified_profile_urls
+                      and sum(candidate.url == record['主页'] for candidate in admitted) == 1)
+        html = (getattr(segment.segment, 'html', '') if segment is not None else
+                scoped_profile_html.get(record['主页'], '') if sole_owner else '')
+        if html:
+            return declared_dom_title_fields(BeautifulSoup(html, 'lxml'), preserve_content=True)
+        text = segment.segment.text if segment is not None else record['简介']
+        return explicit_title_fields(text)
+
     for record in pipeline_records:
         segment = segment_records.get((record["主页"], record["姓名"]))
         if segment is None:
@@ -946,7 +962,7 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
         # The record's own article text, verbatim; an image-named record keeps
         # document order, so its resume text is placed before the text below it.
         record["简介"] = segment.segment.text if segment.name_source != "ocr" else ""
-        title_choice = select_title(explicit=explicit_title_candidates(segment.segment.text),
+        title_choice = select_title(explicit_fields=text_fields(record, segment),
                                     card_title=record['职称'], body_title=segment.title)
         record['职称'] = title_choice.title
         if title_choice.conflicts:
@@ -958,15 +974,13 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
         image_bio = media_audit["assigned_biographies"].get((record["主页"], record["姓名"]))
         if image_bio:
             existing = record["简介"].strip()
+            segment = segment_records.get((record['主页'], record['姓名']))
+            existing_fields = text_fields(record, segment)
             record["简介"] = existing + ("\n\n" if existing else "") + image_bio
             parsed_image = FacultyProfileExtractor.extract(
                 "<article>" + "".join(f"<p>{escape(line)}</p>" for line in image_bio.splitlines())
                 + "</article>", record["主页"], fallback_name=record["姓名"])
-            title_body = record['简介']
-            segment = segment_records.get((record['主页'], record['姓名']))
-            if segment is not None and segment.name_source == 'ocr' and segment.segment.text:
-                title_body += '\n\n' + segment.segment.text
-            title_choice = select_title(explicit=explicit_title_candidates(title_body),
+            title_choice = select_title(explicit_fields=(*existing_fields, *explicit_title_fields(image_bio)),
                                         card_title=record['职称'], body_title=parsed_image.title)
             record['职称'] = title_choice.title
             if title_choice.conflicts:
@@ -1359,6 +1373,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             unresolved.append({"url": candidate.url, "name": candidate.name,
                                "status": "profile_identity_not_found"})
     finish_stage("media_audit")
+    title_field_evidence = {}
     extraction = await asyncio.to_thread(
         FacultyHarvestPipeline.harvest_candidates,
         admitted, profile_fetcher=lambda url: scoped_profile_html.get(url), base_url=base_url,
@@ -1366,13 +1381,14 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         agent_name=plan.get("agent_name", "Browser-assisted Subagent"),
         profileless_urls=roster_urls,
         verified_profile_urls=set(profile_scope_evidence),
+        title_field_evidence=title_field_evidence,
     ) if admitted else {"sheet1_with_email": [], "sheet2_no_email": [],
                           "unresolved": [], "delivery_ready": False}
     unresolved.extend(extraction["unresolved"])
     pipeline_records = extraction["sheet1_with_email"] + extraction["sheet2_no_email"]
     unresolved.extend(await asyncio.to_thread(_enrich_extracted_records,
         pipeline_records, segment_records, media_audit, out, scoped_profile_html, admitted,
-        verified_profile_urls=set(profile_scope_evidence)))
+        verified_profile_urls=set(profile_scope_evidence), title_field_evidence=title_field_evidence))
     from server import html_email_review
     unresolved, html_email_items, html_email_reviews = html_email_review.apply_decisions(
         unresolved, pipeline_records, admitted, scoped_profile_html, out)
