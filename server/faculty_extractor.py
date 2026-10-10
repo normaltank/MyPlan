@@ -259,6 +259,31 @@ class FacultyDirectoryExtractor:
     """
 
     @staticmethod
+    def links_outside_cards(html: str, base_url: str, selector: str) -> list[str]:
+        """Selected text leaves cannot discard the link wrapping their card.
+
+        The selector must be corrected by reconnaissance; never widen the
+        extraction boundary or assign an ancestor URL to a person implicitly.
+        """
+        urls = []
+        for card in BeautifulSoup(html, 'html.parser').select(selector):
+            if card.name == 'a':
+                continue
+            anchor = card.find_parent('a', href=True)
+            if anchor is None or not card.get_text(strip=True):
+                continue
+            href = anchor['href'].strip()
+            if not href or href.startswith(('#','javascript:','mailto:')):
+                continue
+            url = urljoin(base_url, href)
+            parsed = urlparse(url)
+            if parsed.fragment and parsed._replace(fragment='').geturl() == urlparse(base_url)._replace(fragment='').geturl():
+                continue  # Same-document navigation keeps its existing path.
+            if urlparse(url).scheme in ('http','https') and url not in urls:
+                urls.append(url)
+        return urls
+
+    @staticmethod
     def get_structure_fingerprint(node: Tag, depth: int = 2) -> str:
         """Calculates a structural signature of a DOM element, filtering out dynamic/zebra classes."""
         if depth == 0 or not isinstance(node, Tag):
