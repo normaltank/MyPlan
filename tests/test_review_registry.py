@@ -36,13 +36,14 @@ def test_a_flagged_issue_without_a_review_item_is_never_complete(tmp_path, kind)
 
 
 def test_resumed_attempt_receives_every_kind_decision_file(tmp_path):
-    source = _audit(tmp_path, [])
+    task_root = tmp_path / 'tasks' / 'fixture-task'
+    source = _audit(task_root, [])
     for filename in review_registry.DECISION_FILES:
         (source.parent / filename).write_text('{"schema": 1, "decisions": []}', encoding="utf-8")
-    (tmp_path / "review-resume.json").write_text(json.dumps(
-        {"task_id": tmp_path.name, "audit_path": str(source)}), encoding="utf-8")
-    target = tmp_path / "attempt-2"
-    carry_review_decisions(tmp_path, target)
+    (task_root / "review-resume.json").write_text(json.dumps(
+        {"task_id": task_root.name, "audit_path": str(source)}), encoding="utf-8")
+    target = task_root / "attempt-2"
+    carry_review_decisions(task_root, target)
     assert {path.name for path in target.iterdir()} == set(review_registry.DECISION_FILES)
 
 
