@@ -467,12 +467,17 @@ def equivalence(
             return None
         old_repr, _ = selected_source(before, url, old_bounds, old_hash)
         new_repr, _ = selected_source(after, url, new_bounds, new_hash)
-        if old_repr != new_repr or old_hash == new_hash:
+        if old_repr != new_repr:
             return None
         old_selected, old_span = native_selected_source(before, old_bounds)
         new_selected, new_span = native_selected_source(after, new_bounds)
-        old_canonical, old_widgets = _counter_free(old_selected, before, url)
-        new_canonical, new_widgets = _counter_free(new_selected, after, url)
+        unchanged = old_selected == new_selected
+        if unchanged:
+            old_canonical, new_canonical = old_selected, new_selected
+            old_widgets, new_widgets = [], []
+        else:
+            old_canonical, old_widgets = _counter_free(old_selected, before, url)
+            new_canonical, new_widgets = _counter_free(new_selected, after, url)
         shape = lambda ws: [
             {k: v for k, v in w.items() if k != "old_node_sha256"} for w in ws
         ]
@@ -480,7 +485,7 @@ def equivalence(
             return None
         return {
             "schema": 2,
-            "basis": COUNTER_BASIS,
+            "basis": "unchanged_native_selected_source" if unchanged else COUNTER_BASIS,
             "source_url": url,
             "bounds": list(old_bounds),
             "representation": old_repr,
@@ -495,7 +500,7 @@ def equivalence(
             "canonical_sha256": sha(old_canonical),
             "old_widgets": old_widgets,
             "new_widgets": new_widgets,
-            "controller_semantics_source_sha256": CONTROLLER_SOURCE_SHA256,
+            **({"controller_semantics_source_sha256": CONTROLLER_SOURCE_SHA256} if not unchanged else {}),
         }
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
@@ -631,8 +636,11 @@ def identity_equivalence(
                 new_selected
             ) != field_value(observation["record"], "简介"):
                 return None
-            old_canonical, _ = _counter_free(old_selected, original, url)
-            new_canonical, _ = _counter_free(new_selected, fresh, url)
+            if proof['basis'] == 'unchanged_native_selected_source':
+                old_canonical, new_canonical = old_selected, new_selected
+            else:
+                old_canonical, _ = _counter_free(old_selected, original, url)
+                new_canonical, _ = _counter_free(new_selected, fresh, url)
             if read(old_canonical) != read(new_canonical):
                 return None
             proof.update(
