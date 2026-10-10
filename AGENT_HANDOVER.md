@@ -12,6 +12,10 @@
 
 ## 已有代码入口
 
+单人 PDF 简历章节增量：土木三份原件的本人简介断词续行、明确简历栏目和姓名简历标题已按通用规则读取，正文原文保留；三目标及12旧原件回归通过，真正未知人员标题/共同作者反例保持。未决邮箱/身份及学院其他失败不据此解决，见[说明](docs/implementation/2026-10-10-pdf-owner-resume-sections.md)。
+
+原生 PDF 邮箱复核增量：缓存页有完整文字但无 OCR 行，导致土木三个邮箱冲突没有裁图选项；现从同一原件文字层读取坐标，保留运行时决定标识，三个真实项可见。三处归属解析由独立简历章节增量处理，邮箱选择及未决身份保持独立，未生成真实教师决定；见[说明](docs/implementation/2026-10-10-native-pdf-email-review.md)。
+
 长简介导出增量：`biography_workbook` 在同一工作簿分段保留超长正文，人员 Sheet 仍一人一行；同步核验实际文件，队列核对记录回执。相关 50 项及 70,033 字符固定原件回读通过，独立复核、CI 与实跑待核，见 [说明](docs/implementation/2026-10-10-full-biography-workbook.md)。
 
 复核证据恢复增量：`review_evidence`封存原HTML/audit/决定，以严格原生访问计数等价证书恢复媒体、身份及HTML邮箱原决定；迁移backup登记须固定audit SHA并核验原task/attempt/rawSHA。17项真实保存原件隔离回放通过。PR56首次Linux CI发现原生路径被Windows字符串改写；已修复并加2项门禁回归，metadata37项及相关浏览器6项通过，新CI尚待终态；未生产登记或加载。新侧归档SHA指物化UTF8对象，非Windows snapshot CRLF原字节，见[说明](docs/implementation/2026-10-10-review-evidence-metadata.md)。
