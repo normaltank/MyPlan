@@ -1058,9 +1058,10 @@ class FacultyHarvestPipeline:
             card_emails = card_addresses[id(cand)]
 
             card = cand_cards.get(id(cand))
-            title_choice = select_title(explicit_fields=((declared_dom_title_fields(card, preserve_content=preserve_content)
+            declared_fields = ((declared_dom_title_fields(card, preserve_content=preserve_content)
                                                         if card is not None else ())
-                                                  or cand.title_fields or explicit_title_fields(cand.card_context)),
+                               or cand.title_fields or explicit_title_fields(cand.card_context))
+            title_choice = select_title(explicit_fields=declared_fields,
                                         card_title=cand.title, body_title=resolve_title(card_text))
             matched_title = title_choice.title
             if title_choice.conflicts:
@@ -1121,6 +1122,7 @@ class FacultyHarvestPipeline:
                 flag("ambiguous_email_assignment", matches=unowned)
 
             results[id(cand)] = {
+                'title_fields': declared_fields,
                 "email": '' if contact_conflicts else email,
                 "title": matched_title,
                 "bio": card_text
@@ -1166,6 +1168,7 @@ class FacultyHarvestPipeline:
         date_str: str = "",
         profileless_urls: Optional[Set[str]] = None,
         verified_profile_urls: Optional[Set[str]] = None,
+        title_field_evidence: Optional[Dict[Tuple[str, str], Tuple[TitleField, ...]]] = None,
     ) -> Dict:
         import datetime
         if not date_str:
@@ -1318,11 +1321,13 @@ class FacultyHarvestPipeline:
             email = ""
             title = cand.title
             bio = ""
+            declared_fields = ()
 
             if id(cand) in shared_results_by_cand_id:
                 s_res = shared_results_by_cand_id[id(cand)]
                 email = s_res["email"]
                 title = s_res["title"]
+                declared_fields = s_res['title_fields']
                 bio = s_res["bio"]
                 if email:
                     assigned_emails.add(email.lower())
@@ -1449,8 +1454,9 @@ class FacultyHarvestPipeline:
                     assigned_emails.discard(email.lower())
                     email = ''
                 bio = prof.full_bio if prof else ""
-                title_choice = select_title(explicit_fields=((prof.title_fields if prof else ())
-                                                      or cand.title_fields or explicit_title_fields(cand.card_context)),
+                declared_fields = ((prof.title_fields if prof else ())
+                                   or cand.title_fields or explicit_title_fields(cand.card_context))
+                title_choice = select_title(explicit_fields=declared_fields,
                                             card_title=cand.title, body_title=prof.title if prof else '教师')
                 title = title_choice.title
                 if title_choice.conflicts:
@@ -1466,6 +1472,8 @@ class FacultyHarvestPipeline:
                 "学校": school, "学院": college, "采集人": agent_name, "采集日期": date_str,
                 "简介": bio, "主页": cand.url, "_cand_idx": cand_idx
             }
+            if title_field_evidence is not None:
+                title_field_evidence[(cand.url, cand.name)] = declared_fields
             if email:
                 record["序号"] = len(sheet1_with_email) + 1
                 sheet1_with_email.append(record)

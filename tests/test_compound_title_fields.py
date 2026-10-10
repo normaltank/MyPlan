@@ -113,6 +113,46 @@ def test_unverified_capture_cannot_donate_sidebar_title_during_media_enrichment(
     assert not issues and row['职称'] == '教授'
 
 
+def test_definition_list_declares_a_complete_title_field():
+    url = 'https://faculty.example.edu/p/1'
+    html = '<article><h1>王芳</h1><dl><dt>职称</dt><dd>教授/研究员</dd></dl></article>'
+    result = FacultyHarvestPipeline.harvest_candidates(
+        [FacultyCandidate('王芳', url, '讲师')], profile_fetcher=lambda _: html,
+        base_url='https://faculty.example.edu/list', verified_profile_urls={url})
+    row, = result['sheet1_with_email'] + result['sheet2_no_email']
+    assert result['delivery_ready'] and row['职称'] == '教授/研究员'
+
+
+def test_person_heading_inside_a_table_field_is_not_a_safe_compound_value():
+    url = 'https://faculty.example.edu/p/1'
+    html = '<article><h1>王芳</h1><table><tr><td>职称：教授<h2>李华</h2><p>副教授</p></td></tr></table></article>'
+    result = FacultyHarvestPipeline.harvest_candidates(
+        [FacultyCandidate('王芳', url, '讲师')], profile_fetcher=lambda _: html,
+        base_url='https://faculty.example.edu/list', verified_profile_urls={url})
+    assert not result['delivery_ready']
+    assert any(issue['status'] == 'title_field_conflict' for issue in result['unresolved'])
+
+
+def test_shared_media_append_consumes_the_existing_person_field_evidence(tmp_path):
+    from server.browser_batch_tool import _enrich_extracted_records
+    url = 'https://faculty.example.edu/shared'
+    html = ('<article><h2>王芳</h2><p>职称：教授<br>/研究员</p><p>王芳完整履历。</p></article>'
+            '<article><h2>李华</h2><p>职称：讲师</p><p>李华完整履历。</p></article>')
+    candidates = [FacultyCandidate('王芳', url), FacultyCandidate('李华', url)]
+    evidence = {}
+    result = FacultyHarvestPipeline.harvest_candidates(
+        candidates, profile_fetcher=lambda _: html, base_url='https://faculty.example.edu/list',
+        verified_profile_urls={url}, title_field_evidence=evidence)
+    assert result['delivery_ready'], result['unresolved']
+    rows = result['sheet1_with_email'] + result['sheet2_no_email']
+    issues = _enrich_extracted_records(
+        rows, {}, {'assigned_biographies': {(url, '王芳'): '更多原始履历。'}, 'evidence': []},
+        tmp_path, {url: html}, candidates, verified_profile_urls={url}, title_field_evidence=evidence)
+    assert not issues
+    assert {row['姓名']: row['职称'] for row in rows} == {'王芳': '教授\n/研究员', '李华': '讲师'}
+    assert all('title_fields' not in row for row in rows)
+
+
 @pytest.mark.parametrize('value', ['教授；专业技术职务 副教授', '教授/'])
 def test_incomplete_or_mixed_boundary_cannot_become_a_successful_field(value):
     html = f'<article><h1>王芳</h1><p>职称：{value}</p><p>完整科研履历。</p></article>'

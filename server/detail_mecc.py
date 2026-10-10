@@ -416,7 +416,7 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
     its flattened biography, which no longer distinguishes those boundaries.
     """
     field_pattern = re.compile(_TITLE_FIELD_LINE.pattern, re.S)
-    blocks = {'p', 'div', 'li', 'dd', 'td', 'th', 'section', 'article', 'main', 'body'}
+    blocks = {'p', 'div', 'li', 'dt', 'dd', 'td', 'th', 'section', 'article', 'main', 'body'}
     structural = (BLOCK_ELEMENTS | blocks) - {'br'}
     fields, consumed = [], set()
     for node in [root, *root.find_all(blocks)]:
@@ -448,7 +448,8 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
                     continue
                 sibling = following if isinstance(following, Tag) else None
                 break
-            allowed = {'td', 'th'} if node.name in {'td', 'th'} else {'p', 'div', 'dd'}
+            allowed = ({'td', 'th'} if node.name in {'td', 'th'} else
+                       {'dd'} if node.name == 'dt' else {'p', 'div', 'dd'})
             if (sibling is not None and sibling.name in allowed
                     and sibling.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) is None):
                 sibling_text = LayoutAwareTokenizer.get_clean_text(sibling, preserve_content=preserve_content)
@@ -461,7 +462,8 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
         outside, invalid_group = _outside_title_groups(value)
         ambiguous = (invalid_group or _title_continuation(value)
                      or bool(re.search(r'[^\s:：]+[:：]', outside))
-                     or bool(_BARE_TITLE_LABEL.search(outside)))
+                     or bool(_BARE_TITLE_LABEL.search(outside))
+                     or value_node.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) is not None)
         mentions = title_mentions(value)
         if mentions:
             fields.append(TitleField(value, mentions, (1, len(text.splitlines())), ambiguous))
