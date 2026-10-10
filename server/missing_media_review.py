@@ -48,18 +48,54 @@ def identity(item: dict) -> str:
         ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
 
 
-def confirmed(path: Path | None, item: dict) -> bool:
-    if path is None:
-        return False
-    decision = review_store.load(path).get(identity(item),{})
+def _valid(decision: dict, item: dict) -> bool:
     actor = decision.get('actor',{})
     if not isinstance(actor,dict):
         return False
     human = ((actor.get('channel') == 'web' and type(actor.get('user_id')) is int and actor['user_id'] > 0)
              or (actor.get('channel') == 'chat' and isinstance(actor.get('confirmation_ref'),str)
                  and bool(actor['confirmation_ref'].strip())))
-    return (human and decision.get('verdict') == 'photo' and decision.get('evidence_basis') == BASIS
+    return (human and decision.get('id') == identity(item)
+            and decision.get('verdict') == 'photo' and decision.get('evidence_basis') == BASIS
             and all(decision.get(key) == item[key] for key in IDENTITY_FIELDS))
+
+
+def confirmed(path: Path | None, item: dict, *, source_html: str | None = None) -> bool:
+    if path is None:
+        return False
+    if item.get('id') != identity(item):
+        return False
+    decisions = review_store.load(path)
+    decision = decisions.get(identity(item),{})
+    if identity(item) in decisions:
+        return _valid(decision,item)
+    if source_html is None and item.get('_snapshot_path'):
+        snapshot = Path(item['_snapshot_path']).resolve()
+        if snapshot.is_relative_to(Path(path).resolve().parent):
+            source_html = snapshot.read_text(encoding='utf8')
+    if source_html is None:
+        return False
+    from server.review_evidence import equivalence, old_review_items, retain_current
+    for bundle, previous in old_review_items(Path(path).parent.parent,'missing_profile_media_evidence'):
+        try:
+            old_decision = bundle.decisions(DECISIONS_FILE).get(previous['id'],{})
+            if (review_store.load(path).get(previous['id']) != old_decision or not _valid(old_decision,previous)
+                    or any(previous[k] != item[k] for k in IDENTITY_FIELDS
+                                                      if k != 'selected_html_sha256')):
+                continue
+            proof = equivalence(bundle.source_html(item['profile_url']),source_html,item['profile_url'],
+                (previous['profile_content_selector'],previous['profile_content_start_selector']),
+                (item['profile_content_selector'],item['profile_content_start_selector']),
+                previous['selected_html_sha256'],item['selected_html_sha256'])
+            if proof:
+                proof.update(old_original_file_sha256=bundle.original_hash(item['profile_url']),
+                             new_original_file_sha256=retain_current(bundle.root,source_html))
+                item['review_equivalence'] = {**proof,'original_decision_id':old_decision['id'],
+                    'current_review_id':identity(item)}
+                return True
+        except (OSError,ValueError,KeyError,TypeError):
+            continue
+    return False
 
 
 def save_decision(path: Path, item: dict, verdict: str, reviewed_by: int | None = None,
@@ -98,7 +134,10 @@ def collect_items(audit_path: Path) -> list[dict]:
         scoped,_,_ = scope_profile_html(html,item['profile_content_selector'],item['profile_url'],
                                        start_selector=item['profile_content_start_selector'])
         fresh['context_text'] = BeautifulSoup(scoped,'html.parser').get_text('\n',strip=True)
+        fresh['_snapshot_path'] = str(snapshot)
         fresh['saved_verdict'] = review_store.load(root/DECISIONS_FILE).get(fresh['id'],{}).get('verdict','')
+        if confirmed(root/DECISIONS_FILE,fresh,source_html=html):
+            fresh['saved_verdict'] = 'photo'
         items[fresh['id']] = fresh
     if set(items) != flagged or None in flagged:
         raise ValueError('missing media review item is not backed by evidence')

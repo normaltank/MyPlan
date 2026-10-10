@@ -12,6 +12,8 @@
 
 ## 已有代码入口
 
+复核证据恢复增量：`review_evidence`封存原HTML/audit/决定，以严格原生访问计数等价证书恢复媒体、身份及HTML邮箱原决定；迁移backup登记须固定audit SHA并核验原task/attempt/rawSHA。17项真实保存原件隔离回放通过。PR56首次Linux CI发现原生路径被Windows字符串改写；已修复并加2项门禁回归，metadata37项及相关浏览器6项通过，新CI尚待终态；未生产登记或加载。新侧归档SHA指物化UTF8对象，非Windows snapshot CRLF原字节，见[说明](docs/implementation/2026-10-10-review-evidence-metadata.md)。
+
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
 
 分页位移增量 [PR #53](https://github.com/normaltank/MyPlan/pull/53) 已在 abf7390 的[完整CI](https://github.com/normaltank/MyPlan/actions/runs/38036723639)和两轴独立复核通过后合并。原用户改动保留；定向重验与常驻服务加载、全院验收分别核对。机制和限制见 [说明](docs/implementation/2026-10-10-moving-pagination.md)，不能据合并宣布学院完成。
@@ -28,7 +30,7 @@
 | 浏览器与覆盖 | server/browser_batch_tool.py、server/harvest_workflow.py、server/harvest_coverage.py、server/pager_evidence.py | 名录／个人页角色、分支分页、来源与人数证据 |
 | 字段与身份 | server/faculty_extractor.py、server/detail_mecc.py、server/faculty_identity.py、server/titles.py、server/name_list.py | 重复规则、字段归属、同名合并、原文保留 |
 | 来源资格 | server/harvest_eligibility.py | 来源归属；旧专任口径是否在其他入口残留 |
-| 图片与 PDF | server/image_biography.py、server/pdf_roster.py、server/image_table_roster.py、server/segmented_roster.py | 单元格／人员分界、OCR 不确定性、原件及字段证据 |
+| 图片与 PDF | server/image_biography.py、server/pdf_biography_owner.py、server/pdf_roster.py、server/image_table_roster.py、server/segmented_roster.py | 单元格／人员章节边界、OCR 不确定性、原件及字段证据 |
 | 失败分流 | server/recovery_policy.py | 状态码、重试／结构修复／人工复核是否一致 |
 | 学院复核 | server/review_registry.py、server/review_store.py、server/task_image_review.py | 登记、决定保存、证据失效、恢复传递及闭环 |
 | 大学身份与交付 | server/university_identity_review.py、server/university_delivery.py | 跨学院身份、版本与原始记录、部分输出与完整状态 |
@@ -36,6 +38,8 @@
 | 回放与验收 | server/case_replay.py、server/harvest_benchmark.py、server/spot_check.py、tests/test_harvest_acceptance.py | 可重放证据与独立参考答案的差别，新样本有效性 |
 
 复核入口已有学院页 /review/task/{task_id} 和大学页 /review/university/{batch_id}。学院复核类别由 review_registry.KINDS 登记，决定文件通过 review_store 管理，跨 attempt 传递查看 task_image_review.carry_review_decisions。大学身份复核独立存在，不要照旧待办重新建设。
+
+正文修复增量：计划拒绝保留采集的全部 URL 反例和完整计划；访问失败的伴随正文问题不再强迫扩大正常页面 CSS。见[恢复说明](docs/implementation/2026-10-10-profile-repair-counterexamples.md)。单人 PDF 简介按原件全部页的人员章节证据核对归属，保留作者／合作者全文，见[PDF 说明](docs/implementation/2026-10-10-pdf-biography-owner-scope.md)及[观察类型](docs/site-types/pdf-single-owner-biography-sections.md)。本地机制回归已通过，提交 CI、运行加载与真实学院验收仍分别核验；邮箱争议和来源资格不据此宣称解决。
 
 ## 新目标与现有实现的已知差距
 
