@@ -117,11 +117,14 @@ async def test_changed_forward_slot_is_not_proof_of_a_terminal_page(second):
 
 @pytest.mark.asyncio
 @pytest.mark.browser
-async def test_new_previous_relation_cannot_retain_a_forward_identity():
+@pytest.mark.parametrize("relation", ["prev", "PREV"])
+async def test_new_previous_relation_cannot_retain_a_forward_identity(relation):
     from playwright.async_api import async_playwright
     from server.browser_batch_tool import _capture_branch
 
-    second = SECOND.replace('<a href="/list/3">', '<a rel="prev" href="/news/1">')
+    second = SECOND.replace(
+        '<a href="/list/3">', f'<a rel="{relation}" href="/news/1">'
+    )
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         try:

@@ -70,6 +70,7 @@ def _identity(node: Tag, cards: list[Tag]) -> dict | None:
         or node.get("value")
         or ""
     )
+    relations = {str(value).lower() for value in node.get("rel", [])}
     return {
         "tag": node.name,
         "scope": _shape(scope),
@@ -77,8 +78,8 @@ def _identity(node: Tag, cards: list[Tag]) -> dict | None:
         "pager_index": pager_index,
         "control_shape": _shape(node),
         "label_sha256": hashlib.sha256(label.encode()).hexdigest() if label else None,
-        "rel_next": "next" in node.get("rel", []),
-        "relation_roles": sorted(set(node.get("rel", [])) & {"next", "prev"}),
+        "rel_next": "next" in relations,
+        "relation_roles": sorted(relations & {"next", "prev"}),
         "unlabelled_shape": [_shape(node), _shape(node.parent)],
     }
 
