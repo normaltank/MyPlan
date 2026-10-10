@@ -491,18 +491,12 @@ async def audit_profile_media(
                            if re.sub(r"\s+", "", name) in compressed_heading]
                 if matched:
                     break
-            other_page_names = set()
-            if ref.kind == "pdf" and known_names:
-                for page in scanned["pages"][1:]:
-                    page_lines = ([line["text"] for line in page["lines"][:5]]
-                                  if page["lines"] else page["text"].splitlines()[:5])
-                    for line in page_lines:
-                        compressed_line = re.sub(r"\s+", "", line)
-                        found = {name for name in known_names
-                                 if re.sub(r"\s+", "", name) in compressed_line}
-                        if found:
-                            other_page_names.update(found)
-                            break
+            pdf_scope_unverified = False
+            if ref.kind == "pdf" and len(matched) == 1 and len(owners[profile_url]) == 1:
+                from server.pdf_biography_owner import inspect_owner_scope
+                owner_scope = inspect_owner_scope(original, scanned, matched[0], known_names or set(), reviewed)
+                record['pdf_owner_scope'] = owner_scope
+                pdf_scope_unverified = owner_scope['status'] != 'single_owner'
             if ref.kind == "image" and not matched and len(compact) < SCENE_TEXT_CHARS:
                 # A photo of the teacher in front of a sign or blackboard has a
                 # few lines of scene text but is not a written biography.
@@ -512,7 +506,7 @@ async def audit_profile_media(
                     record["classified_as"] = "photo_with_scene_text"
                     continue
             if (len(matched) != 1 or (ref.kind == "pdf" and len(owners[profile_url]) != 1)
-                    or (matched and other_page_names - {matched[0]})):
+                    or pdf_scope_unverified):
                 unresolved.append({**source, "status": "image_bio_owner_unresolved",
                                    "matched_owner_count": len(matched), "ocr_path": str(ocr_path)})
                 continue
