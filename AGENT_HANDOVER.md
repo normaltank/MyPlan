@@ -12,6 +12,8 @@
 
 ## 已有代码入口
 
+原生 PDF 邮箱复核增量：缓存页有完整文字但无 OCR 行，导致土木三个邮箱冲突没有裁图选项；现从同一原件文字层读取坐标，保留运行时决定标识，三个真实项可见。原生 PDF 的三处未决归属及未决身份保持独立，未生成真实教师决定；见[说明](docs/implementation/2026-10-10-native-pdf-email-review.md)。
+
 复核证据恢复增量：`review_evidence`封存原HTML/audit/决定，以严格原生访问计数等价证书恢复媒体、身份及HTML邮箱原决定；迁移backup登记须固定audit SHA并核验原task/attempt/rawSHA。17项真实保存原件隔离回放通过。PR56首次Linux CI发现原生路径被Windows字符串改写；已修复并加2项门禁回归，metadata37项及相关浏览器6项通过，新CI尚待终态；未生产登记或加载。新侧归档SHA指物化UTF8对象，非Windows snapshot CRLF原字节，见[说明](docs/implementation/2026-10-10-review-evidence-metadata.md)。
 
 职称字段增量：`TitleField` 和 `explicit_title_fields` 保留单字段复合原值，所有生产职称选择统一消费。相关59项与7份原件回放通过，独立审查／CI／实网待核，见 [说明](docs/implementation/2026-10-10-declared-title-fields.md)。
