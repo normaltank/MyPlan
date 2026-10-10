@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -57,6 +58,66 @@ def scope_digest(html: str, selector: str) -> str:
     return hashlib.sha256(''.join(str(node) for node in nodes).encode('utf-8')).hexdigest()
 
 
+async def _controller_evidence(page: Any, facts: dict, html: str, tracker: Any) -> dict | None:
+    """Server-published terminal navigation and a responsive, bound controller.
+
+    No missing-asset URL whitelist: only permanent script/style failures may
+    be scoped away after source DOM and actual controller responses agree.
+    """
+    if (tracker.script_errors or not tracker.failed_requests or tracker.document_response is None
+            or any(kind not in {'script','stylesheet'} or status not in (404,410)
+                   for _,kind,status in tracker.failed_requests)):
+        return None
+    raw = await tracker.document_response.text()
+    selectors = (facts['roster_selector'],facts['pager_selector'])
+    if tracker.document_response.status >= 400 or any(scope_digest(raw,s) != scope_digest(html,s) for s in selectors):
+        return None
+    soup = BeautifulSoup(raw,'html.parser')
+    boxes = soup.select(facts['pager_selector'])
+    if len(boxes) != 1:
+        return None
+    for role in ('first','prev','next','last'):
+        controls = boxes[0].select('.page_nav > a.'+role)
+        if len(controls) != 1 or not re.fullmatch(r'(?:javascript:void\(0\);?|#)?',controls[0].get('href',''),re.I):
+            return None
+    field = page.locator(facts['pager_selector']+' .pageNum')
+    jump = page.locator(facts['pager_selector']+' .pagingJump')
+    if await field.count() != 1 or await jump.count() != 1 or not await field.is_visible() or not await jump.is_visible():
+        return None
+    initial = await field.input_value()
+    alerts = []
+    popups = []
+    def opened(_popup):
+        popups.append(True)
+    async def shown(dialog):
+        alerts.append((dialog.type,hashlib.sha256(dialog.message.encode()).hexdigest()))
+        await dialog.dismiss()
+    page.on('dialog',shown)
+    page.on('popup',opened)
+    passed = False
+    try:
+        responses = []
+        for value in ('',str(facts['total_pages']+1)):
+            await field.fill(value,timeout=1500)
+            alerts.clear()
+            await jump.click(timeout=1500)
+            if len(alerts) != 1 or alerts[0][0] != 'alert':
+                return None
+            responses.append(alerts[0][1])
+        if responses[0] == responses[1] or page.url != facts['url'] or popups:
+            return None
+        passed = True
+    except Exception:
+        return None
+    finally:
+        page.remove_listener('dialog',shown)
+        await field.fill(initial,timeout=1500)
+        page.remove_listener('popup',opened)
+    if passed and not popups and page.url == facts['url']:
+        return {'server_rendered':True,'probes':2,'failed_resource_count':len(tracker.failed_requests)}
+    return None
+
+
 async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
     """Only current-browser evidence, never selector guesses or stale counters."""
     if not card_selector or not callable(getattr(page, 'evaluate', None)):
@@ -73,11 +134,26 @@ async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
     proof = {**before, 'confirmed': False}
     if not tracker.available or not tracker.navigation_observed or tracker.pending:
         return [{**proof, 'reason': 'network_not_idle'}]
-    if tracker.failures or tracker.script_errors:
-        return [{**proof, 'reason': 'page_load_failed'}]
     html = await page.content()
-    digests = (scope_digest(html, card_selector), scope_digest(html, before['pager_selector']))
     failures = tracker.failures
+    failure_set = list(tracker.failed_requests)
+    initial_activity = tracker.activity
+    document = tracker.document_response
+    if tracker.script_errors:
+        return [{**proof, 'reason': 'page_load_failed'}]
+    if tracker.failures:
+        try:
+            controller = await _controller_evidence(page,before,html,tracker)
+        except Exception:
+            controller = None
+        if controller is None:
+            return [{**proof, 'reason': 'page_load_failed'}]
+        if (tracker.failures != failures or tracker.failed_requests != failure_set
+                or tracker.document_response is not document
+                or tracker.pending or tracker.script_errors or tracker.activity != initial_activity):
+            return [{**proof, 'reason': 'controller_requests_changed'}]
+        proof['controller_evidence'] = controller
+    digests = (scope_digest(html, card_selector), scope_digest(html, before['pager_selector']))
     popups = []
     def opened(_popup):
         popups.append(True)
@@ -89,15 +165,18 @@ async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
         after = await page.evaluate(FACTS, card_selector)
         final_html = await page.content()
         current = (scope_digest(final_html, card_selector), scope_digest(final_html, before['pager_selector']))
-        if popups or page.url != before['url'] or after != facts or current != digests:
+        if (popups or page.url != before['url'] or after != facts or current != digests
+                or tracker.document_response is not document):
             return [{**proof, 'reason': 'pager_state_changed'}]
         activity = tracker.activity
         await asyncio.sleep(0.3)
+        stable_facts = await page.evaluate(FACTS, card_selector)
         stable_html = await page.content()
         stable = (scope_digest(stable_html, card_selector), scope_digest(stable_html, before['pager_selector']))
         if (popups or page.url != before['url'] or tracker.script_errors or tracker.pending
                 or tracker.failures != failures or tracker.activity != activity
-                or stable != current or await page.evaluate(FACTS, card_selector) != facts):
+                or tracker.failed_requests != failure_set or tracker.document_response is not document
+                or stable != current or stable_facts != facts):
             return [{**proof, 'reason': 'pager_not_stable'}]
         return [{**proof, 'confirmed': True, 'source_sha256': current[0], 'pager_sha256': current[1]}]
     except Exception:

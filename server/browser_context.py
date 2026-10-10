@@ -185,4 +185,9 @@ async def new_browser_context(browser: Any, *, polite: bool = True, **kwargs: An
     ``polite=False`` is only for offline replays whose requests never leave the
     machine.
     """
+    if polite and 'proxy' not in kwargs:
+        from server.local_service_config import browser_proxy_options
+        proxy = browser_proxy_options()
+        if proxy is not None:
+            kwargs['proxy'] = proxy
     return IsolatedBrowserContext(await browser.new_context(**kwargs), polite=polite)
