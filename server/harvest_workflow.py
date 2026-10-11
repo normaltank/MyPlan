@@ -324,6 +324,7 @@ def observe_roster(
     url: str,
     selector: str,
     candidates: list[FacultyCandidate],
+    reviewed_non_person: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compare visible source units with independently extracted candidates."""
 
@@ -332,6 +333,7 @@ def observe_roster(
     table_rows = html_table_rows(soup)
     candidate_urls = {item.url for item in candidates if item.url != url}
     unaccounted = []
+    excluded_cards = []
     blank = 0
     structural_rows = []
     for index, card in enumerate(cards, 1):
@@ -343,6 +345,17 @@ def observe_roster(
         anchors = ([card] if card.name == "a" and card.has_attr("href") else []) + card.select("a[href]")
         links = [urljoin(url, a["href"]) for a in anchors]
         card_text = card.get_text(" ", strip=True)
+        # An exact, evidence-bound human verdict explains a non-person card,
+        # without lowering the observed card count or inventing a teacher.
+        rejected = next((item for item in reviewed_non_person or []
+                         if _compact(item.get('card_text', '')) == _compact(card_text)
+                         and (item.get('profile_url') in links or (
+                             item.get('profile_url') == url and not links))), None)
+        if rejected is not None:
+            excluded_cards.append({'index': index, 'review_id': rejected['id'],
+                                   'profile_url': rejected['profile_url'],
+                                   'card_text': card_text})
+            continue
         # A grid's filler cell ('<td>&nbsp;</td>') carries no text, link or media,
         # so it cannot hold a person; count it apart instead of as a missed one.
         if not _compact(card_text) and not links and not (
@@ -365,6 +378,7 @@ def observe_roster(
         "blank_cards": blank,
         "extracted_candidates": len(candidates),
         "unaccounted_cards": unaccounted,
+        **({'reviewed_non_person_cards': excluded_cards} if excluded_cards else {}),
         **({"structural_rows": structural_rows} if structural_rows else {}),
         **({"html_table_rows": [{"roster_url": url, "profile_url": person.url,
                                  "name": person.name, **person.table_row}
@@ -403,11 +417,12 @@ def _apply_name_decisions(
     review: list[FacultyCandidate],
     decisions: dict[str, dict[str, Any]],
     unresolved: list[dict[str, Any]],
+    reviewed_non_person: list[dict[str, Any]] | None = None,
 ) -> list[FacultyCandidate]:
     """Admit rare-surname names a person confirmed; return those still undecided.
 
-    A name judged not a person is left out, so its card stays unaccounted and
-    the roster card count still has to be explained.
+    A name judged not a person is left out and retains its exact review
+    evidence, so its card can be accounted for separately from teachers.
     """
     from server.name_review import pending_item
 
@@ -420,6 +435,8 @@ def _apply_name_decisions(
             awaiting.append(person)
         elif decision["verdict"] == "person":
             found.append(replace(person, name=decision["verified_name"], name_review_reason=''))
+        elif decision['verdict'] == 'not_person' and reviewed_non_person is not None:
+            reviewed_non_person.append(item)
     return awaiting
 
 
@@ -567,7 +584,9 @@ def reconcile_rosters(
                 observe_roster(page.html, page.url, selector, found + review), page.url, found + review))
         # Undecided names still account for their cards: the review item, not a
         # card-count mismatch, is what blocks delivery until a person decides.
-        awaiting = _apply_name_decisions(page.url, found, review, name_decisions or {}, unresolved)
+        reviewed_non_person = []
+        awaiting = _apply_name_decisions(page.url, found, review, name_decisions or {}, unresolved,
+                                        reviewed_non_person)
         source_kind = page.branch.get("source_kind") or default_source
         for person in found:
             candidate_sources.setdefault((person.name, person.url), set()).add(source_evidence)
@@ -602,7 +621,8 @@ def reconcile_rosters(
         if not selector:
             unresolved.append({"url": page.url, "status": "card_selector_missing"})
         else:
-            observation = observe_roster(page.html, page.url, selector, found + awaiting)
+            observation = observe_roster(page.html, page.url, selector, found + awaiting,
+                                         reviewed_non_person)
             observations.append(observation)
             verified_empty = verified_empty and observation["visible_cards"] == 0
             if verified_empty:
@@ -613,6 +633,7 @@ def reconcile_rosters(
                 )
             elif (
                 observation["visible_cards"] != observation["extracted_candidates"]
+                + len(observation.get('reviewed_non_person_cards', []))
                 or observation["unaccounted_cards"]
             ):
                 unresolved.append(
