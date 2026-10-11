@@ -159,7 +159,19 @@ def _certificate(decision, results, *, current_item=None, equivalence=None):
     return certificate
 
 
-def source_scope_evidence(profile_evidence, eligibility, media_evidence):
+def disposition_sources(attempt, evidence):
+    """Read only this native attempt's captured disposition originals."""
+    html = {}
+    for source in evidence:
+        original = Path(source.get('original_path') or '').resolve()
+        if original.is_relative_to(Path(attempt).resolve()) and original.is_file():
+            text = original.read_text(encoding='utf-8')
+            if hashlib.sha256(text.encode()).hexdigest() == source.get('source_html_sha256'):
+                html[source['url']] = text
+    return html
+
+
+def source_scope_evidence(profile_evidence, eligibility, media_evidence, source_dispositions=()):
     """Keep the actual admission ledger beside each captured identity source."""
     result = {url: {**evidence, 'image_biography_evidence': [m for m in media_evidence
                        if m.get('profile_url') == url and m.get('assigned_name')]}
@@ -168,6 +180,8 @@ def source_scope_evidence(profile_evidence, eligibility, media_evidence):
         entry = result.setdefault(row['profile_url'], {})
         entry.setdefault('source_eligibility', {})[row['name']] = {
             key: row[key] for key in ('name', 'profile_url', 'status', 'reason', 'source_evidence') if key in row}
+    for source in source_dispositions:
+        result.setdefault(source['url'], {})['source_disposition'] = source
     return result
 
 
@@ -178,7 +192,30 @@ def _qualification_projection(previous, current, source_html, source_evidence):
         return None
     admitted, observations = set(), []
     for url in sorted(old_urls):
-        row = source_evidence.get(url, {}).get('source_eligibility', {}).get(current['name'], {})
+        meta = source_evidence.get(url, {})
+        row = meta.get('source_eligibility', {}).get(current['name'], {})
+        disposition = meta.get('source_disposition', {})
+        if not row and disposition:
+            from bs4 import BeautifulSoup
+            proof = disposition.get('browser_proof') or {}
+            html = source_html.get(url)
+            if (disposition.get('url') != url or disposition.get('status') not in {'pending', 'inactive'}
+                    or disposition.get('source_role') not in {'organizational_membership', 'unverified_people_source'}
+                    or proof.get('confirmed') is not True or proof.get('role_supported') is not True
+                    or proof.get('url') != url or proof.get('source_html_sha256') != disposition.get('source_html_sha256')
+                    or any(proof.get(key) != disposition.get(key) for key in (
+                        'source_role', 'source_container_selector', 'role_evidence_selector', 'source_context_selector'))
+                    or any(proof.get(key) is not True for key in ('dom_stable', 'network_idle', 'witness_visible', 'college_bound'))
+                    or not html or hashlib.sha256(html.encode()).hexdigest() != disposition['source_html_sha256']):
+                return None
+            scope = BeautifulSoup(html, 'html.parser').select(disposition['source_container_selector'])
+            if len(scope) != 1 or current['name'] not in ''.join(scope[0].get_text().split()):
+                return None
+            row = {'name': current['name'], 'profile_url': url, 'status': 'unresolved',
+                   'reason': 'source_qualification_missing', 'source_evidence': [{
+                       'source_url': url, 'source_html_sha256': disposition['source_html_sha256'],
+                       'role': disposition['source_role'], 'status': 'verified',
+                       'disposition': disposition}]}
         sources = row.get('source_evidence') or []
         if row.get('name') != current['name'] or row.get('profile_url') != url or not sources:
             return None
@@ -368,10 +405,23 @@ def review_complete(audit_path, items):
     path = Path(audit_path)
     html, evidence = {}, {}
     try:
+        audit = json.loads(path.read_text(encoding='utf-8'))
         for item in items:
             for observation in item['observations']:
                 url = observation['url']
                 html[url], evidence[url] = current_source(path,url)
+        observed = {(item['name'], o['url']) for item in items for o in item['observations']}
+        for row in audit.get('eligibility', []):
+            if (row.get('name'), row.get('profile_url')) not in observed:
+                continue
+            for source in row.get('source_evidence', []):
+                url = source['source_url']
+                if url not in html:
+                    html[url], _ = current_source(path, url)
+        dispositions = audit.get('source_disposition_evidence', [])
+        html.update(disposition_sources(path.parent, dispositions))
+        evidence = source_scope_evidence(evidence, audit.get('eligibility', []),
+                                        audit.get('image_biography_evidence', []), dispositions)
         return all(_reviewed_item(item,path.parent/DECISIONS_FILE,source_html=html,
                                  source_evidence=evidence)[0] is not None for item in items)
     except (OSError,ValueError,KeyError,TypeError):

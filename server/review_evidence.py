@@ -2,7 +2,7 @@
 
 Raw hashes never change meaning. A certificate connects two different captured
 objects through exact selected fingerprints, the adjacent VSB visit counter,
-or a separately verified empty scope / same-PDF owner reparse. No old field
+an unchanged nested native subtree, or a verified empty scope / same-PDF reparse. No old field
 value becomes current truth merely because the relationship was reviewed.
 """
 
@@ -617,6 +617,64 @@ def equivalence(
         return None
 
 
+def native_scope_projection(before, after, url, old_bounds, new_bounds, old_hash, new_hash,
+                            *, wrapper_only=True):
+    """Rebind native scopes only across content-preserving single-child wrappers.
+
+    The broader container still needs the existing raw/counter proof. Its inner
+    subtree must be byte-identical in both originals; text similarity is insufficient.
+    Every caller retains the entire selected content through plain wrappers.
+    """
+    try:
+        if wrapper_only is not True:
+            return None
+        if old_bounds == new_bounds or not all((old_bounds[0], new_bounds[0])) or old_bounds[1] or new_bounds[1]:
+            return None
+        selected_source(before, url, old_bounds, old_hash)
+        selected_source(after, url, new_bounds, new_hash)
+        old_raw, old_span = native_selected_source(before, old_bounds)
+        new_raw, new_span = native_selected_source(before, new_bounds)
+        if old_span[0] <= new_span[0] and new_span[1] <= old_span[1]:
+            broad, narrow = old_bounds, new_bounds
+        elif new_span[0] <= old_span[0] and old_span[1] <= new_span[1]:
+            broad, narrow = new_bounds, old_bounds
+        else:
+            return None
+        inner_before, _ = native_selected_source(before, narrow)
+        inner_after, _ = native_selected_source(after, narrow)
+        if inner_before != inner_after:
+            return None
+        if wrapper_only:
+            outer = BeautifulSoup(before, 'html.parser').select_one(broad[0])
+            target = BeautifulSoup(inner_before, 'html.parser').find(True)
+            while outer != target:
+                children = list(outer.children)
+                elements = [child for child in children if isinstance(child, Tag)]
+                if (outer.name not in {'div', 'section', 'article'} or len(elements) != 1
+                        or any(str(child).strip() for child in children if not isinstance(child, Tag))):
+                    return None
+                outer = elements[0]
+        _, old_meta, old_issue = scope_profile_html(before, broad[0], url)
+        _, new_meta, new_issue = scope_profile_html(after, broad[0], url)
+        if old_issue or new_issue:
+            return None
+        proof = equivalence(before, after, url, broad, broad,
+                            old_meta['selected_html_sha256'], new_meta['selected_html_sha256'])
+        if proof is None:
+            return None
+        after_raw, after_span = native_selected_source(after, new_bounds)
+        return {**proof, 'basis': 'same_native_source_scope_projection', 'bounds': list(new_bounds),
+                'old_bound_source_sha256': old_hash, 'new_bound_source_sha256': new_hash,
+                'old_raw_sha256': sha(old_raw), 'new_raw_sha256': sha(after_raw),
+                'old_native_text_span': old_span, 'new_native_text_span': after_span,
+                'canonical_sha256': sha(inner_before),
+                'scope_projection': {'old_bounds': list(old_bounds), 'new_bounds': list(new_bounds),
+                    'unchanged_inner_sha256': sha(inner_before), 'outer_equivalence': proof,
+                    'wrapper_only': wrapper_only}}
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
 def old_review_items(root: Path, key: str):
     for bundle in archived_sources(root):
         for item in bundle.audit.get(key, []):
@@ -880,6 +938,9 @@ def identity_equivalence(
                 observation["source_sha256"],
             )
             if proof is None:
+                proof = native_scope_projection(original, fresh, url, old_bounds, new_bounds,
+                    before['source_sha256'], observation['source_sha256'], wrapper_only=True)
+            if proof is None:
                 return None
             _, old_selected = selected_source(
                 original, url, old_bounds, before["source_sha256"]
@@ -901,12 +962,18 @@ def identity_equivalence(
                 new_selected
             ) != field_value(observation["record"], "简介")):
                 return None
-            if proof['basis'] == 'unchanged_native_selected_source':
+            if proof['basis'] == 'same_native_source_scope_projection':
+                proof.setdefault('field_reparses', []).append({'field': '简介',
+                    'basis': 'same_native_source_scope_projection',
+                    'old_value': field_value(before['record'], '简介'),
+                    'new_value': field_value(observation['record'], '简介')})
+            elif proof['basis'] == 'unchanged_native_selected_source':
                 old_canonical, new_canonical = old_selected, new_selected
             else:
                 old_canonical, _ = _counter_free(old_selected, original, url)
                 new_canonical, _ = _counter_free(new_selected, fresh, url)
-            if read(old_canonical) != read(new_canonical):
+            if (proof['basis'] != 'same_native_source_scope_projection'
+                    and read(old_canonical) != read(new_canonical)):
                 return None
             proof.update(
                 old_original_file_sha256=bundle.original_hash(url),
