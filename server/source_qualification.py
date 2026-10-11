@@ -62,9 +62,15 @@ def organizational_purpose(text: str, scope, target: dict) -> bool:
     label = _purpose_label(text, target)
     if _ORGANIZATIONAL_PURPOSE.fullmatch(label):
         return True
-    return label == '组织建设' and bool(re.search(
-        r'(?:党委书记|纪委书记|(?:教工|学生(?:第[一二三四五六七八九十]+)?)党支部)\s*[:：]',
-        scope.get_text(' ', strip=True)))
+    if label != '组织建设':
+        return False
+    office = re.compile(r'(?:党委书记|党委副书记(?:、纪委书记)?|纪委书记|'
+                        r'(?:教工|学生(?:第[一二三四五六七八九十]+)?)党支部)[:：]([\u4e00-\u9fff]{2,4})')
+    # A standalone office/value row is directory structure. A mention inside
+    # a policy sentence or a negated office is not. Values remain raw evidence,
+    # not an affirmative identification or teacher-employment judgement.
+    return any(office.fullmatch(re.sub(r'\s+', '', node.get_text(' ', strip=True)))
+               for node in scope.select('p,td,li,dd') if not node.find(['p', 'td', 'li', 'dd']))
 
 
 def source_claim_valid(branch: dict) -> bool:

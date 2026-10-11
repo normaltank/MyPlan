@@ -17,11 +17,13 @@ CLAIM = {'source_role': 'organizational_membership', 'source_container_selector'
 
 
 @pytest.mark.parametrize('title,body,expected', [
-    ('组织建设', '<p>学院党委 党委书记：组织任职原文</p>', True),
-    ('组织建设', '<p>支部设置 教工党支部：组织任职原文</p>', True),
+    ('组织建设', '<h2>学院党委</h2><p>党委书记：王芳</p>', True),
+    ('组织建设', '<h2>支部设置</h2><p>教工党支部：李 华</p>', True),
     ('组织建设', '<p>组织建设活动说明，尚无组织任职名录。</p>', False),
     ('组织建设工作总结', '<p>党委书记：组织任职原文</p>', False),
     ('组织建设', '<h1>教师名录</h1><p>党委书记：组织任职原文</p>', False),
+    ('组织建设', '<p>本页仅介绍岗位职责，不公布任职名单。</p><p>党委书记：负责主持党委会议</p>', False),
+    ('组织建设', '<p>本页不设党委书记：不列人员，仅介绍政策。</p>', False),
 ])
 def test_governance_directory_purpose_never_follows_an_unbound_keyword(title, body, expected):
     html = f'<title>{title}</title><h1 id="source-title">{title}</h1><main>{body}</main><footer>样本大学样本学院</footer>'
@@ -36,8 +38,10 @@ def test_governance_directory_purpose_never_follows_an_unbound_keyword(title, bo
 @pytest.mark.browser
 @pytest.mark.asyncio
 @pytest.mark.parametrize('body,accepted', [
-    ('<p>学院党委 党委书记：组织任职原文</p>', True),
+    ('<h2>学院党委</h2><p>党委书记：王芳</p>', True),
     ('<p>组织建设活动说明，尚无组织任职名录。</p>', False),
+    ('<p>党委书记：负责主持党委会议</p>', False),
+    ('<p>本页不设党委书记：不列人员，仅介绍政策。</p>', False),
 ])
 async def test_governance_type_uses_actual_source_submission_and_independent_capture(tmp_path, body, accepted):
     html = ('<meta charset="utf-8"><title>组织建设</title><h1 id="source-title">组织建设</h1>'
