@@ -1512,9 +1512,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     if html_email_reviews:
         # A reviewed e-mail may move a row between sheets; numbering follows the rows.
         records = [{**row, "序号": index} for index, row in enumerate(records, 1)]
+    disposition_pages = identity_review.disposition_sources(out, disposition_evidence)
     records, identity_items, identity_reviews = identity_review.apply_decisions(records, source_hashes, decision_path,
-        source_html={**dict(all_pages), **profile_html}, source_evidence=identity_review.source_scope_evidence(
-            profile_scope_evidence, eligibility, media_audit['evidence']))
+        source_html={**dict(all_pages), **disposition_pages, **profile_html},
+        source_evidence=identity_review.source_scope_evidence(
+            profile_scope_evidence, eligibility, media_audit['evidence'], disposition_evidence))
     reviewed_pairs = identity_review.validated_pairs(records, identity_reviews, decision_path)
     from server.faculty_identity import identity_review_issues
     unresolved.extend(identity_review_issues(records, reviewed_pairs))
