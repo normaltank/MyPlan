@@ -574,8 +574,18 @@ def equivalence(
 ) -> dict | None:
     """Recompute a narrow raw→raw proof; any other native DOM difference fails."""
     try:
-        if old_bounds != new_bounds:
-            return None
+        aliases = old_bounds != new_bounds
+        if aliases:
+            if any(not bounds[0] or re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', bounds[0].strip())
+                   for bounds in (old_bounds, new_bounds)):
+                return None  # A bare tag does not establish an explicit alternative boundary.
+            # Both expressions must select the same literal whole subtree in
+            # each original. A contained paragraph or another person is not an alias.
+            for original in (before, after):
+                _, old_span = native_selected_source(original, old_bounds)
+                _, new_span = native_selected_source(original, new_bounds)
+                if old_span != new_span:
+                    return None
         old_repr, _ = selected_source(before, url, old_bounds, old_hash)
         new_repr, _ = selected_source(after, url, new_bounds, new_hash)
         if old_repr != new_repr:
@@ -598,7 +608,9 @@ def equivalence(
             "schema": 2,
             "basis": "unchanged_native_selected_source" if unchanged else COUNTER_BASIS,
             "source_url": url,
-            "bounds": list(old_bounds),
+            "bounds": list(new_bounds),
+            **({'selector_aliases': {'old_bounds': list(old_bounds), 'new_bounds': list(new_bounds),
+                                    'same_native_container': True}} if aliases else {}),
             "representation": old_repr,
             "old_bound_source_sha256": old_hash,
             "new_bound_source_sha256": new_hash,

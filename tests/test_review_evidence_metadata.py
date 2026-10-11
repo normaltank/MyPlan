@@ -141,6 +141,56 @@ def test_same_reviewed_photo_survives_only_native_counter_change(tmp_path):
     )
 
 
+def test_same_whole_container_alias_and_counter_change_keep_the_actual_photo_decision(tmp_path):
+    root, attempt, audit, snapshot, item = source(tmp_path)
+    prepare_review_resume(audit, root.name)
+    newer = page(13, 451)
+    fresh = missing_media_review.prepare_item(newer, URL, 'body > article#profile', None, MEDIA, 404)
+    assert fresh['id'] != item['id']
+    assert missing_media_review.confirmed(attempt / 'media_kind_reviews.json', fresh, source_html=newer)
+    assert fresh['review_equivalence']['selector_aliases']['same_native_container'] is True
+    assert fresh['review_equivalence']['old_bound_source_sha256'] == item['selected_html_sha256']
+    assert fresh['review_equivalence']['new_bound_source_sha256'] == fresh['selected_html_sha256']
+    saved = json.loads((attempt / 'media_kind_reviews.json').read_text(encoding='utf-8'))['decisions']
+    assert [row['id'] for row in saved] == [item['id']]
+
+
+@pytest.mark.parametrize('change', ['crop', 'different_node', 'body', 'media', 'attributes'])
+def test_container_alias_never_accepts_crops_other_nodes_or_changed_original_fields(tmp_path, change):
+    from server.review_evidence import equivalence
+    from server.profile_content import scope_profile_html
+    before = page(98, 450)
+    after = page(13, 451)
+    old_bounds = ('article#profile', None)
+    new_bounds = ('body > article#profile', None)
+    if change == 'crop':
+        new_bounds = ('article#profile > p', None)
+    elif change == 'different_node':
+        before = before.replace('id="profile"', 'id="profile" class="selected"')
+        after = after.replace('</body>', '<article class="selected"><p>完整履历。</p></article></body>')
+        new_bounds = ('.selected', None)
+    elif change == 'body':
+        after = page(13, 451, body='履历中新增当前任职，已经不是同一原件内容。')
+    elif change == 'media':
+        after = after.replace(MEDIA, 'https://faculty.example.edu/other.jpg')
+    else:
+        after = after.replace('id="profile"', 'id="profile" data-other="changed"')
+    _, old_meta, old_issue = scope_profile_html(before, old_bounds[0], URL)
+    _, new_meta, new_issue = scope_profile_html(after, new_bounds[0], URL)
+    assert not old_issue and not new_issue
+    assert equivalence(before, after, URL, old_bounds, new_bounds,
+                       old_meta['selected_html_sha256'], new_meta['selected_html_sha256']) is None
+
+
+@pytest.mark.parametrize('selector', ['article', ' article ', 'article\n'])
+def test_bare_tag_alias_is_rejected_even_with_surrounding_whitespace(tmp_path, selector):
+    root, attempt, audit, snapshot, item = source(tmp_path)
+    prepare_review_resume(audit, root.name)
+    newer = page(13, 451)
+    fresh = missing_media_review.prepare_item(newer, URL, selector, None, MEDIA, 404)
+    assert not missing_media_review.confirmed(attempt / 'media_kind_reviews.json', fresh, source_html=newer)
+
+
 def test_current_unreadable_decision_overrides_old_photo(tmp_path):
     root, attempt, audit, snapshot, item = source(tmp_path)
     prepare_review_resume(audit, root.name)
