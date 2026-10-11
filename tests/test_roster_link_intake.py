@@ -156,3 +156,6 @@ def test_batch_api_asks_before_queueing_suspicious_rows(tmp_path, monkeypatch):
     tasks = {task.college: task for task in queue.get_pending_tasks()}
     assert tasks["马克思主义学院"].roster_urls[-1] == "https://www.huse.edu.cn/mkszyxy/szdw/fjs.htm"
     assert json.dumps(queue.get_batch_status(body["batch_id"]), ensure_ascii=False).count("roster_urls")
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

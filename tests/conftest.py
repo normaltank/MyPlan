@@ -18,6 +18,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+import pytest
 
 os.environ.setdefault("HARVEST_DISABLE_NATIVE_CHROME_FALLBACK", "1")
 # The post-harvest navigation census opens the college's live menu pages;
@@ -32,3 +33,14 @@ os.environ["FACULTY_RECON_EVIDENCE_ROOT"] = str(_ISOLATED / "recon-evidence")
 # and no operator-configured pace leaks into fixture runs.
 os.environ["HARVEST_SITE_CLOCK_DB"] = str(_ISOLATED / "site-clock.sqlite3")
 os.environ["HARVEST_PER_SITE_INTERVAL_SECONDS"] = "0"
+
+
+@pytest.fixture(autouse=True)
+def stipulated_source_boundary(request, monkeypatch):
+    if request.node.get_closest_marker('verified_source_boundary') is None:
+        return
+    from source_contract_fixture import install_component_source_boundary, upgrade
+    for name in ('PLAN', 'BRANCH'):
+        if hasattr(request.module, name):
+            upgrade(getattr(request.module, name))
+    install_component_source_boundary(monkeypatch)

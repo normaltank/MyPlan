@@ -1,6 +1,8 @@
-# MyPlan 五项改进任务
+# MyPlan 审查 agent 专用：五项改进任务
 
-本文件是当前任务、状态与证据的唯一清单。需求与术语见 [CONTEXT.md](../CONTEXT.md)；模块定位见 [AGENT_HANDOVER.md](../AGENT_HANDOVER.md)。状态只在对应条目更新，不把逐次开发经过追加到入口文档。
+适用对象：用户指派承担本轮全链路审查与验证的 agent。本文件只维护该专项的任务、状态与证据，不是全体 agent 的工作计划。采集维护 agent 按用户交付的采集报错、工单和脚本优化任务继续工作，无需加载、执行或等待本计划；收到具体协作任务时只接收相关问题与证据。共同要求及分工见 [AGENTS.md](../AGENTS.md)。
+
+需求与术语见 [CONTEXT.md](../CONTEXT.md)；模块定位见 [AGENT_HANDOVER.md](../AGENT_HANDOVER.md)。本专项状态只在对应条目更新，不把逐次开发经过追加到入口文档。
 
 ## 当前进度与下一步
 

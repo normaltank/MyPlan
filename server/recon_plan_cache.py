@@ -15,8 +15,9 @@ HERE = Path(__file__).resolve().parent
 
 
 def _contract() -> str:
-    digest = hashlib.sha256(b"faculty-plan-cache-v2")
-    for name in ("recon_discovery.md", "recon_instructions.md", "recon_provided_links.md", "recon_dom_probe.js"):
+    digest = hashlib.sha256(b"faculty-plan-cache-v3-source-relationship")
+    for name in ("recon_discovery.md", "recon_instructions.md", "recon_provided_links.md", "recon_dom_probe.js",
+                 'recon_contract.py', 'source_qualification.py'):
         digest.update((HERE / name).read_bytes())
     return digest.hexdigest()
 
@@ -32,6 +33,8 @@ def _validate_structure(plan: dict, entry_url: str, discovery_pages: list[dict])
     from server.browser_batch_tool import _validate_plan
     if not isinstance(plan, dict):
         raise ValueError("invalid cached plan")
+    if plan.get('source_dispositions'):
+        raise ValueError('source dispositions require fresh discovery')
     _validate_plan(plan)
     validate_model_plan(plan, school=plan["school"], college=plan["college"])
     if not isinstance(discovery_pages, list) or not discovery_pages or not _is_structure_url(entry_url):
@@ -251,7 +254,7 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
         from server.browser_context import IsolatedPage
         if not isinstance(page, IsolatedPage):
             page = IsolatedPage(page, getattr(context, "raw_context", context))
-        scout = BrowserScout(page, Path(evidence_dir), "branch")
+        scout = BrowserScout(page, Path(evidence_dir), "branch", {'school': plan['school'], 'college': plan['college']})
         for prior in entry.get("discovery_pages", []) if verify_discovery else []:
             response = await page.goto(prior["url"], wait_until="domcontentloaded", timeout=30000)
             if response and response.status >= 400:
@@ -266,6 +269,9 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
             if branch.get("kind", "roster") != "roster" or branch.get("initial_click_selector"):
                 return outcome(valid=False, reason="unsupported_branch_shape")
             await tool("browser_navigate", {"url": branch["url"]})
+            from server.source_qualification import SOURCE_FIELDS, source_unit_selector
+            await tool('browser_verify_source', {**{key: branch[key] for key in SOURCE_FIELDS},
+                                                  'unit_selector': source_unit_selector(branch)})
             if expected_template:
                 from server.recon_templates import structural_fingerprint
                 if structural_fingerprint(await page.content()) != expected_template:

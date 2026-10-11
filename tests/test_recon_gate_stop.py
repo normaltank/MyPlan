@@ -201,3 +201,6 @@ def test_staged_recon_reports_a_gate_stop_against_its_branch(monkeypatch):
         {"status": "recon_page_unverifiable", "url": URL, "gate_issues": [child]}]
     assert [phase.get("gate_stop") for phase in caught.value.diagnostics["phases"]] == [
         None, "recon_page_unverifiable"]
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

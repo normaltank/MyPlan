@@ -173,3 +173,6 @@ def test_rejected_plan_with_same_urls_cannot_replace_the_valid_capture_plan():
         {'previous_plan': unsafe, 'issues': [{'status': 'plan_contract_rejected'}]})
     assert merged['previous_plan'] == PLAN
     assert '教师姓名' not in json.dumps(merged, ensure_ascii=False)
+
+# Purpose proof is stipulated here; independent source DOM/browser tests exercise it.
+pytestmark = pytest.mark.verified_source_boundary

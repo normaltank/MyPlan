@@ -502,12 +502,9 @@ def create_context():
 - **Ignoring HTTP Semantics**: POST for idempotent operations breaks expectations
 - **Tight Coupling**: API structure shouldn't mirror database schema
 
-## Resources
+## Available resources
 
-- **references/rest-best-practices.md**: Comprehensive REST API design guide
-- **references/graphql-schema-design.md**: GraphQL schema patterns and anti-patterns
-- **references/api-versioning-strategies.md**: Versioning approaches and migration paths
-- **assets/rest-api-template.py**: FastAPI REST API template
-- **assets/graphql-schema-template.graphql**: Complete GraphQL schema example
-- **assets/api-design-checklist.md**: Pre-implementation review checklist
-- **scripts/openapi-generator.py**: Generate OpenAPI specs from code
+- [REST design reference](../references/rest-best-practices.md)
+- [GraphQL design reference](../references/graphql-schema-design.md)
+- [Illustrative FastAPI template](../assets/rest-api-template.py): mock storage, not deployment-ready
+- [API review checklist](../assets/api-design-checklist.md): use relevant items for the actual API

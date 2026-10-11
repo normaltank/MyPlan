@@ -1,9 +1,10 @@
-# 当前文件保存测试与 lint 配置；项目工作项统一见 docs/improvement-plan.md。
+# 当前文件保存测试与 lint 配置；开发任务分工与入口见 AGENTS.md。
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"
 markers = [
+    "verified_source_boundary: explicit source-proof producer substitute for component tests; source qualification integration remains unmocked",
     "browser: 启动真实 Chromium（需先运行 python -m playwright install chromium）；用 -m \"not browser\" 可跳过",
 ]
 

@@ -1,0 +1,33 @@
+# 来源角色与学院师资关系证据
+
+本轮修复旧全局 university_faculty_roster 标志把组织名单直接当师资的问题。该标志可保留为兼容形态元数据，资格只由 SourceEvidence 的当前来源角色、完整HTML/范围/用途/学院上下文SHA及服务端浏览器证明决定。模型只给枚举和CSS，不写字段、原文引用、确认状态或摘要。
+
+source_qualification 为共同策略。Discovery/branch严格Schema、计划卫生、BrowserScout专用工具和提交门禁使用同一结构字段；缓存契约升级并重新读取用途证据。采集每个页面重新核验，带新角色的来源不沿用旧已完成/分页前缀缓存。普通/顿号名单、分段、PDF、图片表格将同一来源证据传到eligibility。缺证据和组织来源保留原件/观察及资格待核，不恢复只采专任筛选。实际个人URL相同的多个来源可同时提供证据；不同URL的同名观察不能转移资格。
+
+固定原件回归在 tests/fixtures/source-qualification，三份原件均按文件名SHA验证。两委员会15条被选范围观察从错误纳入变为待核；正式介绍页5条为独立正例。其余页面、未选择的组织名单段落、学院其他师资入口、身份和字段完整性尚未验收，不能用这些数声明全院人数。
+
+兼容边界：旧生产计划缺四个来源结构字段会被门禁拒绝/重侦察，不能无证据静默纳入以保持旧fixture绿灯。只接受完整正向用途标签，标题里的“师资”片段不够；未知表述/图片用途保持待核，这不是学院、人员或组织标题黑名单。来源与相关观察的图片/PDF原件也保存，图文owner证明不能代替师资关系或捐给已纳入行。
+
+共用批处理入口也执行结构Schema，显式拒绝verified_appointments、reviewed_exclusions及任意改名教师JSON字段；旧IDE人工quote计划需要迁移到实际官方来源或来源绑定决定，不再作为结构计划资格许可。该入口不凭此删除已有观察；本轮未重放旧工单。
+
+独立本人页证据：同一URI只有一位已观察owner、实际浏览器完整正文/SHA/可见/稳定/请求结束证明与保存HTML相符、明确本人姓名标题及无其他人员标题，且本人工作单位字段完整等于目标大学学院、身份/岗位/职务字段明示教师或学术岗位时，可记录内部faculty_profile_appointment证据。职称本身、博士毕业经历、正文提校名、同名或未经browser证明的HTML均不够；兼职/外聘教师身份使用同一机制。这是确定性读取已取得材料，名称/单位/职位不能由model/plan填写；复杂或未识别布局仍未知。
+
+来源人工复核按观察登记到source_review与review_registry。每个决定绑定任务、大学学院、原生候选SHA、全部相关来源/正文范围/HTML及媒体原件SHA、本人页rawSHA和解析/规则源码contract。登录员工逐观察选择确认、排除、未知或撤回，必须记录审核人、依据及官网原件引用；官网不足但人工掌握的身份明确记为human_attested_relationship，不能冒充自动证明。界面没有整委员会一键确认，没有教师字段填写或plan quote入口。决定经prepare/carry进入原生资格重读；canonical任务决定防旧副本覆盖撤回，导出前再检查决定是否变化。完成或运行后的改判撤销旧租约/下载而保留原records；retarget、原件/scope/候选或源码变化不复用决定。
+
+组件fixture按角色边界迁移：34个旧组件文件明确使用测试专用可信source-proof生产者替身，继续真实执行Schema、结构门禁、解析、重试等原断言；生产没有skip参数。真实来源/伪角色/实际DOM与Chromium保护集不使用该替身。全pipeline回归及所有失败定位以开发日志最终终局为准，没有移除旧用例。
+
+当前机制验证有真实staged gate（固定模型事件边界）、实际run_plan原件与字段保存、原生PDF证据传播、HTTP登录/保存/重试/携带/原生恢复/撤回整合。本地Chromium全部URL由固定原件与404路由覆盖，无官网外联或付费模型。仍无提交/CI、实网、学院完整性或部署验收。
+
+本轮完整相关采集pipeline42文件终态512 passed/1 skipped（缺本机旧医院生产快照），队列/登录复核/身份门禁/worker/receipt/下载版本/运行隔离补充77 passed。用途选择器抛错会丢已读页面的实际Chromium反例已跑红，修复保留完整页面/13候选与既有source_role_evidence_unverified阻挡，定向终态见本轮开发证据。组件替身只代替可信source-proof生产者，不降低原结构/字段断言或给生产skip入口。
+
+PR59正常站点兼容修正：已保存湖南中医药大学信息科学与工程学院师资页（SHA eb18c971322ec011d3bc6074998f7c4aaf28b41c0fdb4056134d65bedfdeb4f7）因学校/学院标识分处底部官网链接/页头logo，旧单一context要求误阻断。source_context_selector现允许同页多个实际机构branding区域的CSS组合，逐区可见并绑定同一URL、完整DOM与组合SHA；教师履历与整个body不作branding。原件红回归后恢复该页全部60个来源观察的资格，原始HTML不裁剪；原生正文、分页、身份、邮箱及全院完整性仍独立核验。用途证明工具保存UTF8原字节，Windows不再改换行导致SHA不一致。委员会与新闻用途反例仍拒绝，未放宽来源用途或人物字段判据。
+
+PR59独立审查的跨学院反例：别的学院名录header标明商学院，nav普通出站链接文字/图片提到法学院，旧context全文命中把它当本页法学院品牌。共同branding读取现在按字段读取本站机构证据：大学官网链接须属于当前机构主机关系；学院普通链接须指向本页/上级栏目，同站非导航logo仍保留。文字或图片的出站学院导航不作为任职许可。HTML范围/SHA仍保留全部原件，浏览器可见/稳定与当前目的证明继续独立核验，未知观察及本人原页保留。
+
+原真实Chromium→run_plan反例由错误delivery_ready变为false；新三种文字/语义nav图片/wp_nav图片回归均通过，未知候选与原个人HTML保留。湖南固定原件60正常观察再次通过，不把大学footer官网外链全部禁用。46相关旧项通过、三个新增浏览器反例通过、Ruff通过；最新CI/新版本独立增量核验仍待终态。运行Markdown按source_role命中实际人员，组织/未知成员不静默删除。
+
+实际导师/教学名录用途补充：导师队伍、博士生导师、硕士生导师、教学队伍、教学名师使用同一正式名录用途规则；完整标签正例及带招聘/获奖新闻后缀反例均核验。它们分别见已保存土木与资源学院实际目录，既不按大学特殊处理，也不把新闻中出现该词就当成师资名单。机构归属和真实浏览器证明仍单独要求。
+
+来源发现/恢复接口补齐：`source_dispositions`只含URL、固定reason及可读来源的结构选择器。`source_unreadable`保存实际访问失败/HTTP错误；`source_structure_unresolved`、`source_relationship_unverified`保留待核，不能标成官网坏或无师资。`not_faculty_roster`只有当前浏览器同页完整范围、标题/当前导航的正向组织用途、独立目标branding同时证明才允许退出active分支；它不声称成员都不是教师。`known_urls`必须逐项进入active或有证据的处置，不能无依据omit。
+Schema、卫生、staged共用发现校验；零active只允许带处置记录，实际run_plan保存`no_active_roster_sources`并继续阻断交付。独立采集重新访问所有处置来源并保存`source_disposition_evidence`、导航事件及SHA；current DOM以UTF8物化保存，SHA不是响应体字节或Windows既有snapshot字节。当前证据变化使旧inactive失效；历史audit/原件不重写，修复轮另记previous_source_audit_path。带处置计划不进入缓存复用，须fresh discovery；原正常来源缓存仍重验。实际访问失败、未知资格、结构待核保持不同状态。失败worker与成功sync将source_dispositions/source_disposition_evidence原样投影到task.stats供已授权人工流程引用，不新增分类或自动重排。
+新增本地浏览器反例覆盖原件→submit→staged→run_plan audit、503、未知用途、组织反证、当前页面变回正式师资、无依据omit、空计划和教师字段注入；相关回归不代表实网或全学院完整性验收。分页契约由独立改动处理。

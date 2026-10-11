@@ -57,6 +57,8 @@ async def test_identity_review_does_not_trigger_more_structure_model_calls(tmp_p
     task=SimpleNamespace(school='University',college='College',url='https://example.edu/')
     plan={'school':task.school,'college':task.college,'source_kind':'university_faculty_roster',
           'branches':[{'url':task.url,'card_selector':'main li','single_page':True}]}
+    from source_contract_fixture import upgrade
+    upgrade(plan)  # Qualification producer is outside this identity-only worker boundary.
     calls=[]
     async def recon(*args,**kwargs):
         calls.append(1)

@@ -138,7 +138,7 @@ def resolve_duplicate_profile_aliases(candidates, profile_html, profile_evidence
 
 
 def merge_same_name_observations(candidates, candidate_sources, list_urls):
-    """同名合并（用户 2026-09-30 决定：唯一同名即合并）。
+    """Legacy source-string coalescing; typed page witnesses never merge by name.
 
     ``list_urls`` are the roster pages themselves: a candidate whose URL is one
     of them has no personal page (a name on a supplementary list such as a
@@ -159,6 +159,12 @@ def merge_same_name_observations(candidates, candidate_sources, list_urls):
     merges = []
     sources = {key: set(value) for key, value in candidate_sources.items()}
     for name, group in by_name.items():
+        from server.source_qualification import SourceEvidence
+        if any(isinstance(source, SourceEvidence) for candidate in group
+               for source in candidate_sources.get((candidate.name, candidate.url), ())):
+            # A source witness belongs to this observation. Same-name lists
+            # cannot inherit another person's faculty relationship or identity.
+            continue
         listed = [c for c in group if c.url in list_urls]
         pages = list(dict.fromkeys(c.url for c in group if c.url not in list_urls))
         if len(pages) > 1 or not listed:

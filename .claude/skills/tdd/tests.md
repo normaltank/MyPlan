@@ -17,7 +17,7 @@ test("user can checkout with valid cart", async () => {
 Characteristics:
 
 - Tests behavior users/callers care about
-- Uses public API only
+- Exercises the meaningful behavior at the appropriate boundary
 - Survives internal refactors
 - Describes WHAT, not HOW
 - One logical assertion per test
@@ -35,7 +35,9 @@ test("checkout calls paymentService.process", async () => {
 });
 ```
 
-Red flags:
+These are reasons to inspect a test, not automatic grounds to delete it. A persisted-state, transaction-order or call-count assertion can be necessary when that is the contract at risk.
+
+Potential red flags:
 
 - Mocking internal collaborators
 - Testing private methods
@@ -45,14 +47,14 @@ Red flags:
 - Verifying through external means instead of interface
 
 ```typescript
-// BAD: Bypasses interface to verify
+// Useful when durable storage is the contract; insufficient for retrieval behavior
 test("createUser saves to database", async () => {
   await createUser({ name: "Alice" });
   const row = await db.query("SELECT * FROM users WHERE name = ?", ["Alice"]);
   expect(row).toBeDefined();
 });
 
-// GOOD: Verifies through interface
+// Exercises retrieval behavior; may need a separate durability check
 test("createUser makes user retrievable", async () => {
   const user = await createUser({ name: "Alice" });
   const retrieved = await getUser(user.id);

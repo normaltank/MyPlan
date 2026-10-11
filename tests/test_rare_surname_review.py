@@ -37,6 +37,7 @@ def _roster(names=NAMES, linked=False):
     ([{"status": name_review.STATUS, "url": ROSTER_URL},
       {"status": "card_selector_empty", "url": ROSTER_URL}], 3),
 ])
+@pytest.mark.verified_source_boundary
 async def test_name_review_alone_does_not_spend_structure_repair(tmp_path, monkeypatch,
                                                                   unresolved, recon_calls):
     from types import SimpleNamespace

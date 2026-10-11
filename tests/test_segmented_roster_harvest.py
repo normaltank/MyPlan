@@ -210,3 +210,6 @@ async def test_ocr_name_repeating_a_text_name_blocks_instead_of_merging(tmp_path
                             browser, tmp_path)
     assert result["delivery_ready"] is False
     assert "segment_duplicate_name" in {item["status"] for item in result["unresolved"]}
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

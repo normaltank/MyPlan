@@ -132,3 +132,6 @@ async def test_harvest_keeps_full_overlong_bio_and_exports_every_character(tmp_p
     assert not issues
     workbook = openpyxl.load_workbook(report['excel_path'])
     assert ''.join(row[9] for row in list(workbook['完整简介'].values)[1:]) == rows[0]['简介']
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

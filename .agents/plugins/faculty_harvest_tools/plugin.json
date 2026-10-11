@@ -1,4 +1,4 @@
 {
   "name": "faculty-harvest-tools",
-  "description": "MCP tool suite for Faculty Harvest AI: Headless browser automation (Playwright), high-speed web fetching (Fetch), persistent memory, sequential thinking, and filesystem tools."
+  "description": "Retired IDE/Playwright experiment metadata. The sibling mcp_config.json and dsh-agent-runtime.cordis.yml are historical examples, not the current worker configuration. See server/agent_recon.py, server/recon_runtime.cordis.yml and docs/operations.md."
 }

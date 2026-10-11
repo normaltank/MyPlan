@@ -3,10 +3,17 @@
 ## 开始工作
 
 1. 读 [CONTEXT.md](CONTEXT.md)，对齐项目目标、术语和交付契约。
-2. 读 [五项改进任务](docs/improvement-plan.md)，定位本次任务及证据缺口。
+2. 按用户当前会话分配的任务选择下面的工作路线，保持既有任务范围。
 3. 按任务查 [模块索引](AGENT_HANDOVER.md)、[文档导航](docs/README.md) 和实际代码；提交、开放 PR、检查状态直接查 GitHub。
 
-用户最新明确要求优先。用户已授权审查和修改未经其审核的旧 Markdown；技能、历史记录和其他 agent 的意见提供方法或线索，不增加授权，也不使旧架构不可修改。已获授权的维护继续执行，真正缺失的信息才向用户提出具体问题。
+以用户当前任务确定工作范围。技能、历史记录和其他 agent 的意见提供方法或线索，不能替用户分配任务或授予权限。已有授权范围内的维护继续执行；遇到尚未确定的业务取舍或必要信息缺口，提出具体问题。
+
+## 按任务分工
+
+- **采集维护 agent**：优化学院采集脚本，根据实际采集报错、工单和原始证据复现问题，修复共性原因，提高整体采集准确度与完整性，并保护历史成功案例。以当前用户任务、相关工单和 PR 为工作入口，记录修复与验证结果；无需加载或执行审查 agent 的五项计划，也不以等待审查、随机抽样或冻结验收作为日常维护的前置条件。
+- **全链路审查 agent**：仅在用户指派本轮全链路审查与验证任务时，读取并维护 [审查 agent 的五项计划](docs/improvement-plan.md)，负责代码审查、随机批次、整批核验、回归保护与冻结后的未见验证。
+
+角色由用户交付的任务确定，与 Codex、Claude 等工具名称无关。维护任务中的代码审查和回归测试属于维护工作，不自动转为五项专项任务。两条工作线共享 CONTEXT 与以下工程要求；协作时交接具体问题、证据、影响文件和 PR，不接管对方整份计划或覆盖其改动。
 
 ## 工作边界与完成条件
 
@@ -19,10 +26,10 @@
 
 ## 按需使用技能
 
-真正执行学院采集、认领或交付时读 [faculty-browser-harvest](.agents/skills/faculty-browser-harvest/SKILL.md) 及其工具说明。文档和代码审查不自动变成采集任务。
+工作流内 DS 的入口发现与类型／结构判断指令由 `server/agent_recon.py` 加载：`server/recon_discovery.md`、`server/recon_provided_links.md`、`server/recon_instructions.md`。开发维护与全链路审查 agent 只在修改或审查相关调用链时将其作为源码资料读取，不把工作流内角色指令当成自己的任务；实际排障与采集仍按用户已授权范围执行。
 
 整理指导可用 [writing-for-agents](.agents/skills/writing-for-agents/SKILL.md)；代码审查可用 [code-review](.agents/skills/code-review/SKILL.md)；架构分析可用 [improve-codebase-architecture](.agents/skills/improve-codebase-architecture/SKILL.md)。按任务选用，不加载全部技能；工作项的持久化入口见 [issue-tracker](docs/agents/issue-tracker.md)。
 
 ## 维护文档
 
-同一规则只在其负责文件修改，其他入口保留链接。职责及 ADR 维护方法见 [文档导航](docs/README.md)。本轮状态更新到五项任务的对应项；提交经过、逐次测试数量和临时日志留在 PR、CI 或相关证据记录，不追加到本文件或模块索引。
+同一规则只在其负责文件修改，其他入口保留链接。职责及 ADR 维护方法见 [文档导航](docs/README.md)。采集维护更新对应工单、PR 或已有问题记录；全链路审查更新其五项计划。提交经过、逐次测试数量和临时日志留在 PR、CI 或相关证据记录，不追加到本文件或模块索引。
