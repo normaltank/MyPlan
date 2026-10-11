@@ -112,7 +112,8 @@ async def test_media_review_buttons_execute_in_browser_without_ocr_handler_colli
             await page.set_content(render_review_page([], media_kind_items=items,
                 media_kind_decision_url="https://review.example.edu/decision"))
             await page.locator('.media-kind-card button[data-verdict="photo"]').click()
-            await page.locator('.media-kind-card .status').filter(has_text="已确认纯人物照片").wait_for()
+            await page.locator('.media-kind-card .status').filter(has_text="已保存：仅为人物照片，不含简介或邮箱").wait_for()
+            assert "可选择其他选项更改" in await page.locator('.media-kind-card .status').inner_text()
             assert not errors and submitted == [{"id": items[0]["id"], "verdict": "photo"}]
         finally:
             await browser.close()
