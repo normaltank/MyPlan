@@ -30,7 +30,7 @@ if __package__:
     from .task_image_review import (task_review_audit, review_items, prepare_review_resume,
                                     legacy_review_audits)
     from . import (html_email_review, name_review, identity_review, media_kind_review, review_registry, image_bio_review,
-                   profile_page_review, no_faculty_review)
+                   profile_page_review, no_faculty_review, official_site_review)
     from .image_bio_review import (render_review_page, save_review_decision,
                                    save_email_decision)
 else:
@@ -47,6 +47,7 @@ else:
     import media_kind_review
     import profile_page_review
     import no_faculty_review
+    import official_site_review
     from image_bio_review import (render_review_page, save_review_decision,
                                   save_email_decision)
 
@@ -398,6 +399,13 @@ def present_task(data, scope):
                 data['source_review_urls'] = links
         if (audit is not None and review_registry.has_review(audit)) or (task and _college_verdict_only(task, audit)):
             data['review_url'] = f"/review/task/{data['task_id']}"
+        if task and task.stats.get('official_site_issue'):
+            data['field_review_url'] = data.get('review_url', '')
+            data['official_site_issue'] = task.stats['official_site_issue']
+            data['official_site_message'] = official_site_review.label(task.stats['official_site_issue'])
+            data['official_site_review_url'] = f"/review/task/{task.task_id}/official-site"
+            data['review_url'] = data['official_site_review_url']
+            data['download_url'] = ''
     return data
 
 
@@ -425,6 +433,8 @@ def _review_task(task_id: str, request: Request):
 
 def _college_verdict_only(task, audit) -> bool:
     """A college whose scout found no roster has nothing to review but its official site."""
+    if task.stats.get('official_site_issue'):
+        return False
     if task.stats.get('no_faculty'):
         return True
     return (task.status == 'failed' and scout_found_no_roster(task.error, task.stats)
@@ -434,6 +444,10 @@ def _college_verdict_only(task, audit) -> bool:
 @app.get('/review/task/{task_id}', response_class=HTMLResponse)
 async def task_image_review_page(task_id: str, request: Request):
     task = agent_queue.get_task(task_id)
+    if task and task.status == 'failed' and task.stats.get('official_site_issue'):
+        current_audit = task_review_audit(OUTPUT_DIR, task)
+        if current_audit is None or not review_registry.has_review(current_audit):
+            return official_site_review.render_page(task, csrf=request.cookies.get(CSRF_COOKIE, ''))
     if task and task.task_type == 'harvest' and _college_verdict_only(task, task_review_audit(OUTPUT_DIR, task)):
         return no_faculty_review.render_college_page(task, csrf_token=request.cookies.get(CSRF_COOKIE, ''))
     _, audit = _review_task(task_id, request)
@@ -470,6 +484,63 @@ async def task_image_review_page(task_id: str, request: Request):
         endpoint=f'/api/task/{task_id}/review/source-relationship',
         artifact_endpoint=f'/api/task/{task_id}/review/source-original', csrf=request.cookies.get(CSRF_COOKIE, '')) + '</html>')
     return rendered
+
+
+def _official_site_task(task_id: str):
+    task = agent_queue.get_task(task_id)
+    if task is None or task.task_type != 'harvest' or not task.stats.get('official_site_issue'):
+        raise HTTPException(status_code=404, detail='没有该学院的官网访问异常材料')
+    if task.status != 'failed':
+        raise HTTPException(status_code=409, detail='该工单当前不在失败待处理状态')
+    return task
+
+
+def _require_site_available(task):
+    issue = task.stats.get('official_site_issue')
+    if issue and (issue.get('review') or {}).get('verdict') != 'available':
+        raise HTTPException(status_code=409, detail='请先由人工确认官网已恢复可访问')
+
+
+@app.get('/review/task/{task_id}/official-site', response_class=HTMLResponse)
+async def official_site_page(task_id: str, request: Request):
+    task = _official_site_task(task_id)
+    audit = task_review_audit(OUTPUT_DIR, task)
+    fields = f'/review/task/{task_id}' if audit and review_registry.has_review(audit) else ''
+    return official_site_review.render_page(task, csrf=request.cookies.get(CSRF_COOKIE, ''), field_review_url=fields)
+
+
+@app.post('/api/task/{task_id}/review/official-site', status_code=204)
+async def save_official_site_decision(task_id: str, payload: official_site_review.SiteDecisionRequest, request: Request):
+    _official_site_task(task_id)
+    try:
+        if not agent_queue.save_official_site_review(task_id, payload, _user(request).id):
+            raise HTTPException(status_code=409, detail='工单状态已变化，请刷新页面')
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail='官网访问证据已变化，请刷新后复核') from exc
+    return Response(status_code=204)
+
+
+@app.post('/api/task/{task_id}/official-site/retry')
+async def retry_official_site_task(task_id: str, request: Request):
+    task = _official_site_task(task_id)
+    _require_site_available(task)
+    audit = task_review_audit(OUTPUT_DIR, task)
+    field_statuses = set(task.stats.get('failure_codes', [])) | {
+        issue.get('status') for issue in task.stats.get('failure_issues', [])}
+    if audit is None and field_statuses & review_registry.STATUSES:
+        raise HTTPException(status_code=409, detail='已有未完成的字段复核，但审计材料不可用，仍保留待处理')
+    try:
+        if audit is not None:
+            saved = json.loads(audit.read_text(encoding='utf8'))
+            if any(kind.is_triggered(saved) for kind in review_registry.KINDS) or review_registry.has_review(audit):
+                if not review_registry.review_complete(audit):
+                    raise HTTPException(status_code=409, detail='尚有未完成的字段复核，请先保存相应决定')
+            prepare_review_resume(audit, task_id)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail='原采集证据不完整，仍保留待处理') from exc
+    if not agent_queue.retry_failed_review_task(task_id):
+        raise HTTPException(status_code=409, detail='工单状态已变化，请刷新页面')
+    return {'status': 'queued', 'task_id': task_id}
 
 
 @app.post('/api/task/{task_id}/review/source-relationship', status_code=204)
@@ -651,7 +722,8 @@ async def save_task_identity_review(task_id: str, payload: IdentityReviewRequest
 
 @app.post('/api/task/{task_id}/review/retry')
 async def retry_task_after_image_review(task_id: str, request: Request):
-    _, audit = _review_task(task_id, request)
+    task, audit = _review_task(task_id, request)
+    _require_site_available(task)
     try:
         if not review_registry.review_complete(audit):
             raise HTTPException(status_code=409, detail='请先完成全部原图类型、图片文字、邮箱、姓名和身份复核；不可读文字或证据不足仍保持阻断')
