@@ -27,3 +27,7 @@ PR59独立审查的跨学院反例：别的学院名录header标明商学院，n
 原真实Chromium→run_plan反例由错误delivery_ready变为false；新三种文字/语义nav图片/wp_nav图片回归均通过，未知候选与原个人HTML保留。湖南固定原件60正常观察再次通过，不把大学footer官网外链全部禁用。46相关旧项通过、三个新增浏览器反例通过、Ruff通过；最新CI/新版本独立增量核验仍待终态。运行Markdown按source_role命中实际人员，组织/未知成员不静默删除。
 
 实际导师/教学名录用途补充：导师队伍、博士生导师、硕士生导师、教学队伍、教学名师使用同一正式名录用途规则；完整标签正例及带招聘/获奖新闻后缀反例均核验。它们分别见已保存土木与资源学院实际目录，既不按大学特殊处理，也不把新闻中出现该词就当成师资名单。机构归属和真实浏览器证明仍单独要求。
+
+来源发现/恢复接口补齐：`source_dispositions`只含URL、固定reason及可读来源的结构选择器。`source_unreadable`保存实际访问失败/HTTP错误；`source_structure_unresolved`、`source_relationship_unverified`保留待核，不能标成官网坏或无师资。`not_faculty_roster`只有当前浏览器同页完整范围、标题/当前导航的正向组织用途、独立目标branding同时证明才允许退出active分支；它不声称成员都不是教师。`known_urls`必须逐项进入active或有证据的处置，不能无依据omit。
+Schema、卫生、staged共用发现校验；零active只允许带处置记录，实际run_plan保存`no_active_roster_sources`并继续阻断交付。独立采集重新访问所有处置来源并保存`source_disposition_evidence`、导航事件及SHA；current DOM以UTF8物化保存，SHA不是响应体字节或Windows既有snapshot字节。当前证据变化使旧inactive失效；历史audit/原件不重写，修复轮另记previous_source_audit_path。带处置计划不进入缓存复用，须fresh discovery；原正常来源缓存仍重验。实际访问失败、未知资格、结构待核保持不同状态。失败worker与成功sync将source_dispositions/source_disposition_evidence原样投影到task.stats供已授权人工流程引用，不新增分类或自动重排。
+新增本地浏览器反例覆盖原件→submit→staged→run_plan audit、503、未知用途、组织反证、当前页面变回正式师资、无依据omit、空计划和教师字段注入；相关回归不代表实网或全学院完整性验收。分页契约由独立改动处理。

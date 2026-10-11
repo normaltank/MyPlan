@@ -85,7 +85,8 @@ async def test_discovery_submission_rejects_unobserved_or_omitted_urls(tmp_path)
             assert body(await scout.call("submit_plan", {"plan": discovery}))["accepted"] is True
             scout.target = {**TARGET, "required_urls": ["https://example.edu/other"]}
             result = body(await scout.call("submit_plan", {"plan": discovery}))
-            assert result["issues"] == [{"path": "$.branches", "status": "previous_branch_omitted"}]
+            assert result["issues"] == [{"path": "$.branches", "url": "https://example.edu/other",
+                                         "status": "previous_branch_omitted"}]
         finally:
             await browser.close()
 

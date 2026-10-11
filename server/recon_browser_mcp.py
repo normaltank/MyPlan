@@ -247,7 +247,13 @@ class BrowserScout:
                 return {**self.text_result(reply), "isError": True}
             self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
             return self.text_result({"accepted": True, "digest": plan_digest(plan)})
-        reply = await self._browser_call(name, arguments)
+        try:
+            reply = await self._browser_call(name, arguments)
+        except Exception as exc:
+            if name != 'browser_navigate':
+                raise
+            reply = {**self.text_result({'requested_url': arguments['url'],
+                                         'error': type(exc).__name__}), 'isError': True}
         cid = str(len(self.events))
         self.events.extend([
             {"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
@@ -346,7 +352,7 @@ class BrowserScout:
             url = arguments["url"]
             if not url.startswith(("http://", "https://")):
                 raise ValueError("http(s) URL required")
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            response = await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
             self._dom_modified = False
             await self.snapshot()
             if self.phase == "discovery":
@@ -360,6 +366,10 @@ class BrowserScout:
                 value["page"] = self._page_summary(value["page"])
             else:
                 value = await self.page.evaluate("() => ({url:location.href,navigation:__facultyRecon.navigation('body',0,24),structure:__facultyRecon.structure('body',0,8)})")
+            html = await self.page.content()
+            value.update(requested_url=url, status=response.status if response else None,
+                         source_html_sha256=hashlib.sha256(html.encode('utf-8')).hexdigest(),
+                         original_path=str(self.save('source.html', html.encode('utf-8'))))
         elif name == "browser_survey":
             pages = []
             for url in list(arguments["urls"])[:SURVEY_MAX_URLS]:
@@ -377,7 +387,10 @@ class BrowserScout:
                     summary = self._page_summary(probe["page"], SURVEY_PREVIEW_CHARS)
                     if isinstance(summary, dict):
                         summary["people"] = await self._people()
+                    html = await self.page.content()
                     pages.append({"url": url, "final_url": self.page.url,
+                                  'source_html_sha256': hashlib.sha256(html.encode('utf-8')).hexdigest(),
+                                  'original_path': str(self.save('source.html', html.encode('utf-8'))),
                                   "status": response.status if response is not None else None,
                                   "page": summary,
                                   "new_links": items[:SURVEY_MAX_NEW_LINKS],
@@ -401,7 +414,7 @@ class BrowserScout:
             captured = {}
             value = await verify_source(self.page, arguments, self.target or {}, local_capture=captured)
             if captured.get('html'):
-                self.save('source.html', captured['html'].encode('utf-8'))
+                value['original_path'] = str(self.save('source.html', captured['html'].encode('utf-8')))
             witness_path = self.save('source-witness.json', json.dumps(value, ensure_ascii=False))
             value['evidence_path'] = str(witness_path)
             await self.snapshot()

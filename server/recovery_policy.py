@@ -47,6 +47,9 @@ _GROUPS = {
         recon_failed task_timeout missing_entry_url delivery_sync_failure missing_audit_file""",
 }
 POLICIES: dict[str, Action] = {code: action for action, codes in _GROUPS.items() for code in codes.split()}
+POLICIES.update(source_unreadable='review', source_structure_unresolved='review',
+                source_relationship_unverified='review', no_active_roster_sources='review',
+                source_disposition_unverified='structure')
 # A valid container can fail its live proof without its selector being wrong.
 PROFILE_PROOF_POLICIES: dict[str, Action] = {"dom_unstable": "access", "network_not_idle": "access"}
 NON_STRUCTURAL = frozenset(code for code, action in POLICIES.items() if action != "structure")

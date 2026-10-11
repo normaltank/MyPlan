@@ -243,7 +243,7 @@ _URL = re.compile(r"^https?://", re.I)
 # 计划 schema 里允许出现的字面量（非 URL、非选择器的合法值）
 _SCHEMA_LITERALS = {"university_faculty_roster", "hospital_doctor_roster", "navigation", "segmented", "image_table",
                     "faculty_roster", "organizational_membership", "unverified_people_source"}
-_MODEL_PLAN_KEYS = {"school", "college", "source_kind", "branches",
+_MODEL_PLAN_KEYS = {"school", "college", "source_kind", "branches", "source_dispositions",
                     "profile_concurrency", "profile_ready_selector"}
 _MODEL_BRANCH_KEYS = {"url", "kind", "source_kind", "card_selector", "single_page",
                       "next_selector", "max_pages", "initial_click_selector",
@@ -379,6 +379,11 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
             branch(node["child_branch"], f"{path}.child_branch", child=True)
 
     keys(plan, _MODEL_PLAN_KEYS, "$")
+    from server.recon_contract import validate_source_dispositions
+    try:
+        validate_source_dispositions(plan)
+    except ValueError as exc:
+        raise PlanHygieneError('invalid source dispositions') from exc
     for index, item in enumerate(plan["branches"]):
         branch(item, f"$.branches[{index}]")
     selector(plan, "profile_ready_selector", "$")
@@ -471,8 +476,10 @@ def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
                 validate_model_plan(proposed, school=prior_plan['school'], college=prior_plan['college'])
         except (PlanHygieneError, KeyError, TypeError):
             proposed = None
-        prior_urls = {branch['url'] for branch in prior_plan.get('branches', [])}
-        proposed_urls = {branch.get('url') for branch in (proposed or {}).get('branches', [])}
+        prior_urls = {branch['url'] for branch in [*prior_plan.get('branches', []),
+                                                  *prior_plan.get('source_dispositions', [])]}
+        proposed_urls = {branch.get('url') for branch in [*(proposed or {}).get('branches', []),
+                                                        *(proposed or {}).get('source_dispositions', [])]}
         # A failed phase may return only its accepted sibling branches. That is
         # not a replacement for the complete plan whose audit found failures.
         if not prior_urls <= proposed_urls:
@@ -1011,6 +1018,7 @@ class ReconResult:
             "session_id": self.session_id,
             "event_count": self.event_count,
             "branches": len(self.plan.get("branches", [])),
+            "source_dispositions": self.plan.get('source_dispositions', []),
             **self.diagnostics,
         }
 
@@ -1069,7 +1077,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
     feedback = cfg.get("feedback") or {}
     required_urls = [url for url in dict.fromkeys([
         *feedback.get("known_urls", []),
-        *(branch["url"] for branch in (feedback.get("previous_plan") or {}).get("branches", [])
+        *(branch["url"] for branch in [*(feedback.get("previous_plan") or {}).get("branches", []),
+                                      *(feedback.get("previous_plan") or {}).get("source_dispositions", [])]
           if isinstance(branch, dict) and isinstance(branch.get("url"), str))]) if _is_structure_url(url)]
     urls = []
     parallel = cfg.get("parallel_branches", False)
@@ -1182,32 +1191,18 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             events.extend(discovery_events)
             phases.append(metric)
             discovery_session_id = f"{session_id}-discover"
-        if (set(discovery) - {"school", "college", "source_kind", "branches"}
-                or not {'school', 'college', 'branches'} <= set(discovery)
-                or discovery["school"] != target["school"] or discovery["college"] != target["college"]
-                or discovery.get('source_kind') not in {None, 'university_faculty_roster', 'hospital_doctor_roster'}
-                or not isinstance(discovery["branches"], list) or not discovery["branches"]):
-            raise ReconPlanError("入口发现计划不符合契约")
-        check_plan_hygiene(discovery, school=target["school"], college=target["college"])
-        observed = observed_browser_urls(discovery_events)
-        for branch in discovery["branches"]:
-            if (not isinstance(branch, dict) or set(branch) != ({'url'} | SOURCE_FIELDS)
-                    or not source_claim_valid(branch) or not _is_structure_url(branch['url'])):
-                raise ReconPlanError('入口发现须输出URL、来源角色和实际见证选择器')
-            if branch["url"] not in observed:
-                raise ReconPlanError("名录 URL 缺少本轮真实浏览器链接证据")
-            if source_event_issues(branch, discovery_events):
-                raise ReconPlanError('入口发现缺少来源用途浏览器见证')
-            if branch["url"] not in urls:
-                urls.append(branch["url"])
-        aliases = browser_url_aliases(discovery_events)
-        resolved = {resolved_browser_url(url, aliases) for url in urls}
-        omitted = [url for url in required_urls if resolved_browser_url(url, aliases) not in resolved]
-        if omitted:
-            error = ReconPlanError("补缺发现遗漏已核实名录分支")
-            error.safe_feedback = {"known_urls": list(dict.fromkeys([*required_urls, *urls])),
-                                   "issues": [{"status": "previous_branch_omitted", "url": url} for url in omitted]}
+        from server.recon_contract import validate_submission
+        issues = validate_submission(discovery, 'discovery', {**target, 'required_urls': required_urls},
+                                     discovery_events)
+        if issues:
+            error = ReconPlanError('入口发现计划不符合契约或缺少当前来源证据')
+            # The worker routes contract failures as structural repair while
+            # preserving the same controlled schema diagnostics the scout saw.
+            routed = [{'status': 'plan_contract_rejected', 'gate_issues': issues}] if all(
+                item['status'].startswith('schema_') for item in issues) else issues
+            error.safe_feedback = {'known_urls': required_urls, 'issues': routed}
             raise error
+        urls = list(dict.fromkeys(branch['url'] for branch in discovery['branches']))
         discovery_checkpoint = {"plan": discovery, "events": discovery_events,
                                 "session_id": discovery_session_id}
         plan = {**discovery, "branches": []}
@@ -1667,7 +1662,8 @@ async def reconnoiter(
         exc.diagnostics = diagnostics
         raise
     if str(Path(__file__).with_name("recon_runtime.cordis.yml")) in cfg.get("patches", ()):
-        issues = selector_evidence_issues(plan, events)
+        from server.recon_contract import disposition_event_issues
+        issues = [*disposition_event_issues(plan, events), *selector_evidence_issues(plan, events)]
         if issues:
             error = ReconPlanError("选择器缺少本次真实浏览器验证证据")
             error.diagnostics = diagnostics
