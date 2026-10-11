@@ -430,10 +430,12 @@ class BrowserScout:
             known_forward = self._observed_forward_selectors.setdefault(forward_key, set())
             if arguments.get('next_selector') and value.get('nextCount', 0) > 0:
                 known_forward.add(arguments['next_selector'])
-            if value.get("hiddenCardCount", 0) > 0:
+            def visibility_error():
                 return {**self.text_result({**value, "status": "roster_cards_not_visible",
                     "retry": "Verify a selector for the visible roster rather than hidden or preload nodes."}),
                     "isError": True}
+            if value.get("hiddenCardCount", 0) > 0:
+                return visibility_error()
             from server.nonpagination_controls import (nonpagination_evidence, nonpagination_evidence_valid,
                                                        observe_current_navigation, without_nonpagination_controls)
             pagination = await self.page.evaluate("selector => __facultyRecon.pagination('body',0,12,false,selector)",
@@ -456,6 +458,8 @@ class BrowserScout:
                     'retry':'Verify the current source again; the navigation probe changed its URL.'}), 'isError':True}
             value = await self.page.evaluate('args => __facultyRecon.check(...args)',
                                             [arguments['card_selector'], arguments.get('next_selector')])
+            if value.get('hiddenCardCount', 0) > 0:
+                return visibility_error()
             forward_observations = []
             for selector in sorted(known_forward):
                 current = await self.page.evaluate('args => __facultyRecon.check(...args)',

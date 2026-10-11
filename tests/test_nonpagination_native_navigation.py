@@ -27,6 +27,7 @@ def _value(reply):
     ('normal_listener', True), ('hover_dropdown', True), ('hidden_without_expansion', False),
     ('external_ajax', False), ('delegated_ajax', False), ('no_document_navigation', False),
     ('history_only', False), ('same_count_changed_card', False), ('same_count_changed_image', False),
+    ('same_count_hidden_card', False),
 ])
 async def test_current_navigation_requires_document_response_and_unchanged_complete_roster(tmp_path, kind, accepted):
     control = '<nav><a id="advance" href="/roster">当前名录</a></nav>'
@@ -71,6 +72,8 @@ async def test_current_navigation_requires_document_response_and_unchanged_compl
             current = html
             if navigations > 1 and kind == 'same_count_changed_card':
                 current = current.replace('王芳', '赵东')
+            elif navigations > 1 and kind == 'same_count_hidden_card':
+                current += '<style>.roster li:last-child{display:none}</style>'
             elif navigations > 1 and kind == 'same_count_changed_image':
                 current = current.replace('/a.png', '/b.png')
             await r.fulfill(body=current, content_type='text/html; charset=utf-8')
@@ -80,7 +83,18 @@ async def test_current_navigation_requires_document_response_and_unchanged_compl
             {'school':'样本大学', 'college':'样本学院', 'url':URL})
         try:
             await scout.call('browser_navigate', {'url':URL})
-            first = _value(await scout.call('browser_verify', {'card_selector':CARDS,'next_selector':'#advance'}))
+            first_reply = await scout.call('browser_verify', {'card_selector':CARDS,'next_selector':'#advance'})
+            first = _value(first_reply)
+            if kind == 'same_count_hidden_card':
+                assert first_reply.get('isError') is True
+                assert first['hiddenCardCount'] == 1 and first['status'] == 'roster_cards_not_visible'
+                assert first.get('pagination_termination',{}).get('confirmed') is not True
+                source = _value(await scout.call('browser_verify_source', {**CLAIM,'unit_selector':CARDS}))
+                assert source['confirmed'] is False
+                submitted = _value(await scout.call('submit_plan', {'plan':
+                    {'url':URL,'card_selector':CARDS,'single_page':True,**CLAIM}}))
+                assert submitted['accepted'] is False
+                return
             final = _value(await scout.call('browser_verify', {'card_selector':CARDS}))
             assert final['pagination_termination']['confirmed'] is accepted
             [item] = final['pagination_termination']['observed_forward_controls']
