@@ -618,14 +618,16 @@ def equivalence(
 
 
 def native_scope_projection(before, after, url, old_bounds, new_bounds, old_hash, new_hash,
-                            *, wrapper_only=False):
-    """Rebind nested native scopes only inside an unchanged original container.
+                            *, wrapper_only=True):
+    """Rebind native scopes only across content-preserving single-child wrappers.
 
     The broader container still needs the existing raw/counter proof. Its inner
     subtree must be byte-identical in both originals; text similarity is insufficient.
-    Missing-image roles additionally retain the entire context through plain wrappers.
+    Every caller retains the entire selected content through plain wrappers.
     """
     try:
+        if wrapper_only is not True:
+            return None
         if old_bounds == new_bounds or not all((old_bounds[0], new_bounds[0])) or old_bounds[1] or new_bounds[1]:
             return None
         selected_source(before, url, old_bounds, old_hash)
@@ -937,7 +939,7 @@ def identity_equivalence(
             )
             if proof is None:
                 proof = native_scope_projection(original, fresh, url, old_bounds, new_bounds,
-                    before['source_sha256'], observation['source_sha256'])
+                    before['source_sha256'], observation['source_sha256'], wrapper_only=True)
             if proof is None:
                 return None
             _, old_selected = selected_source(

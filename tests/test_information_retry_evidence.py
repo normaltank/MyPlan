@@ -39,8 +39,8 @@ async def test_native_run_plan_carries_disposition_originals_and_reparses_only_u
     base = 'https://fixture.example.edu'
     urls = [base + f'/person/{i}' for i in range(4)]
     branding = '<header>样本大学 样本学院</header>'
-    formal = {u: '<html><body>' + branding + '<article><h4>导师信息-王芳</h4>'
-        '<p>日期：2026-01-01</p><section id="content"><div class="inner">'
+    formal = {u: '<html><body>' + branding + '<h4>导师信息-王芳</h4>'
+        '<p>日期：2026-01-01</p><article><section id="content"><div class="inner">'
         '<p>王芳</p><p>职称：副教授(博导/硕导)</p><p>完整本人履历' + str(i)
         + '</p></div></section></article></body></html>' for i, u in enumerate(urls[:2])}
     auxiliary = {u: '<html><body>' + branding + '<h1>科研团队</h1><article>王芳 辅助旧观察不可捐字段'
@@ -150,3 +150,52 @@ def test_missing_photo_wrapper_change_keeps_exact_old_decision_and_blocks_change
     if change is None:
         assert current['review_equivalence']['original_decision_id'] == old['id']
     assert (path.read_bytes() if path.exists() else None) == saved
+
+
+@pytest.mark.browser
+@pytest.mark.asyncio
+async def test_native_run_plan_cannot_reuse_same_for_cropped_research_sibling(tmp_path):
+    out = tmp_path / 'tasks' / 'fixture-truncation' / 'attempt-1'
+    base = 'https://fixture.example.edu'
+    urls = [base + '/person/1', base + '/person/2']
+    brand = '<header>样本大学 样本学院</header>'
+    roster = '<meta charset="utf-8"><title>师资队伍</title>' + brand + '<h1>师资队伍</h1><main><ul>' + ''.join(
+        f'<li><a href="{u}">王芳</a><span>副教授</span></li>' for u in urls) + '</ul></main>'
+    pages = {u: '<meta charset="utf-8">' + brand + '<article><h4>导师信息-王芳</h4><p>日期：2026-01-01</p>'
+        '<div id="content"><div id="short"><p>王芳，副教授，研究领域是算法与系统。来源' + str(i) + '</p></div>'
+        '<p>重要科研经历：主持项目甲，发表本人论文乙，承担课程丙。完整事实' + str(i) + '</p></div></article>'
+        for i,u in enumerate(urls)}
+    claim = {'url': base + '/list', 'single_page': True, 'card_selector': 'main li',
+             'source_role': 'faculty_roster', 'source_container_selector': 'main',
+             'role_evidence_selector': 'h1', 'source_context_selector': 'header'}
+    old_plan = {'school': '样本大学', 'college': '样本学院', 'branches': [{**claim, 'profile_content_selector': 'article'}]}
+    new_plan = {'school': '样本大学', 'college': '样本学院', 'branches': [{**claim, 'profile_content_selector': '#short'}]}
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        context = await new_browser_context(browser, polite=False)
+        async def route(request):
+            await request.fulfill(body=roster if request.request.url == base + '/list' else pages.get(request.request.url,''),
+                content_type='text/html; charset=utf-8')
+        await context.route('**/*', route)
+        first = await run_plan(old_plan, context, out)
+        [item] = first['identity_review_items']
+        path = out / identity_review.DECISIONS_FILE
+        identity_review.save_decision(path, item, 'same', urls[0], reviewed_by=7)
+        saved = path.read_bytes()
+        register_source(out.parent, Path(first['audit_path']), out.parent.name)
+        second = await run_plan(new_plan, context, out)
+        rows = json.loads(Path(second['records_path']).read_text(encoding='utf-8'))
+        proof = {'old_observations': len(item['observations']),
+                 'old_bios_include_scientific_facts': all('重要科研经历' in o['record']['简介'] for o in item['observations']),
+                 'second_ready': second['delivery_ready'], 'pending_identity': len(second['identity_review_items']),
+                 'certificates': len(second['identity_reviews']), 'unresolved': second['unresolved'],
+                 'new_bios': [r['简介'] for r in rows], 'new_bios_lost_scientific_facts': all('重要科研经历' not in r['简介'] for r in rows),
+                 'source_projection_bases': [p['basis'] for c in second['identity_reviews'] for p in c.get('source_equivalence',[])],
+                 'old_decision_unchanged': path.read_bytes() == saved}
+        if second['identity_reviews']:
+            identity_review.validated_pairs(rows, second['identity_reviews'], path)
+            proof['certificate_revalidated'] = True
+        assert proof['old_bios_include_scientific_facts'] and proof['new_bios_lost_scientific_facts']
+        assert not proof['second_ready'] and proof['pending_identity'] == 1 and not proof['certificates']
+        assert proof['old_decision_unchanged']
+        await browser.close()
