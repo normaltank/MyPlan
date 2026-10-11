@@ -86,7 +86,7 @@ def test_flat_text_without_dom_boundary_cannot_certify_a_prefix(value):
     from server.detail_mecc import explicit_title_fields
     from server.titles import select_title
     choice = select_title(explicit_fields=explicit_title_fields('职称：' + value))
-    assert choice.conflicts and choice.title == '教师'
+    assert choice.conflicts and choice.title == ''
 
 
 def test_media_enrichment_preserves_the_scoped_html_field_boundary(tmp_path):

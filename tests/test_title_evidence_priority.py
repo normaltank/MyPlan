@@ -98,7 +98,7 @@ def test_conflicting_explicit_fields_block_delivery_without_arbitrary_selection(
     issues = [issue for issue in actual['unresolved'] if issue['status'] == 'title_field_conflict']
     assert len(issues) == 1 and issues[0]['姓名'] == '王芳'
     assert set(issues[0]['matches']) == {'教授', '副教授'}
-    assert next(row for row in rows(actual) if row['姓名'] == '王芳')['职称'] == '教师'
+    assert next(row for row in rows(actual) if row['姓名'] == '王芳')['职称'] == ''
 
 
 def test_duplicate_explicit_fields_agree_without_conflict():
@@ -114,7 +114,7 @@ def test_fallback_conflicting_fields_also_require_review(monkeypatch):
     actual = harvest({url: html}, [faculty.FacultyCandidate('王芳', url, '讲师')], monkeypatch)
     assert not actual['delivery_ready']
     assert [issue['status'] for issue in actual['unresolved']] == ['title_field_conflict']
-    assert rows(actual)[0]['职称'] == '教师'
+    assert rows(actual)[0]['职称'] == ''
 
 
 def test_late_unlabelled_first_title_is_read_without_truncating_the_profile():
@@ -181,7 +181,7 @@ def test_image_and_text_explicit_fields_are_checked_together(tmp_path, ocr_named
     issues = _enrich_extracted_records([record], segments, media, tmp_path, {}, [])
     assert record['简介'] == (image_bio + '\n\n' + text_bio if ocr_named
                             else text_bio + '\n\n' + image_bio)
-    assert record['职称'] == '教师'
+    assert record['职称'] == ''
     assert any(issue['status'] == 'title_field_conflict'
                and set(issue['matches']) == {'教授', '副教授'} for issue in issues)
 
@@ -235,7 +235,7 @@ def test_conflicting_card_fields_require_review_unless_own_profile_field_is_auth
     if own_field:
         assert actual['delivery_ready'] and rows(actual)[0]['职称'] == '讲师'
     else:
-        assert not actual['delivery_ready'] and rows(actual)[0]['职称'] == '教师'
+        assert not actual['delivery_ready'] and rows(actual)[0]['职称'] == ''
         assert actual['unresolved'][0]['status'] == 'title_field_conflict'
         assert set(actual['unresolved'][0]['matches']) == {'教授', '副教授'}
 

@@ -1479,6 +1479,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         profileless_urls=roster_urls,
         verified_profile_urls=set(profile_scope_evidence),
         title_field_evidence=title_field_evidence,
+        defer_homepage_projection=True,
     ) if admitted else {"sheet1_with_email": [], "sheet2_no_email": [],
                           "unresolved": [], "delivery_ready": False}
     unresolved.extend(extraction["unresolved"])
@@ -1575,9 +1576,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     coverage["identity_merges"] = identity_merges
     coverage["identity_reviews"] = identity_reviews
     coverage_path = out / f"{name}_coverage.json"
-    for row in records:
-        if (row["主页"], row["姓名"]) in table_profileless:
-            row["主页"] = ""
+    from server.delivery_fields import project_personal_homepages
+    records = project_personal_homepages(records, roster_urls)
     for source, row in zip(coverage["field_sources"], records):
         source["receipt_sha256"] = identity_review.record_digest(row)
     # A reviewer can withdraw/replace a decision while the resumed native pass

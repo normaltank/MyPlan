@@ -469,7 +469,7 @@ class FacultyDirectoryExtractor:
                             tuple(field for node in r for field in declared_dom_title_fields(node, preserve_content=True)))
             title = select_title(explicit_fields=title_fields, card_title=title,
                                  body_title=resolve_title(card)).title
-            if title == '教师' and not title_fields:
+            if not title and not title_fields:
                 title = resolve_title(section)
             url = href or base_url
             node_key = href if href else id(head)
@@ -820,14 +820,14 @@ class FacultyDirectoryExtractor:
                                 if item['card'] is not None else ())
                 matched_title = select_title(explicit_fields=title_fields,
                                              body_title=resolve_title(card_text)).title
-                if matched_title == '教师' and not title_fields:
+                if not matched_title and not title_fields:
                     matched_title = resolve_title(block_title)
                 contact_conflicts = mailto_address_conflicts(item['card']) if item['card'] is not None else ()
 
                 if url in seen_urls:
                     for idx_c, existing_c in enumerate(candidates):
                         if existing_c.url == url:
-                            upgrade = existing_c.title == '教师' and matched_title != '教师'
+                            upgrade = existing_c.title in ('', '教师') and matched_title not in ('', '教师')
                             candidates[idx_c] = replace(
                                 existing_c, title=matched_title if upgrade else existing_c.title,
                                 card_context=context_text if upgrade else existing_c.card_context,
@@ -1169,6 +1169,7 @@ class FacultyHarvestPipeline:
         profileless_urls: Optional[Set[str]] = None,
         verified_profile_urls: Optional[Set[str]] = None,
         title_field_evidence: Optional[Dict[Tuple[str, str], Tuple[TitleField, ...]]] = None,
+        defer_homepage_projection: bool = False,
     ) -> Dict:
         import datetime
         if not date_str:
@@ -1514,6 +1515,12 @@ class FacultyHarvestPipeline:
         is_conserved = records_conserved and len(unresolved) == 0
         delivery_ready = is_conserved and len(unresolved) == 0 and total_count > 0
 
+        source_records = sheet1_with_email + sheet2_no_email
+        if not defer_homepage_projection:
+            from server.delivery_fields import project_personal_homepages
+            sheet1_with_email = project_personal_homepages(sheet1_with_email, no_profile_pages)
+            sheet2_no_email = project_personal_homepages(sheet2_no_email, no_profile_pages)
+
         return {
             "total_count": total_count,
             "sheet1_with_email": sheet1_with_email,
@@ -1524,6 +1531,7 @@ class FacultyHarvestPipeline:
             "records_conserved": records_conserved,
             "delivery_ready": delivery_ready,
             "email_alternates": email_alternates,
+            "source_records": source_records,
         }
 
     @classmethod

@@ -160,7 +160,8 @@ async def test_text_segmented_article_is_delivered_with_article_text_and_positio
     assert records["张伟"]["邮箱"] == "zhangwei@example.edu.cn" and records["张伟"]["职称"] == "教授"
     assert "研究方向：机器人与智能制造。" in records["张伟"]["简介"] and "李娜" not in records["张伟"]["简介"]
     assert records["李娜"]["邮箱"] == "" and "主讲机械原理。" in records["李娜"]["简介"]
-    assert all(row["主页"] == URL for row in records.values())
+    assert all(row["主页"] == '' for row in records.values())
+    assert all(source['profile_url'] == URL for source in result['coverage']['field_sources'])
     sources = result["coverage"]["field_sources"]
     assert {s["attribution_scope"] for s in sources} == {"segmented_article_record"}
 

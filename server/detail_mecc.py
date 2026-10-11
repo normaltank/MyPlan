@@ -20,9 +20,11 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from server.dom_regions import is_noise_element
 
 try:
-    from server.titles import resolve_title, select_title, title_mentions, title_expression_tail, TitleField
+    from server.titles import (resolve_title, select_title, title_mentions, title_expression_tail,
+                               declared_title_mentions, TitleField)
 except ImportError:
-    from titles import resolve_title, select_title, title_mentions, title_expression_tail, TitleField
+    from titles import (resolve_title, select_title, title_mentions, title_expression_tail,
+                        declared_title_mentions, TitleField)
 
 _OPUS = str(Path(__file__).resolve().parent.parent / "Opus")
 if _OPUS not in sys.path:
@@ -375,7 +377,7 @@ def explicit_title_fields(full_bio: str) -> tuple[TitleField, ...]:
                 value += '\n' + next_line
                 value_line = next_number
                 ambiguous = True
-        mentions = title_mentions(value)
+        mentions = declared_title_mentions(value)
         if mentions:
             fields.append(TitleField(value, mentions, (line_number, value_line), ambiguous))
     return tuple(fields)
@@ -475,7 +477,7 @@ def declared_dom_title_fields(root: Tag, *, preserve_content: bool = False) -> t
                      or bool(re.search(r'[^\s:：]+[:：]', outside))
                      or bool(_BARE_TITLE_LABEL.search(outside))
                      or value_node.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) is not None)
-        mentions = title_mentions(value)
+        mentions = declared_title_mentions(value)
         if mentions:
             fields.append(TitleField(value, mentions, (1, len(text.splitlines())), ambiguous))
             for accepted in (node, value_node):

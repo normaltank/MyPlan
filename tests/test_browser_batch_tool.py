@@ -606,6 +606,23 @@ async def test_human_selected_image_email_clears_only_matching_conflict(tmp_path
     first = await run_plan(plan, browser, tmp_path)
     assert first["delivery_ready"] is False
     assert any(item["status"] == "image_bio_email_conflict" for item in first["unresolved"])
+    [published] = json.loads(Path(first['records_path']).read_text(encoding='utf-8'))
+    assert published['主页'] == ''
+    assert first['coverage']['field_sources'][0]['profile_url'] == url
+    from copy import deepcopy
+    from server import review_registry
+    audit_path = Path(first['audit_path'])
+    original_audit = audit_path.read_bytes()
+    for key, value in [('record_index', None), ('record_index', 99),
+                       ('profile_url', url + '/other'), ('receipt_sha256', '0' * 64)]:
+        changed = deepcopy(first)
+        changed['coverage']['field_sources'][0][key] = value
+        try:
+            audit_path.write_text(json.dumps(changed), encoding='utf-8')
+            assert collect_email_conflict_items(audit_path) == []
+            assert not review_registry.review_complete(audit_path)
+        finally:
+            audit_path.write_bytes(original_audit)
     item = collect_email_conflict_items(first["audit_path"])[0]
     save_email_decision(tmp_path / "image_bio_email_reviews.json", item, "234567@163.com")
     second = await run_plan(plan, browser, tmp_path)
@@ -712,7 +729,8 @@ def test_profileless_candidate_on_second_branch_does_not_trigger_profile_fetch()
 
     assert called == []
     assert result["delivery_ready"] is True
-    assert result["sheet2_no_email"][0]["主页"] == second_roster
+    assert result["sheet2_no_email"][0]["主页"] == ''
+    assert result['source_records'][0]['主页'] == second_roster
 
 
 def test_pagination_polling_does_not_mutate_cached_wrapper_registry(monkeypatch):

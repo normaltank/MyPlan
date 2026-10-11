@@ -132,7 +132,8 @@ async def test_reviewed_link_is_delivered_from_the_roster(tmp_path):
     assert audit["unresolved"] == [] and audit["total"] == 2
     records = json.loads(Path(audit["records_path"]).read_text(encoding="utf-8"))
     row = next(r for r in records if r["姓名"] == "赵红霞")
-    assert row["主页"] == ROSTER and row["简介"] == ""
+    assert row["主页"] == '' and row["简介"] == ""
+    assert any(source['profile_url'] == ROSTER for source in audit['coverage']['field_sources'])
     assert audit["profile_page_reviews"][0]["verdict"] == "roster_only"
 
 # This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.

@@ -232,7 +232,8 @@ async def test_run_plan_resolves_supplementary_identity_only_with_review(tmp_pat
     assert not [u for u in result["unresolved"] if u["status"] == "distinct_profile_identity_unverified"]
     records = {row["姓名"]: row for row in json.loads(Path(result["records_path"]).read_text(encoding="utf-8"))}
     assert set(records) == set(people) | {"张永勇"}
-    assert records["张永勇"]["主页"] == ORG_URL
+    assert records["张永勇"]["主页"] == ''
+    assert any(source['profile_url'] == ORG_URL for source in result['coverage']['field_sources'])
     assert records["徐丽"]["主页"].startswith(base + "/info/1226/")
     assert len(result["identity_reviews"]) == 7 and result["identity_merges"] == []
 
