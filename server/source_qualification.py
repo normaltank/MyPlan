@@ -57,6 +57,16 @@ def faculty_purpose(text: str, target: dict) -> bool:
     return bool(_FACULTY_PURPOSE.fullmatch(_purpose_label(text, target)))
 
 
+def organizational_purpose(text: str, scope, target: dict) -> bool:
+    """Recognize the source's organization type, not its members' occupations."""
+    label = _purpose_label(text, target)
+    if _ORGANIZATIONAL_PURPOSE.fullmatch(label):
+        return True
+    return label == '组织建设' and bool(re.search(
+        r'(?:党委书记|纪委书记|(?:教工|学生(?:第[一二三四五六七八九十]+)?)党支部)\s*[:：]',
+        scope.get_text(' ', strip=True)))
+
+
 def source_claim_valid(branch: dict) -> bool:
     return (branch.get('source_role') in ROLES and all(
         isinstance(branch.get(key), str) and branch[key].strip()
@@ -182,8 +192,8 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     result['non_faculty_purpose'] = bool(
         branch['source_role'] == 'organizational_membership' and college_bound
         and not faculty_page_purpose
-        and ((title_bound and _ORGANIZATIONAL_PURPOSE.fullmatch(_purpose_label(title, target)))
-             or any(_ORGANIZATIONAL_PURPOSE.fullmatch(_purpose_label(text, target)) for text in own_links)))
+        and ((title_bound and organizational_purpose(title, scope, target))
+             or any(organizational_purpose(text, scope, target) for text in own_links)))
     if branch['source_role'] == 'faculty_roster':
         purpose = bool((title_bound and faculty_purpose(title, target))
                        or any(faculty_purpose(text, target) for text in own_links))
