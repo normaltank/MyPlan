@@ -39,6 +39,6 @@
 - 完整简介与工作簿：[full-biography-workbook](docs/implementation/2026-10-10-full-biography-workbook.md)。
 - PDF 本人范围、履历与重试：[pdf-owner-resume-sections](docs/implementation/2026-10-10-pdf-owner-resume-sections.md)、[native-pdf-owner-retry](docs/implementation/2026-10-11-native-pdf-owner-retry.md)。
 - 来源角色与学院关系：[source-role-qualification](docs/implementation/2026-10-10-source-role-qualification.md)。
-- 个人链接卡片边界：[roster-link-boundary](docs/implementation/2026-10-10-roster-link-boundary.md)。
+- 个人链接卡片边界：[roster-link-boundary](docs/implementation/2026-10-10-roster-link-boundary.md)、[placeholder-roster-links](docs/implementation/2026-10-11-placeholder-roster-links.md)。
 
 这些是对应版本的证据记录。记录中的“通过”“待 CI”“未部署”不自动延伸到当前主线或用户运行环境。更早交接保留在 Git 及 [旧快照](docs/history/2026-10-10-handover-before-guidance-refresh.md)。
