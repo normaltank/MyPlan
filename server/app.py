@@ -525,6 +525,10 @@ async def retry_official_site_task(task_id: str, request: Request):
     task = _official_site_task(task_id)
     _require_site_available(task)
     audit = task_review_audit(OUTPUT_DIR, task)
+    field_statuses = set(task.stats.get('failure_codes', [])) | {
+        issue.get('status') for issue in task.stats.get('failure_issues', [])}
+    if audit is None and field_statuses & review_registry.STATUSES:
+        raise HTTPException(status_code=409, detail='已有未完成的字段复核，但审计材料不可用，仍保留待处理')
     try:
         if audit is not None:
             saved = json.loads(audit.read_text(encoding='utf8'))

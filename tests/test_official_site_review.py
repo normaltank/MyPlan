@@ -140,6 +140,62 @@ def test_old_field_retry_cannot_bypass_unconfirmed_site_access(tmp_path, monkeyp
     assert queue.get_task(task.task_id).status == 'failed'
 
 
+@pytest.mark.parametrize('field_review', [True, False])
+def test_missing_audit_keeps_known_field_review_blocked_but_allows_pure_access_retry(tmp_path, monkeypatch, field_review):
+    queue, task, _, client, headers, audit, records = setup_site(tmp_path, monkeypatch, field_review=field_review)
+    stats = queue.get_task(task.task_id).stats
+    if field_review:
+        stats.update(failure_codes=['image_bio_low_confidence'],
+                     failure_issues=[{'status': 'image_bio_low_confidence', 'url': task.url}])
+        with queue._connect() as con:
+            con.execute('UPDATE tasks SET stats_json=? WHERE task_id=?', (json.dumps(stats), task.task_id))
+    issue = stats['official_site_issue']
+    assert client.post(f'/api/task/{task.task_id}/review/official-site', json={
+        'issue_id': issue['id'], 'verdict': 'available'}, headers=headers).status_code == 204
+    original = audit.read_bytes()
+    archived = audit.with_name('original-audit-kept.raw')
+    audit.rename(archived)
+    assert client.post(f'/api/task/{task.task_id}/review/retry', headers=headers).status_code == 404
+    response = client.post(f'/api/task/{task.task_id}/official-site/retry', headers=headers)
+    assert response.status_code == (409 if field_review else 200)
+    saved = queue.get_task(task.task_id)
+    assert saved.status == ('failed' if field_review else 'queued')
+    assert saved.records == records and not saved.download_url
+    assert archived.read_bytes() == original
+
+
+@pytest.mark.parametrize('was_applied', [True, False])
+def test_site_available_cannot_bypass_withdrawn_source_relationship(tmp_path, monkeypatch, was_applied):
+    from server import source_review
+    from server.faculty_extractor import FacultyCandidate
+    from server.source_qualification import SourceEvidence
+    queue, task, reviewer, client, headers, audit, records = setup_site(tmp_path, monkeypatch)
+    original = audit.parent / 'source-original.html'
+    original.write_bytes(b'<main>original organization membership</main>')
+    candidate = FacultyCandidate('王芳', task.url, '讲师', '原生观察')
+    [item] = source_review.build_items([candidate], {
+        (candidate.name, task.url): {SourceEvidence(task.url,
+            'organizational_membership' if was_applied else 'faculty_roster', 'verified', 'a' * 64)}},
+        {}, {'school': task.school, 'college': task.college}, task.task_id,
+        [{'url': task.url, 'path': str(original), 'kind': 'directory'}], [])
+    decision = source_review.save_decision(audit.parent / source_review.DECISIONS_FILE, item, 'confirm',
+        evidence_basis='official_source', reason='合成测试逐人核验', source_refs=[task.url], reviewed_by=reviewer.id)
+    audit.write_text(json.dumps({'task_id': task.task_id, 'school': task.school, 'college': task.college,
+        'audit_path': str(audit), 'unresolved': [], 'source_review_items': [item],
+        'source_relationship_reviews': [decision] if was_applied else []}), encoding='utf8')
+    before = audit.read_bytes()
+    issue = queue.get_task(task.task_id).stats['official_site_issue']
+    assert client.post(f'/api/task/{task.task_id}/review/official-site',
+        json={'issue_id': issue['id'], 'verdict': 'available'}, headers=headers).status_code == 204
+    assert client.post(f'/api/task/{task.task_id}/review/source-relationship', json={
+        'id': item['id'], 'verdict': 'revoked', 'evidence_basis': 'official_source',
+        'reason': '合成撤回测试', 'source_refs': [task.url]}, headers=headers).status_code == 204
+    assert client.post(f'/api/task/{task.task_id}/official-site/retry', headers=headers).status_code == 409
+    assert queue.get_task(task.task_id).status == 'failed'
+    assert queue.get_task(task.task_id).records == records
+    assert audit.read_bytes() == before
+
+
 @pytest.mark.browser
 @pytest.mark.asyncio
 async def test_site_page_save_does_not_queue_and_button_requests_retry_explicitly(tmp_path, monkeypatch):
