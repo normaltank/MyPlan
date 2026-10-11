@@ -1236,6 +1236,11 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             started = time.monotonic()
             reuse = verified_branches.get(url)
             if reuse:
+                from server.source_qualification import SOURCE_FIELDS
+                current = next(claim for claim in discovery['branches'] if claim['url'] == url)
+                if any(reuse['branch'].get(key) != current.get(key) for key in SOURCE_FIELDS):
+                    reuse = None  # A fresh discovery claim needs its own branch proof.
+            if reuse:
                 branch = reuse["branch"]
                 proof_events = reuse.get("events") or []
                 one = {**plan, "branches": [branch]}
