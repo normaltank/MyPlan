@@ -10,6 +10,8 @@ from iso_mining import first_href
 @pytest.mark.parametrize('placeholder', [
     "<span style='color:red;font-size:9pt'>转换链接错误</span>",
     '<strong>link unavailable</strong>',
+    '/list/%3CSPAN%3Eerror%3C/span%3E',
+    '/list/%3Cspan%3Eerror%3C/span%20%3E',
     'https://faculty.example.edu/list/%3Cspan style=%27color:red;font-size:9pt%27%3E'
     '%E8%BD%AC%E6%8D%A2%E9%93%BE%E6%8E%A5%E9%94%99%E8%AF%AF%3C/span%3E',
 ])

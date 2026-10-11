@@ -452,7 +452,7 @@ def _profile_href(href: str) -> bool:
     if '<' in href or '>' in href:
         return False
     path = unquote(urlparse(href).path)
-    return not re.search(r'<([A-Za-z][\w:-]*)(?:\s[^<>]*)?>[^<>]*</\1>', path)
+    return not re.search(r'<([A-Za-z][\w:-]*)(?:\s[^<>]*)?>[^<>]*</\1\s*>', path, re.I)
 
 
 def first_href(nodes: list[Tag], base: Optional[str]) -> Optional[str]:
