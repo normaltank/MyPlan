@@ -801,7 +801,7 @@
                             setBadge(task.official_site_issue ? task.official_site_message : '待人工复核', 'warn');
                             document.getElementById('statSummary').innerText = task.official_site_issue
                                 ? '已有记录和访问证据保留；请人工确认官网访问情况，保存不会自动重新采集。'
-                                : '有图片文字、邮箱或生僻姓名需要人工核对；完成后可重新采集本工单。';
+                                : '有来源用途、图片文字、邮箱、姓名或身份需要人工核对；完成后可重新采集本工单。';
                             setResultTone(false);
                         }
                         document.getElementById('resultArea').classList.remove('hidden');
@@ -862,11 +862,12 @@
             const download = st.download_url ? `<a href="${escapeHtml(st.download_url)}" download title="下载该学院的双 Sheet Excel">${icon('download')}表格</a>` : '';
             const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>`
                 : st.university_review_url ? `<a href="${escapeHtml(st.university_review_url)}">${icon('review')}同名复核</a>` : '';
+            const sourceReview = st.source_disposition_review_url ? `<a href="${escapeHtml(st.source_disposition_review_url)}">${icon('review')}来源决定改选</a>` : '';
             // A person who checked the site can close a college that publishes no faculty roster.
             return `
                 <div class="subtask">
                     <div class="subtask-name"><span class="subtask-college">${escapeHtml(st.college)}</span><span class="subtask-school">${escapeHtml(st.school)}</span></div>
-                    <div class="subtask-actions"><span class="pill pill-dot" data-tone="${tone}"${busy ? ' data-busy' : ''}>${text}</span>${download}${review}</div>
+                    <div class="subtask-actions"><span class="pill pill-dot" data-tone="${tone}"${busy ? ' data-busy' : ''}>${text}</span>${download}${review}${sourceReview}</div>
                 </div>`;
         }
 

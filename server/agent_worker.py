@@ -404,7 +404,14 @@ class AgentWorker:
         feedback = None
         report: dict[str, Any] = {"delivery_ready": False, "unresolved": []}
         output_dir.mkdir(parents=True, exist_ok=True)
+        from server.source_disposition_review import recon_feedback
+        review_feedback = recon_feedback(output_dir, getattr(task, 'task_id', output_dir.name))
+        if review_feedback:
+            feedback = review_feedback
         resumed = self._resume_plan(task, output_dir)
+        prior_resumed = resumed
+        if review_feedback:
+            resumed = None  # A collection request requires discovery, not another pass of the unchanged plan.
         attempts = resumed.diagnostics.pop("prior_attempts", []) if resumed else []
         budget = ReconBudget(
             max_calls=self.max_recon_calls, max_tokens=self.max_recon_tokens,
@@ -436,6 +443,9 @@ class AgentWorker:
                 result["runtime_report"], ensure_ascii=False, indent=2), encoding="utf-8")
             return result
         verified_branches = None
+        if review_feedback and prior_resumed:
+            feedback['previous_plan'] = prior_resumed.plan
+            verified_branches = await self._unaffected_branches(prior_resumed.plan, feedback, output_dir / 'review-reuse')
         resume_discovery = None
         previous_contract_failure = None
         harvested_plan = None  # the plan whose capture produced the current report
@@ -456,7 +466,7 @@ class AgentWorker:
             print(f"[worker]   侦察 {attempt + 1}… {task.url}", flush=True)
             try:
                 provided = list(getattr(task, "roster_urls", None) or [])
-                if attempt == 0 and recon is None and not provided:
+                if attempt == 0 and recon is None and not provided and not review_feedback:
                     # A cached plan was scoped by a site-wide discovery; a task
                     # with supplied roster links is scoped by those links instead.
                     recon = await self._cached_recon(task, output_dir)
@@ -836,7 +846,8 @@ class AgentWorker:
         if damaged is None:
             issues = feedback.get('issues', [])
             dispositions = {item['url'] for item in plan.get('source_dispositions', [])}
-            if not issues or any(item.get('status') != 'source_disposition_unverified'
+            if not issues or any(item.get('status') not in {'source_disposition_unverified',
+                    'source_structure_unresolved', 'source_relationship_unverified'}
                     or (item.get('branch_url') or item.get('directory_url') or item.get('url')) not in dispositions
                     for item in issues):
                 return None

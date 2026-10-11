@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from server import (html_email_review, identity_review, image_bio_review, image_table_review, media_kind_review,
-                    name_review, profile_page_review, missing_media_review, source_review)
+                    name_review, profile_page_review, missing_media_review, source_review, source_disposition_review)
 from server.image_table_roster import REVIEW_FILE as IMAGE_TABLE_REVIEW_FILE
 
 
@@ -52,6 +52,11 @@ def _nonempty_and(check):
 
 
 KINDS: tuple[ReviewKind, ...] = (
+    ReviewKind('source_disposition', source_disposition_review.STATUSES,
+               (source_disposition_review.DECISIONS_FILE,), source_disposition_review.collect_items,
+               lambda path, audit, items: source_disposition_review.review_complete(path, items),
+               triggered=lambda audit: _has_status(source_disposition_review.STATUSES)(audit)
+               or bool(audit.get('source_disposition_reviews'))),
     ReviewKind('source_relationship', source_review.STATUSES, (source_review.DECISIONS_FILE,),
                source_review.collect_items, lambda path, audit, items: source_review.review_complete(path, items),
                triggered=lambda audit: _has_status(source_review.STATUSES)(audit) or bool(audit.get('source_relationship_reviews')),
@@ -105,7 +110,7 @@ def _audit(audit_path: Path) -> dict:
 
 def has_review(audit_path: Path) -> bool:
     """Some unresolved issue can be settled on the review page."""
-    return bool(source_review.collect_items(audit_path)) or any(
+    return bool(source_review.collect_items(audit_path)) or source_disposition_review.has_pending(audit_path) or any(
         kind.is_shown(issue) for issue in _audit(audit_path).get("unresolved", []) for kind in KINDS)
 
 
