@@ -122,31 +122,31 @@
       "identities": [
         [
           "张富有",
-          "https://acceptance.example.edu/roster"
+          ""
         ],
         [
           "刘圣洁",
-          "https://acceptance.example.edu/roster"
+          ""
         ],
         [
           "孙洁",
-          "https://acceptance.example.edu/roster"
+          ""
         ]
       ],
       "email_assignments": [
         [
           "张富有",
-          "https://acceptance.example.edu/roster",
+          "",
           ""
         ],
         [
           "刘圣洁",
-          "https://acceptance.example.edu/roster",
+          "",
           ""
         ],
         [
           "孙洁",
-          "https://acceptance.example.edu/roster",
+          "",
           ""
         ]
       ],

@@ -1,8 +1,9 @@
-"""Immutable reviewed sources and one narrow native-counter equivalence proof.
+"""Immutable originals for evidence-bound human-review recovery.
 
 Raw hashes never change meaning. A certificate connects two different captured
-objects only when their native selected HTML differs solely in the node written
-by the article's adjacent VSB _showDynClicks controller.
+objects through exact selected fingerprints, the adjacent VSB visit counter,
+or a separately verified empty scope / same-PDF owner reparse. No old field
+value becomes current truth merely because the relationship was reviewed.
 """
 
 from __future__ import annotations
@@ -203,18 +204,39 @@ def register_source(
                     or len({row["id"] for row in rows}) != len(rows)):
                 raise ValueError("imported review decision schema is invalid")
         decisions[name] = _put(root, data, ".json")
+    media = []
+    identity_urls = {o["url"] for item in audit.get("identity_review_items", []) for o in item["observations"]}
+    for item in audit.get("image_biography_evidence", []):
+        if item.get("kind") != "pdf" or item.get("profile_url") not in identity_urls:
+            continue
+        saved = {key: item[key] for key in ("profile_url", "media_url", "sha256")}
+        for key, suffix in (("original_path", ".pdf"), ("ocr_path", ".json")):
+            original = PureWindowsPath(item[key])
+            candidate = (local / str(original.relative_to(declared_audit.parent)).replace("\\", "/")).resolve()
+            if not candidate.is_relative_to(local):
+                raise ValueError("review PDF outside source")
+            data = candidate.read_bytes()
+            if key == "original_path" and sha(data) != item["sha256"]:
+                raise ValueError("review PDF source hash differs")
+            saved[key] = _put(root, data, suffix)
+        media.append(saved)
     manifest = {
         "schema": 1,
         "task_id": task_id,
         "audit_sha256": _put(root, raw, ".json"),
         "captures": captures,
         "decisions": decisions,
+        "pdf_captures": media,
     }
     if imported:
         try:
             _validate_import(ArchivedSource(root, manifest, audit), task_id)
         except (KeyError, TypeError) as error:
             raise ValueError("imported review source is incomplete") from error
+    return _publish_source(root, manifest)
+
+
+def _publish_source(root: Path, manifest: dict) -> str:
     identifier = sha(_json(manifest))
     directory = root / STORE / "sources"
     if not directory.resolve().is_relative_to(root):
@@ -230,6 +252,85 @@ def register_source(
     finally:
         pending.unlink(missing_ok=True)
     return identifier
+
+
+def register_identity_checkpoint_source(root: Path, decision_path: Path, decision: dict) -> None:
+    """Seal real checkpoint bytes and the actual human row, never invent an audit."""
+    from server.identity_review import DECISIONS_FILE, _valid_decision
+    root, decision_path = root.resolve(), decision_path.resolve()
+    if (root.parent.name != "tasks" or decision_path.name != DECISIONS_FILE
+            or decision_path.parent.parent != root
+            or not re.fullmatch(r"attempt-[1-9]\d*", decision_path.parent.name)):
+        return
+    raw = decision_path.read_bytes()
+    payload = json.loads(raw)
+    rows = payload.get("decisions", [])
+    if (payload.get("schema") != 1 or not isinstance(rows, list)
+            or len({row.get("id") for row in rows}) != len(rows)
+            or decision not in rows or not _valid_decision(decision["item"], decision)):
+        return
+    # Prefer a real older native audit when it is still present in this task.
+    for audit_path in root.glob("attempt-*/*_audit.json"):
+        try:
+            audit = json.loads(audit_path.read_text(encoding="utf8"))
+            if any(item.get("id") == decision["id"] for item in audit.get("identity_review_items", [])):
+                register_source(root, audit_path, root.name)
+                return
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    captures, scopes = {}, []
+    for observation in decision["item"]["observations"]:
+        digest = observation.get("source_sha256", "")
+        if not re.fullmatch(r"[a-f0-9]{64}", digest):
+            return
+        for path in root.glob("page-state/*/html/" + digest + ".html"):
+            if not path.resolve().is_relative_to(root):
+                raise ValueError("identity checkpoint outside task")
+            data = path.read_bytes()
+            if sha(data) != digest:
+                raise ValueError("identity checkpoint hash differs")
+            captures[observation["url"]] = {"sha256": _put(root, data, ".html"), "kind": "profile"}
+            break
+        if observation['url'] in captures:
+            continue
+        # A native capture can retain the exact selected fingerprint from the
+        # human observation even when the checkpoint stores the whole document.
+        for audit_path in root.glob('attempt-*/*_audit.json'):
+            try:
+                audit = json.loads(audit_path.read_bytes())
+                declared = PureWindowsPath(audit['audit_path'])
+                if declared.parent.parent.name != root.name:
+                    continue
+                fields = [s for s in (audit.get('coverage') or {}).get('field_sources', [])
+                          if s.get('profile_url') == observation['url']]
+                bounds = {source_bounds(s) for s in fields}
+                if len(bounds) != 1:
+                    continue
+                for snapshot in audit.get('snapshots', []):
+                    if snapshot.get('url') != observation['url']:
+                        continue
+                    relative = PureWindowsPath(snapshot['path']).relative_to(declared.parent)
+                    path = (audit_path.parent / str(relative).replace('\\', '/')).resolve()
+                    if not path.is_relative_to(audit_path.parent.resolve()):
+                        continue
+                    data = path.read_bytes()
+                    selected_source(data.decode('utf-8').replace('\r\n', '\n'), observation['url'],
+                                    next(iter(bounds)), digest)
+                    captures[observation['url']] = {'sha256': _put(root, data, '.html'),
+                                                    'kind': snapshot.get('kind')}
+                    scopes.append({'profile_url': observation['url'],
+                                   'profile_content_selector': next(iter(bounds))[0],
+                                   'profile_content_start_selector': next(iter(bounds))[1]})
+                    break
+                if observation['url'] in captures:
+                    break
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    if captures:
+        _publish_source(root, {"schema": 1, "task_id": root.name,
+            "source_kind": "identity_checkpoint", "decision_id": decision["id"],
+            "captures": captures, 'scope_evidence': scopes,
+            "decisions": {DECISIONS_FILE: _put(root, raw, ".json")}})
 
 
 def _validate_import(bundle: ArchivedSource, task_id: str) -> None:
@@ -273,7 +374,17 @@ def archived_sources(task_root: str | Path) -> list[ArchivedSource]:
                 or sha(_json(manifest)) != path.stem
             ):
                 continue
-            audit = json.loads(_read(root, manifest["audit_sha256"], ".json"))
+            if manifest.get("source_kind") == "identity_checkpoint":
+                from server.identity_review import DECISIONS_FILE, _valid_decision
+                decision = json.loads(_read(root, manifest["decisions"][DECISIONS_FILE], ".json"))
+                row = next((row for row in decision.get("decisions", []) if row.get("id") == manifest["decision_id"]), None)
+                if decision.get("schema") != 1 or not row or not _valid_decision(row["item"], row):
+                    continue
+                # This projection is identified as checkpoint evidence, not a native audit.
+                audit = {"identity_review_items": [row["item"]],
+                         'coverage': {'field_sources': manifest.get('scope_evidence', [])}}
+            else:
+                audit = json.loads(_read(root, manifest["audit_sha256"], ".json"))
             sources.append(ArchivedSource(root, manifest, audit))
         except (OSError, ValueError, KeyError, TypeError):
             continue
@@ -281,12 +392,12 @@ def archived_sources(task_root: str | Path) -> list[ArchivedSource]:
 
 
 def selected_source(
-    html: str, url: str, bounds: tuple[str | None, str | None], expected: str
+    html: str, url: str, bounds: tuple[str | None, str | None], expected: str, *, allow_empty: bool = False
 ) -> tuple[str, str]:
     """Locate exactly the hash already declared by this consumer, not a guess."""
     if bounds[0]:
         scoped, evidence, issue = scope_profile_html(
-            html, bounds[0], url, start_selector=bounds[1]
+            html, bounds[0], url, start_selector=bounds[1], allow_empty=allow_empty
         )
         if issue or not evidence:
             raise ValueError("review source boundary failed")
@@ -547,10 +658,16 @@ def retain_current(root: Path, html: str) -> str:
 def _identity_title_reparse(before: str, after: str, old_value: str, new_value: str) -> dict | None:
     """Prove one legacy title mention was truncated from the same declared field."""
     from server.detail_mecc import declared_dom_title_fields
-    from server.titles import select_title
+    from server.titles import select_title, title_mentions
 
     old_fields = declared_dom_title_fields(BeautifulSoup(before, "lxml"), preserve_content=True)
     new_fields = declared_dom_title_fields(BeautifulSoup(after, "lxml"), preserve_content=True)
+    if old_value == '教师' and new_value == '' and not old_fields and not new_fields:
+        if any(title_mentions(BeautifulSoup(html, 'lxml').get_text(' ')) for html in (before, after)):
+            return None
+        return {'field': '职称', 'basis': 'same_native_source_legacy_default_title_removed',
+                'old_value': old_value, 'new_value': new_value,
+                'parser': 'declared_dom_title_fields'}
     if old_fields != new_fields or len(new_fields) != 1:
         return None
     field = new_fields[0]
@@ -564,12 +681,158 @@ def _identity_title_reparse(before: str, after: str, old_value: str, new_value: 
             "source_lines": list(field.source_lines), "parser": "declared_dom_title_fields"}
 
 
+def identity_source_reparse(bundle, previous, current, source_html, source_evidence):
+    """Re-read captured sources after a proved empty-scope or PDF-owner repair."""
+    from html import escape
+    from server import identity_review
+    from server.detail_mecc import explicit_title_fields
+    from server.empty_profile import EmptyProfileEvidence
+    from server.faculty_extractor import FacultyCandidate, FacultyProfileExtractor, find_emails, is_personal_email_for_scholar
+    from server.image_biography import media_references
+    from server.pdf_biography_owner import inspect_owner_scope
+    from server.titles import select_title
+
+    old = {o['url']: o for o in previous['observations']}
+    if (previous['name'] != current['name'] or len(old) != len(previous['observations'])
+            or set(old) != {o['url'] for o in current['observations']}):
+        return None
+    proofs = []
+    try:
+        for observation in current['observations']:
+            url = observation['url']
+            before = old[url]
+            a, b = before['record'], observation['record']
+            value = lambda row, key: identity_review.field_value(row, key)
+            if any(value(a, f) != value(b, f) for f in ('姓名', '学校', '学院', '主页')):
+                return None
+            if before['source_sha256'] == observation['source_sha256'] and all(
+                    value(a, f) == value(b, f) for f in identity_review.CONTENT_FIELDS):
+                continue
+            original, fresh = bundle.source_html(url), source_html[url]
+            meta = copy.deepcopy(source_evidence.get(url, {}))
+            old_bounds, new_bounds = bundle.bounds(url), source_bounds(meta)
+            _, old_selected = selected_source(original, url, old_bounds, before['source_sha256'])
+            empty = None
+            if meta.get('empty_profile_evidence'):
+                empty = EmptyProfileEvidence.verify(url, fresh, new_bounds[0],
+                    meta.get('profile_content_browser_evidence'), [FacultyCandidate(current['name'], url)],
+                    meta.get('selector_sources', []))
+                if empty is None or _json(empty.audit()) != _json(meta['empty_profile_evidence']):
+                    return None
+            _, new_selected = selected_source(fresh, url, new_bounds, observation['source_sha256'],
+                                              allow_empty=empty is not None)
+            proof = equivalence(original, fresh, url, (None, None), (None, None), sha(original), sha(fresh))
+            if proof is None:
+                return None
+            old_bio, new_bio = value(a, '简介'), value(b, '简介')
+            reparses = []
+            pdfs = meta.get('image_biography_evidence', [])
+            if pdfs:
+                browser = meta.get('profile_content_browser_evidence') or {}
+                if (browser.get('confirmed') is not True or browser.get('url') != url
+                        or browser.get('html_sha256') != sha(fresh)
+                        or browser.get('selected_html_sha256') != observation['source_sha256']):
+                    return None
+                # An actual failed old attachment, not an arbitrary blank field.
+                if old_bio or not any(i.get('status') == 'image_bio_owner_unresolved'
+                        and i.get('profile_url') == url for i in bundle.audit.get('unresolved', [])):
+                    return None
+                if len(pdfs) != 1 or pdfs[0].get('kind') != 'pdf':
+                    return None
+                item = pdfs[0]
+                saved = next((m for m in bundle.manifest.get('pdf_captures', [])
+                    if m['profile_url'] == url and m['media_url'] == item['media_url']
+                    and m['sha256'] == item['sha256']), None)
+                if saved is None or item.get('assigned_name') != current['name']:
+                    return None
+                if not all(any(ref.url == item['media_url'] for ref in media_references(html, url))
+                           for html in (old_selected, new_selected)):
+                    return None
+                if 'review_pdf_object' in item:
+                    pdf = _read(bundle.root, item['review_pdf_object'], '.pdf')
+                    scan_bytes = _read(bundle.root, item['review_scan_object'], '.json')
+                else:
+                    paths = [Path(item[key]).resolve() for key in ('original_path', 'ocr_path')]
+                    if any(not path.is_relative_to(bundle.root) for path in paths):
+                        return None
+                    pdf, scan_bytes = (path.read_bytes() for path in paths)
+                    item['review_pdf_object'] = _put(bundle.root, pdf, '.pdf')
+                    item['review_scan_object'] = _put(bundle.root, scan_bytes, '.json')
+                if sha(pdf) != saved['sha256'] or pdf != _read(bundle.root, saved['original_path'], '.pdf'):
+                    return None
+                scanned = json.loads(scan_bytes)
+                old_scan = json.loads(_read(bundle.root, saved['ocr_path'], '.json'))
+                if (scanned.get('source_sha256') != saved['sha256']
+                        or scanned['text'] != old_scan['text']
+                        or any(page.get('source') != 'pdf_text_layer' for page in scanned['pages'])):
+                    return None
+                owner = inspect_owner_scope(pdf, scanned, current['name'], {current['name']}, set())
+                if owner.get('status') != 'single_owner' or owner != item.get('pdf_owner_scope'):
+                    return None
+                text = scanned['text'].strip()
+                if new_bio != text:
+                    return None
+                parsed = FacultyProfileExtractor.extract('<article>' + ''.join(
+                    '<p>' + escape(line) + '</p>' for line in text.splitlines()) + '</article>', url,
+                    fallback_name=current['name'])
+                title = select_title(explicit_fields=explicit_title_fields(text),
+                                     card_title=value(a, '职称'), body_title=parsed.title)
+                if title.conflicts or title.title != value(b, '职称'):
+                    return None
+                if value(a, '职称') != value(b, '职称') and value(a, '职称') != '教师':
+                    return None
+                if value(a, '邮箱') != value(b, '邮箱'):
+                    emails = list(dict.fromkeys(e for e in find_emails(text)
+                        if is_personal_email_for_scholar(e, current['name'])))
+                    if value(a, '邮箱') or emails != [value(b, '邮箱')] or value(b, '邮箱') in parsed.contact_emails:
+                        return None
+                proof['pdf_source_sha256'] = saved['sha256']
+                proof['source_reparse'] = 'same_native_pdf_owner_restoration'
+                reparses = [{'field': f, 'old_value': value(a, f), 'new_value': value(b, f)}
+                            for f in ('简介', '职称', '邮箱') if value(a, f) != value(b, f)]
+            else:
+                if any(value(a, f) != value(b, f) for f in identity_review.CONTENT_FIELDS if f not in {'简介', '职称'}):
+                    return None
+                title_reparse = None
+                if value(a, '职称') != value(b, '职称'):
+                    title_reparse = _identity_title_reparse(old_selected, new_selected,
+                                                         value(a, '职称'), value(b, '职称'))
+                    if not title_reparse or title_reparse['basis'] != 'same_native_source_legacy_default_title_removed':
+                        return None
+                unchanged_bio_title_repair = title_reparse is not None and old_bio == new_bio
+                if not unchanged_bio_title_repair and FacultyProfileExtractor.extract(old_selected, url, fallback_name=previous['name'],
+                        preserve_content=old_bounds != (None, None)).full_bio != old_bio:
+                    return None
+                if empty is not None:
+                    if new_bio or (value(b, '职称') == '教师' and not explicit_title_fields(old_bio)):
+                        return None
+                elif not unchanged_bio_title_repair and (new_bounds != old_bounds or FacultyProfileExtractor.extract(
+                        new_selected, url, fallback_name=current['name'],
+                        preserve_content=new_bounds != (None, None)).full_bio != new_bio):
+                    return None
+                proof['source_reparse'] = ('legacy_dom_to_verified_empty' if empty else
+                    'same_native_source_legacy_default_title_removed' if unchanged_bio_title_repair else 'legacy_dom_counter_only')
+                reparses = [{'field': '简介', 'old_value_sha256': sha(old_bio), 'new_value_sha256': sha(new_bio)}]
+                if title_reparse:
+                    reparses.append(title_reparse)
+            proof.update(old_bound_source_sha256=before['source_sha256'],
+                         new_bound_source_sha256=observation['source_sha256'], field_reparses=reparses,
+                         old_original_file_sha256=bundle.original_hash(url),
+                         new_original_file_sha256=retain_current(bundle.root, fresh),
+                         new_scope_evidence_sha256=_put(bundle.root, _json(meta).encode('utf8'), '.json'))
+            proofs.append(proof)
+        return proofs or None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
 def identity_equivalence(
     bundle: ArchivedSource,
     previous: dict,
     current: dict,
     source_html: dict[str, str],
     source_evidence: dict[str, dict],
+    *, require_originals: bool = False,
 ) -> list[dict] | None:
     """Same facts, with only certified counter text or a source-proved title repair."""
     from server.identity_review import CONTENT_FIELDS
@@ -600,7 +863,7 @@ def identity_equivalence(
             title_changed = old_title != new_title
             if before["source_sha256"] == observation["source_sha256"] and field_value(
                 before["record"], "简介"
-            ) == field_value(observation["record"], "简介") and not title_changed:
+            ) == field_value(observation["record"], "简介") and not title_changed and not require_originals:
                 continue
             original, fresh = bundle.source_html(url), source_html[url]
             old_bounds, new_bounds = (
@@ -632,9 +895,11 @@ def identity_equivalence(
             read = lambda html: LayoutAwareTokenizer.get_clean_text(
                 BeautifulSoup(html, "lxml").body, preserve_content=True
             )
-            if read(old_selected) != field_value(before["record"], "简介") or read(
+            unchanged_bio_title_repair = (title_changed and reparse['basis'] == 'same_native_source_legacy_default_title_removed'
+                                         and field_value(before['record'], '简介') == field_value(observation['record'], '简介'))
+            if not unchanged_bio_title_repair and (read(old_selected) != field_value(before["record"], "简介") or read(
                 new_selected
-            ) != field_value(observation["record"], "简介"):
+            ) != field_value(observation["record"], "简介")):
                 return None
             if proof['basis'] == 'unchanged_native_selected_source':
                 old_canonical, new_canonical = old_selected, new_selected

@@ -117,7 +117,8 @@ async def test_pdf_roster_page_delivers_people_from_the_pdf(site, tmp_path, card
     assert by_name["李娜"]["简介"] == ("李娜，女，副教授\n主讲机械原理，发表论文十余篇。\n"
                                        "曾获省级教学成果奖。邮箱：lina@example.edu.cn")
     assert by_name["李娜"]["职称"] == "副教授" and by_name["李娜"]["邮箱"] == "lina@example.edu.cn"
-    assert by_name["王强"]["邮箱"] == "" and by_name["王强"]["主页"] == embed
+    assert by_name["王强"]["邮箱"] == "" and by_name["王强"]["主页"] == ''
+    assert any(source['profile_url'] == embed for source in report['coverage']['field_sources'])
     assert report["total"] == 3 and report["with_email"] == 2 and report["no_email"] == 1
 
     observation = next(item for item in report["roster_observations"] if item["url"] == embed)

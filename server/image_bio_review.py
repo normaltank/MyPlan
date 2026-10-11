@@ -696,6 +696,20 @@ def collect_email_conflict_items(audit_path: str | Path) -> list[dict]:
         row = next((row for row in records if row.get("主页") == profile_url
                     and row.get("姓名") == owner_name), None)
         if row is None:
+            # Published profile-less rows keep their source URI in the existing
+            # field receipt. Use the current row's values, never raw observations.
+            from server.identity_review import record_digest
+            for source in (audit.get('coverage') or {}).get('field_sources', []):
+                index = source.get('record_index')
+                if (source.get('profile_url') != profile_url or type(index) is not int
+                        or not 1 <= index <= len(records)):
+                    continue
+                current = records[index - 1]
+                if (current.get('姓名') == owner_name
+                        and source.get('receipt_sha256') == record_digest(current)):
+                    row = current
+                    break
+        if row is None:
             continue
         evidence = [item for item in audit.get("image_biography_evidence", [])
                     if item.get("profile_url") == profile_url

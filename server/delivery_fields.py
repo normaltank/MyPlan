@@ -1,10 +1,23 @@
 """Pure affiliation checks for records entering a college delivery receipt."""
 from __future__ import annotations
 
+from typing import Iterable
+
 from server.faculty_identity import ALIASES
 
 STANDARD_FIELDS = ('序号', '姓名', '职称', '邮箱', '学校', '学院', '采集人', '采集日期', '简介', '主页')
 FIELD_ALIASES = {**ALIASES, '学校': ('school',), '学院': ('college',)}
+
+
+def project_personal_homepages(records: list[dict], profileless_urls: Iterable[str]) -> list[dict]:
+    """Publish personal pages without rewriting the retained source records.
+
+    A roster URI is still useful for reading, attribution and identity review;
+    those steps keep it until this projection at the publishing boundary.
+    """
+    source_urls = set(profileless_urls)
+    return [{**record, '主页': '' if record.get('主页') in source_urls else record.get('主页', '')}
+            for record in records]
 
 
 def export_field_value(record: dict, field: str):

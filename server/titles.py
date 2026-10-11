@@ -61,6 +61,18 @@ def resolve_title(header_text: str) -> str:
     return mentions[0] if mentions else '教师'
 
 
+def declared_title_mentions(value: str) -> tuple[str, ...]:
+    """A literal 教师 is evidence only inside an already identified field."""
+    return ('教师',) if value.strip() == '教师' else title_mentions(value)
+
+
+def declared_title_cells(cells: dict) -> tuple[TitleField, ...]:
+    """Carry a real labelled title cell, including its literal 教师 value."""
+    value = cells.get('职称', '').strip()
+    mentions = declared_title_mentions(value)
+    return (TitleField(value, mentions, (1, len(value.splitlines()))),) if mentions else ()
+
+
 def title_expression_tail(text: str) -> bool:
     """Only title tokens and expression punctuation can extend a field line."""
     alternatives = sorted([*TITLE_KEYWORDS, *_ENGLISH_TITLES], key=len, reverse=True)
@@ -106,6 +118,7 @@ def select_title(*, explicit: Iterable[str] = (), explicit_fields: Iterable[Titl
 
     Multiple distinct explicit values require review; never pick one silently.
     Inputs are canonical titles extracted by the deterministic reader.
+    Missing or conflicting values stay empty; 教师 is retained only when declared.
     """
     legacy = tuple(explicit)
     declared = tuple(explicit_fields)
@@ -117,13 +130,15 @@ def select_title(*, explicit: Iterable[str] = (), explicit_fields: Iterable[Titl
             values.setdefault(field.comparison_value, field.value)
         fields = tuple(values.values())
         if any(field.ambiguous for field in declared):
-            return TitleSelection('教师', fields)
+            return TitleSelection('', fields)
     else:
-        fields = tuple(dict.fromkeys(value for value in legacy if value and value != '教师'))
+        fields = tuple(dict.fromkeys(value for value in legacy if value))
     if len(fields) > 1:
-        return TitleSelection('教师', fields)
+        return TitleSelection('', fields)
     if fields:
         return TitleSelection(fields[0])
     if card_title and card_title != '教师':
         return TitleSelection(card_title)
-    return TitleSelection(body_title or '教师')
+    # Older structural readers use 教师 as their unknown sentinel. Only a
+    # declared field above establishes that this literal value was published.
+    return TitleSelection(body_title if body_title and body_title != '教师' else '')
