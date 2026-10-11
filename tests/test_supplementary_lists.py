@@ -76,7 +76,7 @@ def test_unrecognized_item_in_a_people_chain_is_reported_not_dropped():
     assert result.unresolved[0]["status"] == "name_list_item_unrecognized"
 
 
-def test_reconcile_uses_name_list_mode_and_merge_keeps_the_personal_page():
+def test_reconcile_keeps_separate_same_name_source_observations():
     roster_url = "https://sx.example.edu.cn/szdw/js1.htm"
     roster = ("<table id='r'>" + "".join(
         f"<tr><td><a href='/info/1226/{i}.htm'>{n}</a></td></tr>"
@@ -91,13 +91,12 @@ def test_reconcile_uses_name_list_mode_and_merge_keeps_the_personal_page():
     assert statuses == ["rare_surname_needs_review"]   # 职占江 only; no card mismatch
     kept, sources, merges = merge_same_name_observations(
         result.candidates, result.candidate_sources, {roster_url, ORG_URL})
-    names = sorted(c.name for c in kept)
-    assert names == sorted(["徐丽", "董白英", "马万", "陈志恩", "刘媚", "丁芳", "田彦山", "张永勇"])
-    assert next(c for c in kept if c.name == "徐丽").url.startswith("https://sx.example.edu.cn/info/1226/")
-    assert next(c for c in kept if c.name == "张永勇").url == ORG_URL      # only on the list
-    assert {m["rule"] for m in merges} == {"unique_personal_page"} and len(merges) == 7
+    assert len(kept) == 15 and merges == []
+    assert sum(c.name == "徐丽" for c in kept) == 2
+    assert next(c for c in kept if c.name == "张永勇").url == ORG_URL
     records = [{"姓名": c.name, "主页": c.url} for c in kept]
-    assert identity_review_issues(records) == []
+    assert len(identity_review_issues(records)) == 7
+
 
 
 def test_merge_rule_edges():
@@ -207,7 +206,7 @@ class _Context:
 
 
 @pytest.mark.asyncio
-async def test_run_plan_delivers_roster_plus_supplementary_list_without_identity_blocks(tmp_path):
+async def test_run_plan_resolves_supplementary_identity_only_with_review(tmp_path):
     base = "https://sx.example.edu.cn"
     roster_url = base + "/szdw/js1.htm"
     people = ["徐丽", "董白英", "马万", "陈志恩", "刘媚", "丁芳", "田彦山"]
@@ -221,13 +220,21 @@ async def test_run_plan_delivers_roster_plus_supplementary_list_without_identity
     plan = {"school": "样本大学", "college": "数学学院", "branches": [
         {"url": roster_url, "card_selector": "#r tr", "single_page": True},
         {"url": ORG_URL, "card_selector": ORG_SELECTOR, "single_page": True}]}
-    result = await run_plan(plan, _Context(pages), tmp_path)
+    from server import identity_review
+    first = await run_plan(plan, _Context(pages), tmp_path / "attempt_1")
+    items = identity_review.collect_items(Path(first["audit_path"]))
+    assert len(items) == 7 and first["total"] == 15
+    for item in items:
+        primary = next(o["url"] for o in item["observations"] if o["url"] != ORG_URL)
+        identity_review.save_decision(tmp_path / "attempt_2" / identity_review.DECISIONS_FILE,
+                                      item, "same", primary, reviewed_by=1)
+    result = await run_plan(plan, _Context(pages), tmp_path / "attempt_2")
     assert not [u for u in result["unresolved"] if u["status"] == "distinct_profile_identity_unverified"]
     records = {row["姓名"]: row for row in json.loads(Path(result["records_path"]).read_text(encoding="utf-8"))}
     assert set(records) == set(people) | {"张永勇"}
     assert records["张永勇"]["主页"] == ORG_URL
     assert records["徐丽"]["主页"].startswith(base + "/info/1226/")
-    assert len(result["identity_merges"]) == 7
+    assert len(result["identity_reviews"]) == 7 and result["identity_merges"] == []
 
 
 def test_rare_name_on_a_list_needs_no_review_when_the_teacher_has_a_page():
@@ -341,3 +348,6 @@ def test_review_only_issues_do_not_start_a_reconnaissance_repair():
     assert STATUS in NOT_STRUCTURAL
     assert {"image_bio_low_confidence", "image_bio_ocr_incomplete", "image_bio_owner_unresolved"} <= NOT_STRUCTURAL
     assert "roster_card_mismatch" not in NOT_STRUCTURAL and "profile_content_selector_hidden" not in NOT_STRUCTURAL
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

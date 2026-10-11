@@ -268,7 +268,7 @@ async def test_browser_runner_injects_task_plan_checkpoint_store(tmp_path, monke
     @asynccontextmanager
     async def playwright():
         yield SimpleNamespace(chromium=Chromium())
-    async def run_plan(plan, actual_context, directory, *, state=None):
+    async def run_plan(plan, actual_context, directory, *, state=None, task_id=None):
         assert isinstance(actual_context, IsolatedBrowserContext)
         assert actual_context.raw_context is context
         assert isinstance(state, HarvestState)
@@ -358,7 +358,8 @@ async def test_structure_error_reconnoiters_and_passes_only_verified_branch(tmp_
                 {"status": "roster_selector_empty", "branch_url": broken["url"]}]}
         return completed_report(directory)
     async def validate(entry, directory, *, verify_discovery=True):
-        assert entry["plan"]["branches"] == [good]
+        from source_contract_fixture import upgrade
+        assert entry["plan"]["branches"] == [upgrade(good)]
         assert not verify_discovery
         return {"valid": True, "events": [{"type": "fixture_browser_evidence"}], "model_calls": 0}
     monkeypatch.setattr(worker, "_cached_recon", no_cache)
@@ -440,3 +441,6 @@ def test_modified_active_plan_is_rejected_before_browser_or_model(tmp_path):
     value["plan"]["branches"][0]["card_selector"] = ".changed-without-new-evidence"
     path.write_text(json.dumps(value), encoding="utf-8")
     assert worker._resume_plan(task, root) is None
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

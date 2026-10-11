@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import yaml
 
 from server import agent_recon, agent_worker
+from source_contract_fixture import upgrade, source_events
 
 
 def test_concurrent_colleges_have_independent_runtime_files_and_phase_child_env(monkeypatch):
@@ -40,6 +41,11 @@ def test_concurrent_colleges_have_independent_runtime_files_and_phase_child_env(
             "name": "mcp__playwright__" + name, "arguments": json.dumps(arguments)}},
             {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": session_id,
                 "content": [{"type": "text", "text": json.dumps(result)}]}]}}}]
+        # Runtime isolation is tested with an explicit trusted purpose producer;
+        # separate routed Chromium tests verify the actual source witness.
+        upgrade(value)
+        for index, branch in enumerate(value.get("branches", [value])):
+            events.extend(source_events(branch, target, session_id + "-source-" + str(index)))
         return SimpleNamespace(final_response=json.dumps(value), finish_reason="completed", events=events)
     monkeypatch.setattr(agent_recon, "_execute_harness", execute)
     def run(index):
@@ -63,6 +69,7 @@ def test_resaving_resumed_active_plan_keeps_original_age(tmp_path, monkeypatch):
                            url="https://example.edu/")
     plan = {"school": task.school, "college": task.college, "source_kind": "university_faculty_roster",
             "branches": [{"url": task.url + "list", "card_selector": "main li", "single_page": True}]}
+    upgrade(plan)
     worker = agent_worker.AgentWorker(db_path=tmp_path / "tasks.db", output_dir=tmp_path)
     monkeypatch.setattr(agent_worker.time, "time", lambda: 1000)
     recon = agent_recon.ReconResult(plan, 0, "completed", "fixture")

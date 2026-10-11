@@ -501,11 +501,6 @@ afterEach(() => {
 - [ ] Stale data (refresh database)
 ```
 
-## Resources
+## Project references
 
-- **references/debugging-tools-guide.md**: Comprehensive tool documentation
-- **references/performance-profiling.md**: Performance debugging guide
-- **references/production-debugging.md**: Debugging live systems
-- **assets/debugging-checklist.md**: Quick reference checklist
-- **assets/common-bugs.md**: Common bug patterns
-- **scripts/debug-helper.ts**: Debugging utility functions
+Use the current task's reproduction, logs, saved pages and existing regression tests. The repository's [diagnosing-bugs workflow](../../diagnosing-bugs/SKILL.md) distinguishes confirmed failures from hypotheses and unavailable validation. Example commands and tools in this playbook are options to adapt, not installed project tooling or authorization to alter a live service.

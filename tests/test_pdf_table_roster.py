@@ -14,7 +14,7 @@ import pytest
 
 from server import name_review
 from server.pdf_roster import read_pdf_rosters
-from tests.test_pdf_roster import PAGE, PDF
+from test_pdf_roster import PAGE, PDF
 
 FACULTY = [("计算机系", "赵一鸣", "教授"), ("计算机系", "钱二", "副教授"),
            ("软件工程系", "孙三立", "讲师（校聘副教授）"), ("软件工程系", "李四", "讲师"),

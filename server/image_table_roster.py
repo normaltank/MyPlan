@@ -434,6 +434,7 @@ async def read_image_table_rosters(sources, *, fetch_asset, evidence_dir, ocr_en
         parsed = parse_cells(scanned, page_url=source["url"], media_url=originals[0]["media_url"], reviews=reviews)
         for record in parsed["records"]:
             record.source_kind = source["source_kind"]
+            record.source_evidence = source.get('source_evidence')
             record.media_url = originals[record.pages[0] - 1]["media_url"]
         records.extend(parsed["records"])
         issues.extend(parsed["unresolved"])

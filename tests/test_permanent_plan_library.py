@@ -8,6 +8,9 @@ import pytest
 from server import recon_plan_cache as module
 from server.recon_plan_cache import ReconPlanCache
 
+# Store current structure claims; live source verification is tested separately.
+pytestmark = pytest.mark.verified_source_boundary
+
 PLAN = {'school': '样本大学', 'college': '样本学院', 'source_kind': 'university_faculty_roster',
         'branches': [{'url': 'https://example.edu/list', 'card_selector': 'main li', 'single_page': True}]}
 URL = 'https://example.edu/'

@@ -1,4 +1,4 @@
-> 历史快照：本文件保存 2026-10-10 工作指导更新前的交接／待办原文，记录中的完成、部署、用户决定及测试数字均需按原日期和证据理解。现行要求见 [项目目标](../../CONSTITUTION.md)，当前任务见 [改进计划](../improvement-plan.md)。不得据此恢复旧指令或宣称当前能力已经验收。
+> 历史快照：本文件保存 2026-10-10 工作指导更新前的交接／待办原文，记录中的完成、部署、用户决定及测试数字均需按原日期和证据理解。现行业务契约见 [CONTEXT](../../CONTEXT.md)，当前任务与分工见 [AGENTS](../../AGENTS.md)。不得据此恢复旧指令或宣称当前能力已经验收。
 
 # 【Agent 核心交接文档】系统全景、业务闭环、技术架构与交付总表
 
@@ -153,7 +153,7 @@
 
 ## 二、 核心业务闭环工作流（5 步 SOP）
 
-> 💡 **SOP 技能封装**：该五步工作流已被完整封装为专属技能 [`faculty-browser-harvest`](../../.agents/skills/faculty-browser-harvest/SKILL.md)，遵循渐进式披露原则，在执行采集任务时按需读取。
+> 💡 **SOP 技能封装**：该五步工作流已被完整封装为专属技能 [`faculty-browser-harvest`](https://github.com/normaltank/MyPlan/blob/0eaa7f5f69b9a30cfbc9975565a25ad7f3f73a6f/.agents/skills/faculty-browser-harvest/SKILL.md)，遵循渐进式披露原则，在执行采集任务时按需读取。
 
 ```
 1.【前端提交】用户或同事在本地 Web 网页端 (http://localhost:8000) 输入 1 所或批量 10-20 所高校学院
@@ -282,7 +282,7 @@
 
 ## 七、 Subagent 提示词规范与派发模板 (黄金提示词)
 
-当前派发模板以 [faculty-browser-harvest/SKILL.md](../../.agents/skills/faculty-browser-harvest/SKILL.md) 为准。主控将变量 `{school}`, `{college}`, `{url}`, `{task_id}` 替换后注入最小提示词；具体工具说明只在命中对应页面形态时读取 [TOOLS.md](../../.agents/skills/faculty-browser-harvest/TOOLS.md)：
+当前派发模板以 [faculty-browser-harvest/SKILL.md](https://github.com/normaltank/MyPlan/blob/0eaa7f5f69b9a30cfbc9975565a25ad7f3f73a6f/.agents/skills/faculty-browser-harvest/SKILL.md) 为准。主控将变量 `{school}`, `{college}`, `{url}`, `{task_id}` 替换后注入最小提示词；具体工具说明只在命中对应页面形态时读取 [TOOLS.md](../../.agents/skills/faculty-browser-harvest/TOOLS.md)：
 
 ```markdown
 /browser
@@ -449,7 +449,7 @@
 ```
 
 ### 资产 100% 复用与继承保障：
-1. **技能协议无缝平移**：当前编写的 [`SKILL.md`](../../.agents/skills/faculty-browser-harvest/SKILL.md) 与 [`AGENTS.md`](../../AGENTS.md) 规则，直接作为 Agent 运行时的系统指令。
+1. **技能协议无缝平移**：当前编写的 [`SKILL.md`](https://github.com/normaltank/MyPlan/blob/0eaa7f5f69b9a30cfbc9975565a25ad7f3f73a6f/.agents/skills/faculty-browser-harvest/SKILL.md) 与 [`AGENTS.md`](../../AGENTS.md) 规则，直接作为 Agent 运行时的系统指令。
 2. **工具层的真实状况**：`faculty_extractor.py`、RapidOCR 等是**本地 Python 模块**，由采集内核直接调用（不经过模型）；Agent 侧真正需要挂载的 MCP **只有 Playwright MCP**，用于浏览器侦察。这些模块**尚未封装为 MCP 工具**。
    ⚠️ **更正**：**不要走 dsh 自带的 experimental `browser-use` 提供方**——实测在 pip SDK 0.1.5rc1 与源码 0.1.7-rc.1 上**均静默失败**（Cordis 的 `inject` 有一项服务缺失即不激活：配置树组装成功、零报错，但工具就是不下发）。
    **正确做法**是用随 profile 交付的正式组件 `dsh-mcp-client` 直挂 Playwright MCP，见同目录的 `dsh-agent-runtime.cordis.yml`。

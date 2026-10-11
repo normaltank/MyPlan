@@ -6,6 +6,9 @@ import yaml
 
 from server import agent_recon, agent_worker
 
+# These worker/prompt components stipulate source qualification independently.
+pytestmark = pytest.mark.verified_source_boundary
+
 
 def test_phase_and_evidence_namespace_are_explicit_in_mcp_child_config(tmp_path):
     patch = tmp_path / "runtime.yml"

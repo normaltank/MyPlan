@@ -56,16 +56,19 @@ async def test_incomplete_bundle_metadata_is_a_cache_miss_and_revisited(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_healthy_complete_bundle_restores_the_original_capture(tmp_path):
+async def test_healthy_complete_bundle_revalidates_source_while_restoring_profiles(tmp_path):
     state = HarvestState(tmp_path, PLAN)
     bodies = {URL: roster(list(enumerate(NAMES))), **{
         f"https://faculty.example.edu/p/{i}.htm": profile(name, f"person{i}@example.edu")
         for i, name in enumerate(NAMES)}}
     first = await run_plan(PLAN, FakeContext(bodies), tmp_path / "first", state=state)
     captured_at = state.list_pages("branch")[0]["captured_at"]
-    browser = FakeContext({})
+    browser = FakeContext({URL: bodies[URL]})
     second = await run_plan(PLAN, browser, tmp_path / "second", state=state)
-    assert not browser.visits
+    assert browser.visits == [URL]
     assert first["delivery_ready"] and second["delivery_ready"]
-    assert second["total"] == 3 and second["checkpoints"]["restored_branches"] == 1
-    assert state.list_pages("branch")[0]["captured_at"] == captured_at
+    assert second["total"] == 3 and second["checkpoints"]["restored_branches"] == 0
+    assert state.list_pages("branch")[0]["captured_at"] >= captured_at
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

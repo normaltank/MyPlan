@@ -106,3 +106,6 @@ async def test_shared_team_page_address_without_owner_evidence_blocks_delivery(t
     assert {record["姓名"]: record["邮箱"] for record in records} == {"王晓岚": "", "李强": ""}
     assert report["delivery_ready"] is False
     assert any(item.get("status") == "ambiguous_email_assignment" for item in report["unresolved"])
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

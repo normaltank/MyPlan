@@ -414,22 +414,7 @@
           "card_selector": ".cards > li"
         }
       ],
-      "source_kind": "hospital_doctor_roster",
-      "verified_appointments": [
-        {
-          "name": "张富有",
-          "profile_url": "https://acceptance.example.edu/p/1.htm",
-          "academic_title": "教授",
-          "quote": "现任验收样本大学教授，承担教学工作。"
-        }
-      ],
-      "reviewed_exclusions": [
-        {
-          "name": "刘圣洁",
-          "profile_url": "https://acceptance.example.edu/p/2.htm",
-          "reason": "reviewed_not_university_appointment"
-        }
-      ]
+      "source_kind": "hospital_doctor_roster"
     },
     "expected": {
       "total": 1,
@@ -472,7 +457,19 @@
           "file": "hospital_appointment/03_01.html"
         }
       ]
-    }
+    },
+    "relationship_reviews": [
+      {
+        "profile_url": "https://acceptance.example.edu/p/1.htm",
+        "verdict": "confirm",
+        "reason": "Reviewer verified teaching appointment in the captured native profile."
+      },
+      {
+        "profile_url": "https://acceptance.example.edu/p/2.htm",
+        "verdict": "exclude",
+        "reason": "Reviewer verified no university appointment for this observation."
+      }
+    ]
   },
   {
     "id": "pagination_url_changes",

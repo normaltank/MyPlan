@@ -1,9 +1,13 @@
-# Triage Labels
+# 分诊状态词汇
 
-| Canonical role | Local status | Meaning |
-| --- | --- | --- |
-| `needs-triage` | `needs-triage` | Maintainer evaluation required |
-| `needs-info` | `needs-info` | More information required |
-| `ready-for-agent` | `ready-for-agent` | Fully specified for an autonomous agent |
-| `ready-for-human` | `ready-for-human` | Human implementation required |
-| `wontfix` | `wontfix` | Will not be actioned |
+下表是可选的讨论词汇，不代表 GitHub 已安装同名标签，也不创建新的工作流。使用技能时先检查实际标签和项目配置；只有存在明确映射且标签已存在时才应用，否则在当前工单正文中说明状态。创建或重设标签属于单独的配置变更，不能从本表推定已获授权。
+
+| 状态词 | 含义 |
+| --- | --- |
+| `needs-triage` | 需要评估问题 |
+| `needs-info` | 缺少必要信息 |
+| `ready-for-agent` | 范围与验收条件明确，可以交给 agent |
+| `ready-for-human` | 需要人作判断或操作 |
+| `wontfix` | 已决定不在当前范围处理 |
+
+工作项存放与复用见 [issue-tracker.md](issue-tracker.md)。状态词不替代结果和验证证据。

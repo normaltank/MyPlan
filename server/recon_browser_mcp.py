@@ -62,6 +62,12 @@ TOOLS = [
          "navigate calls when several candidate pages need a look.",
          {"urls": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 8}}, ("urls",)),
     tool("browser_structure", "Read repeated DOM subtree containers and counts; inspect their returned CSS paths.", RANGE),
+    tool('browser_verify_source', 'Capture the complete current source scope, actual page purpose title/current navigation and target-college context. '
+         'A role enum alone does not prove faculty membership. Unknown/organizational sources remain auxiliary observations.',
+         {'source_role': {'type': 'string', 'enum': ['faculty_roster', 'organizational_membership', 'unverified_people_source']},
+          'source_container_selector': STRING, 'role_evidence_selector': STRING, 'source_context_selector': STRING,
+          'unit_selector': STRING},
+         ('source_role', 'source_container_selector', 'role_evidence_selector', 'source_context_selector')),
     tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes and sample URLs.",
          {"card_selector": STRING, "next_selector": STRING,
           "empty_state_selector": STRING, "roster_container_selector": STRING}, ("card_selector",)),
@@ -100,10 +106,10 @@ def phase_tools(phase: str) -> list[dict]:
         submit["inputSchema"]["$defs"] = definitions
     if phase == "discovery":
         allowed = {"browser_navigate", "browser_navigation", "browser_survey", "browser_evaluate", "browser_screenshot",
-                   "browser_read_image"}
+                   "browser_read_image", 'browser_verify_source'}
     elif phase == "branch":
         allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
-                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot", "browser_read_image"}
+                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot", "browser_read_image", 'browser_verify_source'}
     else:
         return [*TOOLS, submit]
     return [*[entry for entry in TOOLS if entry["name"] in allowed], submit]
@@ -240,7 +246,13 @@ class BrowserScout:
                 return {**self.text_result(reply), "isError": True}
             self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
             return self.text_result({"accepted": True, "digest": plan_digest(plan)})
-        reply = await self._browser_call(name, arguments)
+        try:
+            reply = await self._browser_call(name, arguments)
+        except Exception as exc:
+            if name != 'browser_navigate':
+                raise
+            reply = {**self.text_result({'requested_url': arguments['url'],
+                                         'error': type(exc).__name__}), 'isError': True}
         cid = str(len(self.events))
         self.events.extend([
             {"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
@@ -330,7 +342,7 @@ class BrowserScout:
 
     async def _browser_call(self, name: str, arguments: dict) -> dict:
         if self._dom_modified and name in {
-            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_read_image"
+            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_read_image", 'browser_verify_source'
         }:
             return {**self.text_result({"status": "browser_dom_modified",
                                        "retry": "Reload the official URL before collecting new verification evidence."}),
@@ -339,7 +351,7 @@ class BrowserScout:
             url = arguments["url"]
             if not url.startswith(("http://", "https://")):
                 raise ValueError("http(s) URL required")
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            response = await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
             self._dom_modified = False
             await self.snapshot()
             if self.phase == "discovery":
@@ -353,6 +365,10 @@ class BrowserScout:
                 value["page"] = self._page_summary(value["page"])
             else:
                 value = await self.page.evaluate("() => ({url:location.href,navigation:__facultyRecon.navigation('body',0,24),structure:__facultyRecon.structure('body',0,8)})")
+            html = await self.page.content()
+            value.update(requested_url=url, status=response.status if response else None,
+                         source_html_sha256=hashlib.sha256(html.encode('utf-8')).hexdigest(),
+                         original_path=str(self.save('source.html', html.encode('utf-8'))))
         elif name == "browser_survey":
             pages = []
             for url in list(arguments["urls"])[:SURVEY_MAX_URLS]:
@@ -370,7 +386,10 @@ class BrowserScout:
                     summary = self._page_summary(probe["page"], SURVEY_PREVIEW_CHARS)
                     if isinstance(summary, dict):
                         summary["people"] = await self._people()
+                    html = await self.page.content()
                     pages.append({"url": url, "final_url": self.page.url,
+                                  'source_html_sha256': hashlib.sha256(html.encode('utf-8')).hexdigest(),
+                                  'original_path': str(self.save('source.html', html.encode('utf-8'))),
                                   "status": response.status if response is not None else None,
                                   "page": summary,
                                   "new_links": items[:SURVEY_MAX_NEW_LINKS],
@@ -389,6 +408,15 @@ class BrowserScout:
             value = await self.page.evaluate(f"args => __facultyRecon.{method}(...args)", values)
             if self.phase == "discovery":
                 await self.snapshot()
+        elif name == 'browser_verify_source':
+            from server.source_qualification import verify_source
+            captured = {}
+            value = await verify_source(self.page, arguments, self.target or {}, local_capture=captured)
+            if captured.get('html'):
+                value['original_path'] = str(self.save('source.html', captured['html'].encode('utf-8')))
+            witness_path = self.save('source-witness.json', json.dumps(value, ensure_ascii=False))
+            value['evidence_path'] = str(witness_path)
+            await self.snapshot()
         elif name == "browser_verify":
             value = await self.page.evaluate("args => __facultyRecon.check(...args)",
                                             [arguments["card_selector"], arguments.get("next_selector")])

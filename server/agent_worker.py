@@ -429,6 +429,9 @@ class AgentWorker:
             result['recovery'] = classify_issues(result.get('unresolved') or []).summary()
             result["runtime_report"] = build_runtime_report(attempts, browser_runs,
                 result.get("unresolved") or [], time.monotonic() - started, budget.snapshot())
+            for key in ('source_dispositions', 'source_disposition_evidence', 'previous_source_audit_path'):
+                if key in result:
+                    result['runtime_report'][key] = result[key]
             (output_dir / "runtime-report.json").write_text(json.dumps(
                 result["runtime_report"], ensure_ascii=False, indent=2), encoding="utf-8")
             return result
@@ -526,7 +529,13 @@ class AgentWorker:
             attempts.append(recon.summary())
             self._save_recon_audit(output_dir, attempts, "recon_completed")
             self._save_active_plan(task, output_dir, recon, attempts)
+            previous_source_audit = report.get('audit_path')
             report = await capture(recon.plan, attempt_dir, 0)
+            if (recon.plan.get('source_dispositions') and previous_source_audit
+                    and previous_source_audit != report.get('audit_path') and Path(previous_source_audit).is_file()):
+                # Historical people/source observations stay in their original
+                # audit; a current inactive scope does not rewrite those facts.
+                report['previous_source_audit_path'] = previous_source_audit
             harvested_plan = recon.plan
             harvested_keys.add(self._capture_plan_key(recon.plan))
             local_attempts = []
@@ -552,6 +561,8 @@ class AgentWorker:
                 saved.update(recon=report["recon"], recon_attempts=report["recon_attempts"],
                              local_access_repairs=local_attempts, recovery=report["recovery"],
                              runtime_report=report["runtime_report"])
+                if report.get('previous_source_audit_path'):
+                    saved['previous_source_audit_path'] = report['previous_source_audit_path']
                 if budget.alerts:
                     saved["recon_usage_alerts"] = budget.alerts
                 Path(audit).write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -843,7 +854,8 @@ class AgentWorker:
             browser = await pw.chromium.launch(headless=True)
             ctx = await new_browser_context(browser)
             try:
-                return await run_plan(plan, ctx, output_dir, state=HarvestState(output_dir.parent, plan))
+                return await run_plan(plan, ctx, output_dir, state=HarvestState(output_dir.parent, plan),
+                                      task_id=output_dir.parent.name)
             finally:
                 with contextlib.suppress(Exception):
                     await browser.close()
@@ -906,6 +918,9 @@ class AgentWorker:
             if runtime_path.is_file():
                 with contextlib.suppress(OSError, ValueError):
                     stats["runtime_report"] = json.loads(runtime_path.read_text(encoding="utf-8"))
+                    for field in ('source_dispositions', 'source_disposition_evidence', 'previous_source_audit_path'):
+                        if field in stats['runtime_report']:
+                            stats[field] = stats['runtime_report'][field]
             self.queue.sync_task_result(
                 task.task_id, [], stats,
                 "", reason,

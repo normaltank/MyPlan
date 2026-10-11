@@ -418,12 +418,17 @@ async def test_hospital_current_university_appointment_admits_only_proven_person
     plan = {"school": "样本大学", "college": "样本学院",
             "source_kind": "hospital_doctor_roster", "branches": [
                 {"url": f"{base}/doctors", "single_page": True, "card_selector": "main li"}
-            ], "verified_appointments": [
-                {"name": "张富有", "profile_url": f"{base}/p/1.htm",
-                 "quote": quote, "academic_title": "教授"}
             ]}
 
-    result = await run_plan(plan, FakeContext(pages), tmp_path)
+    # The quote stays in the native original. A relationship decision, not a
+    # teacher-JSON plan, confirms this one observed person's appointment.
+    first = await run_plan(plan, FakeContext(pages), tmp_path/'attempt-1')
+    from server import source_review
+    item = next(item for item in first['source_review_items'] if item['name'] == '张富有')
+    source_review.save_decision(tmp_path/'attempt-2'/source_review.DECISIONS_FILE, item, 'confirm',
+        evidence_basis='official_source', reason='已核对本人当前学院任职',
+        source_refs=[f'{base}/p/1.htm'], reviewed_by=1)
+    result = await run_plan(plan, FakeContext(pages), tmp_path/'attempt-2', task_id=first['task_id'])
 
     assert result["delivery_ready"] is True
     assert result["candidate_count"] == 3
@@ -432,7 +437,7 @@ async def test_hospital_current_university_appointment_admits_only_proven_person
     record = json.loads(Path(result["records_path"]).read_text(encoding="utf-8"))[0]
     assert record["姓名"] == "张富有"
     assert record["职称"] == "教授"
-    assert result["eligibility"][0]["evidence_kind"] == "hospital_current_university_appointment"
+    assert result["eligibility"][0]["evidence_kind"] == "human_confirmed_relationship"
 
 
 @pytest.mark.asyncio
@@ -785,3 +790,6 @@ async def test_real_playwright_browser_handles_ajax_pagination(tmp_path):
     assert result["directory_pages"] == 2
     assert result["profile_pages"] == 6
     assert result["total"] == 6
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

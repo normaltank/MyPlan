@@ -798,8 +798,10 @@
                             const review = document.getElementById('reviewBtn');
                             review.href = task.review_url;
                             review.classList.remove('hidden');
-                            setBadge('待人工复核', 'warn');
-                            document.getElementById('statSummary').innerText = '有图片文字、邮箱或生僻姓名需要人工核对；完成后可重新采集本工单。';
+                            setBadge(task.official_site_issue ? task.official_site_message : '待人工复核', 'warn');
+                            document.getElementById('statSummary').innerText = task.official_site_issue
+                                ? '已有记录和访问证据保留；请人工确认官网访问情况，保存不会自动重新采集。'
+                                : '有图片文字、邮箱或生僻姓名需要人工核对；完成后可重新采集本工单。';
                             setResultTone(false);
                         }
                         document.getElementById('resultArea').classList.remove('hidden');
@@ -827,6 +829,7 @@
             return kind === 'review' && !task.review_url ? 'maintenance' : kind;
         }
         function failureLabel(task) {
+            if (task.official_site_issue) return [task.official_site_message || '官网异常，待人工确认', 'warn'];
             if (task.source_review_required) return ['来源范围待核验', 'warn'];
             const kind = failureKind(task);
             return [FAILURE_LABELS[kind] || '失败', kind === 'failed' ? 'danger' : 'warn'];

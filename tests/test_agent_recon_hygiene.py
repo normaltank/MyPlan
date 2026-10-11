@@ -141,3 +141,6 @@ def test_model_plan_rejects_email_embedded_in_url():
         "url": "https://x.edu/roster?contact=alice%40x.edu"}]}
     with pytest.raises(PlanHygieneError, match="url"):
         validate_model_plan(plan, school=SCHOOL, college=COLLEGE)
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

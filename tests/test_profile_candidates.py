@@ -11,6 +11,9 @@ from server.browser_context import new_browser_context
 from server.profile_content import hidden_blockers
 from server.recon_browser_mcp import BrowserScout
 
+# These components test profile scope, with an independently verified roster source.
+pytestmark = pytest.mark.verified_source_boundary
+
 # Two pages of one site: the CMS numbers the body id differently per page, the
 # class is stable, and a hidden previous/next block sits inside the outer box.
 PAGE = """<html><body><header><nav><a href="/">首页</a><a href="/list">师资队伍</a></nav></header>

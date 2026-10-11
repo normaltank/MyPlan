@@ -1,6 +1,6 @@
 # MyPlan 模块索引
 
-本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务状态、缺口和证据统一见 [五项改进任务](docs/improvement-plan.md)。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
+本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务按 [AGENTS.md](AGENTS.md) 分工，采集维护状态与证据见对应工单和 PR，全链路审查 agent 的专项状态见 [五项计划](docs/improvement-plan.md)。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
 
 ## 按调用链定位
 
@@ -11,7 +11,7 @@
 | 入口发现与计划 | `server/agent_recon.py`、`server/recon_browser_mcp.py` | 浏览器观察、结构计划、Schema、缓存及阶段反馈 |
 | 浏览器采集与覆盖 | `server/browser_batch_tool.py`、`server/harvest_workflow.py`、`server/harvest_coverage.py` | 名录分支、分页、断点、原件与审计 |
 | 人员、字段与身份 | `server/faculty_extractor.py`、`server/faculty_identity.py`、`server/titles.py`、`Opus/` | 人员范围、职称、邮箱、简介及合并证据 |
-| 来源资格 | `server/harvest_eligibility.py`、`server/recon_contract.py` | 页面用途、学校与学院归属、师资范围 |
+| 来源资格 | `server/source_qualification.py`、`server/source_review.py`、`server/harvest_eligibility.py`、`server/recon_contract.py` | 页面用途、学校与学院归属、师资范围 |
 | 图片、PDF 与长简介 | `server/image_biography.py`、`server/pdf_roster.py`、`server/pdf_biography_owner.py`、`server/biography_workbook.py` | 原件读取、本人范围、复核裁图及长正文导出 |
 | 复核与恢复 | `server/review_registry.py`、`server/review_evidence.py`、`server/recovery_policy.py` 及相关 `*_review.py` | 决定绑定、失效、原件携带和重采闭环 |
 | 大学汇总与下载 | `server/university_delivery.py`、`server/university_identity_review.py` | 去重、学院关联、交付门禁、版本和下载一致性 |
@@ -38,6 +38,7 @@
 - 明确职称字段：[declared-title-fields](docs/implementation/2026-10-10-declared-title-fields.md)。
 - 完整简介与工作簿：[full-biography-workbook](docs/implementation/2026-10-10-full-biography-workbook.md)。
 - PDF 本人范围、履历与重试：[pdf-owner-resume-sections](docs/implementation/2026-10-10-pdf-owner-resume-sections.md)、[native-pdf-owner-retry](docs/implementation/2026-10-11-native-pdf-owner-retry.md)。
-- 个人链接卡片边界：[roster-link-boundary](docs/implementation/2026-10-10-roster-link-boundary.md)。
+- 来源角色与学院关系：[source-role-qualification](docs/implementation/2026-10-10-source-role-qualification.md)。
+- 个人链接卡片边界：[roster-link-boundary](docs/implementation/2026-10-10-roster-link-boundary.md)、[placeholder-roster-links](docs/implementation/2026-10-11-placeholder-roster-links.md)。
 
 这些是对应版本的证据记录。记录中的“通过”“待 CI”“未部署”不自动延伸到当前主线或用户运行环境。更早交接保留在 Git 及 [旧快照](docs/history/2026-10-10-handover-before-guidance-refresh.md)。

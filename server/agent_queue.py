@@ -310,20 +310,82 @@ class AgentTaskQueue:
         """Requeue one failed college after its evidence-bound human review."""
         with self._connect() as con:
             con.execute('BEGIN IMMEDIATE')
-            row = con.execute("SELECT status,task_type,meta_json FROM tasks WHERE task_id=?",
+            row = con.execute("SELECT status,task_type,meta_json,stats_json FROM tasks WHERE task_id=?",
                               (task_id,)).fetchone()
             if not row or row['status'] != 'failed' or row['task_type'] != 'harvest':
                 return False
             meta = json.loads(row['meta_json'])
             meta.update(progress=0, current_step='人工复核已保存，等待重新采集',
                         teachers_preview=[])
+            previous = json.loads(row['stats_json'] or '{}')
+            site = previous.get('official_site_issue')
+            if site and (site.get('review') or {}).get('verdict') != 'available':
+                return False
+            retained = ({'official_site_issue': previous['official_site_issue']}
+                        if previous.get('official_site_issue') else {})
             updated = con.execute("""UPDATE tasks SET status='queued',worker_id=NULL,
                 lease_until=NULL,lease_token=NULL,error=NULL,started_at=NULL,
-                finished_at=NULL,stats_json='{}',download_url=NULL,meta_json=?
-                WHERE task_id=? AND status='failed'""", (_json(meta), task_id))
+                finished_at=NULL,stats_json=?,download_url=NULL,meta_json=?
+                WHERE task_id=? AND status='failed'""", (_json(retained), _json(meta), task_id))
         if updated.rowcount == 1:
             self._reconcile_failure_types_best_effort()
         return updated.rowcount == 1
+
+    def record_official_site_issue(self, task_id: str, observations: list[dict]) -> bool:
+        """Record supplied access evidence on a failed college; never probe or enqueue."""
+        from server.official_site_review import build_issue
+        with self._connect() as con:
+            con.execute('BEGIN IMMEDIATE')
+            row = con.execute('SELECT * FROM tasks WHERE task_id=?', (task_id,)).fetchone()
+            if not row or row['status'] != 'failed' or row['task_type'] != 'harvest':
+                return False
+            task = self._decode(con, row)
+            issue = build_issue(task, observations)
+            if (task.stats.get('official_site_issue') or {}).get('id') != issue['id']:
+                task.stats['official_site_issue'] = issue
+            task.stats['delivery_ready'] = False
+            con.execute('UPDATE tasks SET stats_json=?,download_url=NULL WHERE task_id=?',
+                        (_json(task.stats), task_id))
+        return True
+
+    def save_official_site_review(self, task_id: str, request, reviewed_by: int) -> bool:
+        from server.official_site_review import decision
+        with self._connect() as con:
+            con.execute('BEGIN IMMEDIATE')
+            row = con.execute('SELECT status,task_type,stats_json FROM tasks WHERE task_id=?', (task_id,)).fetchone()
+            if not row or row['status'] != 'failed' or row['task_type'] != 'harvest':
+                return False
+            stats = json.loads(row['stats_json'] or '{}')
+            if not stats.get('official_site_issue'):
+                return False
+            stats['official_site_issue']['review'] = decision(stats['official_site_issue'], request, reviewed_by)
+            con.execute('UPDATE tasks SET stats_json=?,download_url=NULL WHERE task_id=?', (_json(stats), task_id))
+        return True
+
+    def invalidate_source_relationship(self, task_id: str, reviewed_by: int) -> bool:
+        """A changed human relation decision blocks existing delivery, preserving rows.
+
+        Active leases are revoked so a concurrent worker cannot publish stale
+        permission. Existing records remain evidence; normal evidence-bound
+        review/retry must produce a new result.
+        """
+        if type(reviewed_by) is not int or reviewed_by <= 0:
+            raise ValueError('authenticated reviewer required')
+        with self._connect() as con:
+            con.execute('BEGIN IMMEDIATE')
+            row = con.execute('SELECT task_type,status,stats_json,meta_json FROM tasks WHERE task_id=?', (task_id,)).fetchone()
+            if not row or row['task_type'] != 'harvest':
+                return False
+            stats = json.loads(row['stats_json'] or '{}')
+            stats.update(delivery_ready=False, failure_codes=['source_qualification_missing'],
+                         source_review_changed={'reviewed_by': reviewed_by, 'at': time.time()})
+            meta = json.loads(row['meta_json'] or '{}')
+            meta['current_step'] = '师资关系决定已变化，保留原记录并重新核验'
+            con.execute("""UPDATE tasks SET status='failed',error='师资关系人工决定已变化，需重新核验',
+                stats_json=?,meta_json=?,download_url=NULL,lease_until=NULL,lease_token=NULL,finished_at=?
+                WHERE task_id=?""", (_json(stats), _json(meta), time.time(), task_id))
+        self._reconcile_failure_types_best_effort()
+        return True
 
     def mark_no_faculty(self, task_id: str, reviewed_by: int | None) -> bool:
         """A person judged the college to publish no faculty roster (badr 2026-10-09).
@@ -341,7 +403,7 @@ class AgentTaskQueue:
             if not row or row['task_type'] != 'harvest' or row['status'] not in ('failed', 'completed'):
                 return False
             previous = json.loads(row['stats_json'] or '{}')
-            if previous.get('no_faculty'):
+            if previous.get('no_faculty') or previous.get('official_site_issue'):
                 return False
             stats = {'total': 0, 'with_email': 0, 'no_email': 0, 'unresolved': 0,
                      'coverage_scope': 'no_faculty_reviewed',
