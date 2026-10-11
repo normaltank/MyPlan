@@ -1,5 +1,6 @@
 """The submission gate says what failed and ends sessions no resubmission can pass."""
 import json
+from pagination_contract_fixture import completed_result
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ BLOCKING = [{"type": "fetch", "status": 500, "path": "/api/visits"}]
 
 
 def event(name, args, result, cid):
+    result = completed_result(result, args)
     return [{"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
                                              "arguments": json.dumps(args)}},
             {"type": "tool/result", "data": {"message": {"content": [

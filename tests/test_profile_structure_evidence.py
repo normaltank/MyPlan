@@ -1,5 +1,6 @@
 """A roster's sampled URLs must carry actual, exact profile scope evidence."""
 import json
+from pagination_contract_fixture import completed_result
 
 import pytest
 from playwright.async_api import async_playwright
@@ -16,6 +17,7 @@ PLAN = {"school": "样本大学", "college": "样本学院", "branches": [
 
 
 def event(name, args, result, cid):
+    result = completed_result(result, args)
     return [{"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
                                              "arguments": json.dumps(args)}},
             {"type": "tool/result", "data": {"message": {"content": [

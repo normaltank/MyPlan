@@ -1,3 +1,4 @@
+from pagination_contract_fixture import completed_result
 import json
 import threading
 import time
@@ -13,6 +14,7 @@ from server.recon_templates import structural_fingerprint, verify_template
 
 
 def pair(name, arguments, value, cid):
+    value = completed_result(value, arguments)
     return [{"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
              "arguments": json.dumps(arguments)}},
             {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": cid,

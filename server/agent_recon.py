@@ -656,12 +656,36 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                                                         if isinstance(item, dict))
                         else:
                             observations.append((args, result, index))
+    from server.pager_evidence import pagination_termination_valid
     issues = []
     aliases = browser_url_aliases(events)
     resolve = lambda url: resolved_browser_url(url, aliases)
 
     def tried(url, found):
         return {"proofs_on_url": sum(resolve(result.get("url")) == resolve(url) for _, result, _ in found)}
+
+    def completed(result, index, selector, found):
+        # An earlier absence observation cannot erase a later forward control.
+        if not pagination_termination_valid(result, selector) or any(
+            later_index > index and resolve(later.get('url')) == resolve(result.get('url'))
+            and (args.get('card_selector') or args.get('container_selector')) == selector
+            for args, later, later_index in found):
+            return False
+        # Omitting a previously observed selector is not evidence that its
+        # control disappeared. Its latest actual recheck must show the end.
+        controls = {}
+        for args, observed, observed_index in found:
+            if (observed_index <= index and resolve(observed.get('url')) == resolve(result.get('url'))
+                    and (args.get('card_selector') or args.get('container_selector')) == selector
+                    and args.get('next_selector')):
+                controls[args['next_selector']] = observed
+        current_controls = {item['selector']: item for item in
+                            (result.get('pagination_termination') or {}).get('observed_forward_controls', [])}
+        return all(observed.get('nextCount') == 0 or observed.get('nextDisabled') is True
+                   or (key in current_controls and (current_controls[key].get('count') == 0
+                       or current_controls[key].get('disabled') is True
+                       or current_controls[key].get('terminal') is True))
+                   for key, observed in controls.items())
 
     for branch in plan["branches"]:
         issues.extend(source_event_issues(branch, events))
@@ -674,14 +698,14 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 and (result["image_table"]["image_count"] > 0)
                 and result["image_table"]["image_count"] == result.get("cardCount")
                 and len(result["image_table"].get("image_urls", [])) == result["image_table"]["image_count"]
-                and (result.get("pagination") or {}).get("total") == 0
-                for args, result, _ in observations)
+                and completed(result, index, branch.get("card_selector"), observations)
+                for args, result, index in observations)
             if not verified:
                 issues.append({"status": "table_image_selector_unverified", "url": branch["url"],
                                "selector": branch["card_selector"],
                                **_gate_detail("table_image_proof_missing", tried(branch["url"], observations),
                                               "browser_verify this card_selector on this url: every match must be a "
-                                              "valid table image, with pagination total 0.")})
+                                              "valid table image, with confirmed pagination_termination.")})
             continue
         if branch.get("kind") == "segmented":
             verified = any(
@@ -692,15 +716,15 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 and resolve(result.get("url")) == resolve(branch["url"])
                 and result.get("structure_ok") is True
                 and type(result.get("segment_count")) is int and result["segment_count"] > 0
-                and (result.get("pagination") or {}).get("total") == 0
-                for args, result, _ in segment_observations)
+                and completed(result, index, branch.get("container_selector"), segment_observations)
+                for args, result, index in segment_observations)
             if not verified:
                 issues.append({"status": "segments_not_verified", "url": branch["url"],
                                "selector": branch.get("record_start_selector"),
                                **_gate_detail("segment_proof_missing", tried(branch["url"], segment_observations),
                                               "browser_verify_segments on this url with the submitted container and "
                                               "record start selectors must report structure_ok, segments > 0 and "
-                                              "pagination total 0.")})
+                                              "confirmed pagination_termination.")})
             continue
         selector = branch.get("card_selector") or branch.get("child_link_selector")
         if branch.get("empty_state_selector") or branch.get("roster_container_selector"):
@@ -709,15 +733,15 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 all(args.get(key) == branch.get(key) for key in SELECTORS)
                 and resolve(result.get("url")) == resolve(branch["url"])
                 and type(result.get("cardCount")) is int and result["cardCount"] == 0
-                and (result.get("pagination") or {}).get("total") == 0
+                and completed(result, index, selector, observations)
                 and empty_roster_proof_valid(result.get("empty_roster"), branch,
                                             url=result.get("url"))
-                for args, result, _ in observations)
+                for args, result, index in observations)
             if not verified:
                 issues.append({"status": "empty_roster_not_verified", "url": branch["url"], "selector": selector,
                                **_gate_detail("empty_roster_proof_missing", tried(branch["url"], observations),
                                               "browser_verify on this url with exactly the submitted empty-state "
-                                              "selectors must show 0 cards, pagination total 0 and a valid "
+                                              "selectors must show 0 cards, confirmed pagination_termination and a valid "
                                               "empty-roster proof.")})
             continue
         matching = [(args, result, index) for args, result, index in observations if (
@@ -728,13 +752,12 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         if not matching:
             issues.append({"status": "selector_not_verified", "url": branch["url"], "selector": selector,
                            **_card_detail(branch, selector, observations, resolve)})
-        elif branch.get("single_page") and not any((result.get("pagination") or {}).get("total") == 0
-                                                  for _, result, _ in matching):
+        elif branch.get("single_page") and not completed(matching[-1][1], matching[-1][2], selector, observations):
             issues.append({"status": "single_page_pagination_unverified", "url": branch["url"], "selector": selector,
-                           **_gate_detail("pagination_candidates_present", {"pagination_total": (
+                           **_gate_detail("pagination_termination_unverified", {"pagination_total": (
                                matching[-1][1].get("pagination") or {}).get("total")},
-                               "This page shows pagination candidates. Verify a unique next_selector and its next "
-                               "page, or verify a card_selector whose pagination total is 0.")})
+                               "Verify a unique next_selector and its next page, or browser_verify the roster "
+                               "with confirmed pagination_termination; candidate total 0 alone is insufficient.")})
         elif branch.get("next_selector") and not any(result.get("nextDisabled") is True for _, result, _ in matching):
             next_urls = {resolve(result.get("nextUrl")) for _, result, _ in matching
                          if result.get("nextUrl") and resolve(result["nextUrl"]) != resolve(branch["url"])}

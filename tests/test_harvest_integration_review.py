@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+from pagination_contract_fixture import completed_result
 from types import SimpleNamespace
 
 import pytest
@@ -68,6 +69,7 @@ async def test_worker_access_failure_retries_same_plan_without_recon(tmp_path, m
 
 
 def event_pair(name, arguments, result, call_id):
+    result = completed_result(result, arguments)
     return [{"type": "tool/call", "data": {"callId": call_id,
              "name": "mcp__playwright__" + name, "arguments": json.dumps(arguments)}},
             {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": call_id,

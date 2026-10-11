@@ -1,5 +1,6 @@
 """Actual staged discovery/branch gates, with a fixed model event boundary."""
 import json
+from pagination_contract_fixture import completed_result
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,7 @@ HTML = '<title>教师名录</title><header>样本大学样本学院</header><h1>
 
 
 def pair(name, args, result, cid):
+    result = completed_result(result, args)
     return [{'type': 'tool/call', 'data': {'callId': cid, 'name': 'mcp__playwright__'+name, 'arguments': json.dumps(args)}},
             {'type': 'tool/result', 'data': {'message': {'content': [{'toolCallId': cid, 'content': [{'type': 'text', 'text': json.dumps(result)}]}]}}}]
 
