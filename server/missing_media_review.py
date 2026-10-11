@@ -75,18 +75,43 @@ def confirmed(path: Path | None, item: dict, *, source_html: str | None = None) 
             source_html = snapshot.read_text(encoding='utf8')
     if source_html is None:
         return False
-    from server.review_evidence import equivalence, old_review_items, retain_current
-    for bundle, previous in old_review_items(Path(path).parent.parent,'missing_profile_media_evidence'):
+    from server.review_evidence import archived_sources, equivalence, native_scope_projection, retain_current
+    candidates = []
+    for bundle in archived_sources(Path(path).parent.parent):
+        candidates.extend((bundle, previous) for previous in bundle.audit.get('missing_profile_media_evidence', []))
+        # A legacy role decision may predate the audit's selected container.
+        # Recover its item only from that actual archive's original and its own
+        # exact selector/hash, never from today's text or a manufactured verdict.
+        for old_decision in bundle.decisions(DECISIONS_FILE).values():
+            if (decisions.get(old_decision.get('id')) != old_decision
+                    or not _valid(old_decision, old_decision)
+                    or any(old_decision.get(key) != item[key] for key in IDENTITY_FIELDS
+                           if key not in {'profile_content_selector', 'selected_html_sha256'})):
+                continue
+            try:
+                previous = prepare_item(bundle.source_html(item['profile_url']), item['profile_url'],
+                    old_decision['profile_content_selector'], old_decision['profile_content_start_selector'],
+                    item['media_url'], item['http_status'], requested_profile_url=item['requested_profile_url'])
+                if previous and previous['id'] == old_decision['id']:
+                    candidates.append((bundle, previous))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    for bundle, previous in candidates:
         try:
             old_decision = bundle.decisions(DECISIONS_FILE).get(previous['id'],{})
             if (review_store.load(path).get(previous['id']) != old_decision or not _valid(old_decision,previous)
                     or any(previous[k] != item[k] for k in IDENTITY_FIELDS
-                                                      if k != 'selected_html_sha256')):
+                           if k not in {'profile_content_selector', 'selected_html_sha256'})):
                 continue
             proof = equivalence(bundle.source_html(item['profile_url']),source_html,item['profile_url'],
                 (previous['profile_content_selector'],previous['profile_content_start_selector']),
                 (item['profile_content_selector'],item['profile_content_start_selector']),
                 previous['selected_html_sha256'],item['selected_html_sha256'])
+            if proof is None:
+                proof = native_scope_projection(bundle.source_html(item['profile_url']), source_html,
+                    item['profile_url'], (previous['profile_content_selector'], previous['profile_content_start_selector']),
+                    (item['profile_content_selector'], item['profile_content_start_selector']),
+                    previous['selected_html_sha256'], item['selected_html_sha256'], wrapper_only=True)
             if proof:
                 proof.update(old_original_file_sha256=bundle.original_hash(item['profile_url']),
                              new_original_file_sha256=retain_current(bundle.root,source_html))
