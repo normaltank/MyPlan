@@ -100,6 +100,10 @@ def _institution_context(node) -> bool:
         if parent.name in {'header', 'footer', 'nav'}:
             return True
         tokens = ' '.join([str(parent.get('id') or ''), *parent.get('class', [])])
+        # Identifier word boundaries also appear in camel/Pascal case. Keep
+        # the same institution vocabulary rather than matching arbitrary prefixes.
+        tokens = re.sub(r'([A-Z])([A-Z][a-z])', r'\1 \2', tokens)
+        tokens = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', tokens)
         if re.search(r'(?:^|[-_\s])(?:head(?:er)?|foot(?:er)?|top|bottom|copy|logo|nav|brand|school|college|institution|affiliation)(?:$|[-_\s])', tokens, re.I):
             return True
     return bool(re.search(r'版权所有|copyright', node.get_text(' ', strip=True), re.I))
