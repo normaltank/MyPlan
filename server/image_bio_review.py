@@ -264,7 +264,7 @@ def _name_cards(name_items: list[dict]) -> list[str]:
             '<label>教师姓名（可改正）<input type="text" maxlength="40" value="'
             + escape(item["name"], quote=True) + '"></label>'
             '<div class="actions"><button type="button" data-verdict="person">是教师，按此姓名采集</button>'
-            '<button type="button" data-verdict="not_person" class="secondary">不是教师姓名</button></div>'
+            '<button type="button" data-verdict="not_person" class="secondary">不是教师姓名（排除该条）</button></div>'
             '<p class="status" role="status"></p></section>')
     return cards
 
