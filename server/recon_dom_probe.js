@@ -198,7 +198,7 @@
             const target=new URL(url);target.hash='';const current=new URL(location.href);current.hash='';
             return target.href!==current.href;}))].slice(0, 2),
         nextCount: next.length, nextUrl: next.length === 1 ? next[0].href || null : null,
-        nextDisabled: next.length === 1 ? Boolean(next[0].disabled || next[0].getAttribute('aria-disabled') === 'true') : null};
+        nextDisabled: next.length === 1 ? next[0].matches(':disabled') : null};
     }
   })});
 })();

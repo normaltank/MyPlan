@@ -187,3 +187,39 @@ async def test_observed_source_bound_terminal_controller_remains_usable(tmp_path
             assert evidence['pagination_termination']['confirmed'] is True
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('label', ['Continue records', '下一页'])
+async def test_aria_disabled_does_not_prove_an_observed_control_is_terminal(tmp_path, label):
+    control = f'<button id="advance" aria-disabled="true" onclick="{APPEND}">{label}</button>'
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        context = await browser.new_context()
+        await context.route('**/*', lambda route: route.fulfill(body=ROSTER.format(control), content_type='text/html'))
+        page = IsolatedPage(await context.new_page(), context)
+        scout = BrowserScout(page, tmp_path, 'branch', {'school': 'Fixture', 'college': 'Department', 'url': URL})
+        try:
+            await scout.call('browser_navigate', {'url': URL})
+            first = json.loads((await scout.call('browser_verify', {
+                'card_selector': '.roster > li', 'next_selector': '#advance'}))['content'][0]['text'])
+            current = json.loads((await scout.call('browser_verify', {
+                'card_selector': '.roster > li'}))['content'][0]['text'])
+            assert first['nextDisabled'] is False
+            assert current['pagination_termination']['confirmed'] is False
+            submission = json.loads((await scout.call('submit_plan', {'plan': {
+                'url': URL, 'card_selector': '.roster > li', 'single_page': True}}))['content'][0]['text'])
+            assert submission['accepted'] is False
+            box = await page.locator('#advance').bounding_box()
+            await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+            assert await page.locator('.roster > li').count() == 2
+            _, errors, evidence = await _capture_branch(context, {
+                'url': URL, 'card_selector': '.roster > li', 'next_selector': '#advance'})
+            assert any(item.get('reason') == 'forward_control_not_natively_disabled' for item in errors)
+            assert evidence['end'] == 'next_control_not_verified'
+            if label == '下一页':
+                _, errors, evidence = await _capture_branch(context, {
+                    'url': URL, 'card_selector': '.roster > li', 'single_page': True})
+                assert errors and not evidence['pagination_termination']['confirmed']
+        finally:
+            await browser.close()

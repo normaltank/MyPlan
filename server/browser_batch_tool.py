@@ -244,7 +244,7 @@ def _pagination_candidates(html: str, current_url: str,
     for control in soup.select('a, button, input[type="button"], input[type="submit"], [role="button"]'):
         if any(control is node for node in ignored):
             continue
-        if (control.has_attr("disabled") or control.get("aria-disabled") == "true"
+        if ((control.name in {'button', 'input'} and control.has_attr("disabled"))
                 or control.get("aria-current") == "page"):
             continue
         slider = control.parent
@@ -763,6 +763,11 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 evidence['end']='next_selector_not_verified'
                 break
             if not await next_control.is_enabled():
+                if not await next_control.evaluate("node => node.matches(':disabled')"):
+                    unresolved.append({'url': page.url, 'status': 'pagination_not_verified',
+                        'reason': 'forward_control_not_natively_disabled', 'selector': next_selector})
+                    evidence['end'] = 'next_control_not_verified'
+                    break
                 evidence['pagination_termination'] = {
                     'confirmed': True, 'url': page.url, 'unit_selector': _unit_selector(branch),
                     'source_sha256': hashlib.sha256(html.encode()).hexdigest(),
