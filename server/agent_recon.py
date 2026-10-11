@@ -247,13 +247,14 @@ _MODEL_PLAN_KEYS = {"school", "college", "source_kind", "branches", "source_disp
                     "profile_concurrency", "profile_ready_selector"}
 _MODEL_BRANCH_KEYS = {"url", "kind", "source_kind", "card_selector", "single_page",
                       "next_selector", "max_pages", "initial_click_selector",
-                      "child_link_selector", "child_branch", "max_children",
+                      "child_link_selector", "child_branch", "child_branches", "max_children", "page_types",
                       "empty_state_selector", "roster_container_selector",
                       "profile_content_selector", "profile_content_start_selector",
-                      "container_selector", "record_start_selector"}
-from server.source_qualification import SOURCE_FIELDS, source_claim_valid, source_event_issues  # noqa: E402
+                      "profile_ready_selector", "container_selector", "record_start_selector"}
+from server.source_qualification import (SOURCE_FIELDS, source_claim_valid, source_event_issues,  # noqa: E402
+                                         source_event_proof)
 _MODEL_BRANCH_KEYS.update(SOURCE_FIELDS)
-_MODEL_CHILD_KEYS = _MODEL_BRANCH_KEYS - {"url", "kind", "child_link_selector", "child_branch", "max_children",
+_MODEL_CHILD_KEYS = _MODEL_BRANCH_KEYS - {"url", "kind", "child_link_selector", "child_branch", "child_branches", "max_children",
                                           "container_selector", "record_start_selector"}
 
 
@@ -271,12 +272,23 @@ def _collect_strings(node: Any, path: str = "$") -> list[tuple[str, str]]:
     return found
 
 
+def _explicit_navigation_pagination_supported(branch: dict[str, Any]) -> bool:
+    """An explicit child set is bound only to one current rendered parent."""
+    if branch.get('kind') != 'navigation' or 'child_branches' not in branch:
+        return True
+    from server.page_types import binding_for
+    pagination = binding_for(branch, 'pagination')
+    return (not branch.get('next_selector') and pagination.type_id == 'pagination.single_page'
+            and pagination.implementation_version == 1)
+
+
 def check_plan_hygiene(plan: dict[str, Any], *, school: str, college: str) -> None:
     """红线 1 门禁：计划只允许含 URL、CSS 选择器与 schema 字面量。
 
     判据是机械的——**CSS 选择器不可能包含 CJK 字符**。
     因此任何含 CJK 的字符串，除非它整串等于目标学校/学院名，都是数据泄漏。
     """
+    plan = _normalize_model_plan(plan)
     allowed_names = {school.strip(), college.strip()}
     violations: list[str] = []
 
@@ -312,6 +324,45 @@ def _is_structure_url(value: Any) -> bool:
         return False
 
 
+def _normalize_model_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Resolve trusted bindings before checking projected structure and hygiene."""
+    from server.page_types import normalize_branch
+    try:
+        return {**plan, 'branches': [normalize_branch(branch) for branch in plan.get('branches', [])]}
+    except (ValueError, TypeError) as exc:
+        # Pydantic errors can contain the rejected value; public scout feedback
+        # must not copy a teacher field from the binding back to the model.
+        raise PlanHygieneError('invalid or conflicting page type binding') from exc
+
+
+def _required_source_urls(cfg: dict[str, Any]) -> list[str]:
+    """Keep supplied leads and previous sources as explicit discovery obligations."""
+    feedback = cfg.get('feedback') or {}
+    previous = feedback.get('previous_plan') or {}
+    return [url for url in dict.fromkeys([
+        *(cfg.get('provided_urls') or []),
+        *feedback.get('known_urls', []),
+        *(branch.get('url') for branch in [*previous.get('branches', []),
+                                         *previous.get('source_dispositions', [])]
+          if isinstance(branch, dict))]) if _is_structure_url(url)]
+
+
+def _required_source_issues(plan: dict[str, Any], required_urls: list[str],
+                            events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A prompt or successful sibling cannot settle an omitted supplied source."""
+    aliases = browser_url_aliases(events)
+    def branch_urls(branch):
+        yield branch['url']
+        for child in branch.get('child_branches', []):
+            yield from branch_urls(child)
+    represented = {resolved_browser_url(url, aliases) for branch in plan.get('branches', [])
+                   for url in branch_urls(branch)}
+    represented.update(resolved_browser_url(item['url'], aliases)
+                       for item in plan.get('source_dispositions', []))
+    return [{'path': '$.branches', 'url': url, 'status': 'previous_branch_omitted'}
+            for url in required_urls if resolved_browser_url(url, aliases) not in represented]
+
+
 def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> None:
     """Accept only the structure-only plan that the server recon agent may emit.
 
@@ -321,6 +372,14 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
     """
     if plan.get("school") != school or plan.get("college") != college:
         raise PlanHygieneError("model plan school/college differs from queued target")
+    plan = _normalize_model_plan(plan)
+
+    from server.page_types import validate_production_bindings
+    try:
+        for branch in plan.get('branches', []):
+            validate_production_bindings(branch)
+    except ValueError as exc:
+        raise PlanHygieneError('page type evidence contract is not supported for production selection') from exc
 
     def keys(node: dict[str, Any], allowed: set[str], path: str) -> None:
         extra = set(node) - allowed
@@ -344,7 +403,7 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
         for name in ("card_selector", "next_selector", "initial_click_selector", "child_link_selector",
                       "empty_state_selector", "roster_container_selector",
                       "profile_content_selector", "profile_content_start_selector",
-                      "container_selector", "record_start_selector"):
+                      "profile_ready_selector", "container_selector", "record_start_selector"):
             selector(node, name, path)
         for name in SOURCE_FIELDS - {'source_role'}:
             selector(node, name, path)
@@ -356,7 +415,7 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
             return
         if node.get("kind") == "image_table":
             if (child or node.get("single_page") is not True or not node.get("card_selector")
-                    or set(node) - ({"url", "kind", "source_kind", "card_selector", "single_page"} | SOURCE_FIELDS)):
+                    or set(node) - ({"url", "kind", "source_kind", "card_selector", "single_page", "page_types"} | SOURCE_FIELDS)):
                 raise PlanHygieneError("image_table allows only a single-page image selector")
             return
         if "profile_content_start_selector" in node and not node.get("profile_content_selector"):
@@ -373,10 +432,30 @@ def validate_model_plan(plan: dict[str, Any], *, school: str, college: str) -> N
         for name in ("max_pages", "max_children"):
             if name in node and (type(node[name]) is not int or node[name] < 1):
                 raise PlanHygieneError(f"{path}.{name} must be a positive integer")
+        if node.get('kind') == 'navigation':
+            if not node.get('child_link_selector'):
+                raise PlanHygieneError(f'{path}.child_link_selector is required')
+            if ('child_branch' in node) == ('child_branches' in node):
+                raise PlanHygieneError(f'{path} requires exactly one child specification')
+            if not _explicit_navigation_pagination_supported(node):
+                raise PlanHygieneError(f'{path} explicit navigation pagination is not applicable; '
+                                       'only pagination.single_page@1 without next_selector is supported')
+        elif 'child_branches' in node or 'child_branch' in node:
+            raise PlanHygieneError(f'{path} child specification requires navigation')
         if "child_branch" in node:
             if not isinstance(node["child_branch"], dict):
                 raise PlanHygieneError(f"{path}.child_branch must be an object")
             branch(node["child_branch"], f"{path}.child_branch", child=True)
+        if 'child_branches' in node:
+            children = node['child_branches']
+            if not isinstance(children, list) or not children:
+                raise PlanHygieneError(f'{path}.child_branches must be a non-empty array')
+            child_urls = [item.get('url') for item in children if isinstance(item, dict)]
+            if (len(child_urls) != len(children) or not all(_is_structure_url(url) for url in child_urls)
+                    or len(set(child_urls)) != len(child_urls)):
+                raise PlanHygieneError(f'{path}.child_branches requires unique complete URLs')
+            for index, item in enumerate(children):
+                branch(item, f'{path}.child_branches[{index}]')
 
     keys(plan, _MODEL_PLAN_KEYS, "$")
     from server.recon_contract import validate_source_dispositions
@@ -493,15 +572,18 @@ def _profile_issue_branch(plan: dict[str, Any], issue: dict[str, Any]) -> str | 
     Profile issues carry the profile URL, not the roster. When exactly one branch
     declared the failing selector, the repair can stay inside that branch.
     """
+    plan = _normalize_model_plan(plan)
     urls = {branch.get("url") for branch in plan.get("branches", []) if isinstance(branch, dict)}
     if any(issue.get(key) in urls for key in ("url", "directory_url", "branch_url")):
         return None
     selector = issue.get("selector")
     if not selector:
         return None
-    owners = [branch["url"] for branch in plan.get("branches", []) if isinstance(branch, dict)
-              and selector in (branch.get("profile_content_selector"),
-                               (branch.get("child_branch") or {}).get("profile_content_selector"))]
+    def owns(branch):
+        return (selector == branch.get('profile_content_selector')
+                or (isinstance(branch.get('child_branch'), dict) and owns(branch['child_branch']))
+                or any(owns(child) for child in branch.get('child_branches', [])))
+    owners = [branch['url'] for branch in plan.get('branches', []) if owns(branch)]
     return owners[0] if len(owners) == 1 else None
 
 
@@ -616,6 +698,10 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
     repair_profiles maps a branch to the profile pages where the harvest found
     its previous profile selector wrong; a repaired selector must hold there too.
     """
+    try:
+        plan = _normalize_model_plan(plan)
+    except PlanHygieneError:
+        return [{'status': 'plan_contract_rejected', 'failed_condition': 'invalid_page_type_binding'}]
     calls = {}
     observations = []
     profile_observations = []
@@ -690,8 +776,86 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                            result['pagination_termination']['source_sha256'])))
                    for key, observed in controls.items())
 
+    def explicit_child_proof(branch, matching, selector):
+        if not matching:
+            return None
+        args, result, index = matching[-1]
+        proof = result.get('child_url_evidence') or {}
+        urls = result.get('child_urls')
+        termination = result.get('pagination_termination') or {}
+        source_hash = proof.get('source_sha256')
+        role_proof = source_event_proof(branch, events)
+        if (args.get('include_child_urls') is not True or proof.get('complete') is not True
+                or proof.get('discovery_scope') != 'current_rendered_navigation_links'
+                or proof.get('selector') != selector or proof.get('url') != result.get('url')
+                or not isinstance(source_hash, str) or not re.fullmatch(r'[a-f0-9]{64}', source_hash)
+                or source_hash != termination.get('source_sha256')
+                or role_proof is None or role_proof.get('source_html_sha256') != source_hash
+                or proof.get('invalid_links') != 0
+                or type(proof.get('selected_count')) is not int
+                or proof['selected_count'] != result.get('cardCount')
+                or not isinstance(urls, list) or not urls or not all(_is_structure_url(url) for url in urls)
+                or len(urls) != len(set(urls)) or len(urls) > proof['selected_count']
+                or not completed(result, index, selector, observations)):
+            return None
+        return urls
+
+    def roster_type_proved(branch, matching):
+        from server.page_types import binding_for, ROLE_PARAMETERS
+        binding = binding_for(branch, 'roster')
+        if (binding.type_id, binding.implementation_version) in {
+                ('roster.cards', 1), ('roster.segmented', 1), ('roster.image_table', 1)}:
+            return True
+        if not matching:
+            return False
+        args, result, _ = matching[-1]
+        proof = result.get('roster_type_evidence') or {}
+        reading = proof.get('reading') or {}
+        role_proof = source_event_proof(branch, events)
+        try:
+            used = binding_for({**args, 'url': branch['url']}, 'roster')
+        except (ValueError, TypeError):
+            return False
+        selectors = {key: branch[key] for key in ROLE_PARAMETERS['roster'] if key in branch}
+        counts = ('listed_items', 'extracted_candidates', 'awaiting_review', 'reviewed_exclusions')
+        from server.name_review import STATUS as NAME_REVIEW_STATUS
+        from server.page_types import resolve_type
+        pending_name_review = (NAME_REVIEW_STATUS in resolve_type(binding, 'roster').failure_contract
+                               and reading.get('issues') == [NAME_REVIEW_STATUS]
+                               and type(reading.get('awaiting_review')) is int and reading['awaiting_review'] > 0)
+        return (used.type_id == binding.type_id and used.implementation_version == binding.implementation_version
+                and proof.get('type_id') == binding.type_id
+                and proof.get('implementation_version') == binding.implementation_version
+                and proof.get('selectors') == selectors
+                and role_proof is not None and proof.get('source_sha256') == role_proof.get('source_html_sha256')
+                and proof.get('source_sha256') == (result.get('pagination_termination') or {}).get('source_sha256')
+                and all(type(reading.get(key)) is int and reading[key] >= 0 for key in counts)
+                and reading['listed_items'] > 0 and (reading.get('issues') == [] or pending_name_review)
+                and reading['listed_items'] == sum(reading[key] for key in counts[1:]))
+
     for branch in plan["branches"]:
         issues.extend(source_event_issues(branch, events))
+        if not _explicit_navigation_pagination_supported(branch):
+            issues.append({'status': 'plan_contract_rejected', 'url': branch['url'],
+                           'failed_condition': 'explicit_navigation_pagination_not_applicable',
+                           'need': 'Explicit navigation supports only pagination.single_page@1 without '
+                                   'next_selector; its child set proves only the current rendered parent.'})
+            continue
+        from server.page_types import binding_for
+        roster_binding = binding_for(branch, 'roster')
+        specialized_type = {'image_table': 'roster.image_table', 'segmented': 'roster.segmented'}.get(
+            branch.get('kind'))
+        if branch.get('empty_state_selector') or branch.get('roster_container_selector'):
+            specialized_type = 'roster.cards'
+        if specialized_type and (roster_binding.type_id, roster_binding.implementation_version) != (specialized_type, 1):
+            # These dedicated browser proofs are contracts of their original
+            # implementations. No generic typed reading can certify a new
+            # image/segment/empty mechanism without a corresponding probe.
+            issues.append({'status': 'roster_type_evidence_unverified', 'url': branch['url'],
+                           'failed_condition': 'specialized_roster_version_not_applicable',
+                           'need': 'This dedicated image/segment/empty proof supports only its exact legacy '
+                                   'roster type at version 1; a new version needs a reviewed browser proof.'})
+            continue
         if branch.get("kind") == "image_table":
             verified = any(
                 args.get("card_selector") == branch.get("card_selector")
@@ -752,6 +916,13 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
             and type(result.get("cardCount")) is int and result["cardCount"] > 0
             and (not branch.get("next_selector") or (
                 args.get("next_selector") == branch["next_selector"] and result.get("nextCount") == 1)))]
+        if not roster_type_proved(branch, matching):
+            issues.append({'status': 'roster_type_evidence_unverified', 'url': branch['url'],
+                           'selector': selector, 'failed_condition': 'current_roster_type_proof_missing',
+                           'need': 'browser_verify with this exact registered roster binding and all its '
+                                   'structural selectors. Its current-source token dispositions must conserve '
+                                   'every listed item without structural reading failures; acknowledged '
+                                   'rare-surname items must remain pending for the harvest name-review gate.'})
         if not matching:
             issues.append({"status": "selector_not_verified", "url": branch["url"], "selector": selector,
                            **_card_detail(branch, selector, observations, resolve)})
@@ -780,7 +951,10 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                                               "Open the next page (its nextUrl, or browser_click the next_selector) "
                                               "and browser_verify the same card_selector there with cards > 0; on "
                                               "the last page, nextDisabled true also proves the end.")})
-        if matching and (mismatch := matching[-1][1].get("card_mismatch")):
+        explicit_navigation = branch.get('kind') == 'navigation' and 'child_branches' in branch
+        verified_child_urls = explicit_child_proof(branch, matching, selector) if explicit_navigation else None
+        if (matching and (mismatch := matching[-1][1].get("card_mismatch"))
+                and not (explicit_navigation and verified_child_urls is not None)):
             if type(mismatch.get('outside_profile_links')) is int and mismatch['outside_profile_links'] > 0:
                 issues.append({'status':'roster_profile_link_outside_card','url':branch['url'],'selector':selector,
                     **_gate_detail('profile_link_outside_card',
@@ -819,6 +993,25 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                     "Open their targets and verify whether they are profiles or child rosters. "
                     "For profiles, verify this entrance as an ordinary roster and prove the profile_content_selector. "
                     "For mixed roles, verify separate branches; do not omit or auto-convert the selected links.")})
+                continue
+            if explicit_navigation:
+                children = branch['child_branches']
+                declared = [resolve(child['url']) for child in children]
+                if (verified_child_urls is None or len(declared) != len(set(declared))
+                        or set(declared) != {resolve(url) for url in verified_child_urls}
+                        or resolve(branch['url']) in declared):
+                    issues.append({'status': 'child_roster_not_verified', 'url': branch['url'],
+                        'selector': selector, **_gate_detail('explicit_child_set_unverified',
+                            {'declared_children': len(children),
+                             'observed_children': len(verified_child_urls) if verified_child_urls is not None else 0},
+                            'browser_verify this parent selector with include_child_urls true and confirmed '
+                            'pagination_termination. Bind exactly every current-rendered selected URL once; '
+                            'samples or a changed document hash cannot prove this set.')})
+                    continue
+                # Each declared page owns its type parameters and evidence.
+                # Parent selectors are never inherited by explicit children.
+                for child in children:
+                    issues.extend(selector_evidence_issues({**plan, 'branches': [child]}, events, repair_profiles))
                 continue
             if not samples or not isinstance(child := branch.get("child_branch"), dict):
                 issues.append({"status": "child_roster_not_verified", "url": branch["url"],
@@ -1094,11 +1287,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
     phases = []
     deadline = time.monotonic() + cfg["timeout_seconds"]
     feedback = cfg.get("feedback") or {}
-    required_urls = [url for url in dict.fromkeys([
-        *feedback.get("known_urls", []),
-        *(branch["url"] for branch in [*(feedback.get("previous_plan") or {}).get("branches", []),
-                                      *(feedback.get("previous_plan") or {}).get("source_dispositions", [])]
-          if isinstance(branch, dict) and isinstance(branch.get("url"), str))]) if _is_structure_url(url)]
+    required_urls = _required_source_urls(cfg)
     urls = []
     parallel = cfg.get("parallel_branches", False)
     template_reuse = cfg.get("template_reuse", False)
@@ -1357,6 +1546,10 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                                      else partials[-1]["budget_total"])}
                 error.aggregated = True
             raise error
+        if omitted := _required_source_issues(plan, required_urls, events):
+            error = ReconPlanError('最终计划遗漏给定或先前来源')
+            error.safe_feedback = {'previous_plan': plan, 'issues': omitted}
+            raise error
         return SimpleNamespace(final_response=json.dumps(plan, ensure_ascii=False), finish_reason="completed",
                                 events=events, phase_metrics=phases,
                                 discovery_session_id=discovery_session_id,
@@ -1590,8 +1783,8 @@ async def reconnoiter(
             budget.price_override = json.loads(raw_price)
             rates(budget.provider, budget.model, time.time(), budget.price_override)
     cfg["phase_call_limits"] = phase_call_limits or {}
-    # Roster links a person supplied: the discovery phase checks these instead of
-    # searching the whole site. They are leads; every branch is still verified.
+    # Supplied links are mandatory leads, not the upper limit of discovery or
+    # automatic evidence of faculty membership. Each needs a branch/disposition.
     cfg["provided_urls"] = list(provided_urls or [])
     cancel_event = threading.Event()
     cfg["cancel_event"] = cancel_event
@@ -1685,6 +1878,12 @@ async def reconnoiter(
     except PlanHygieneError as exc:
         exc.diagnostics = diagnostics
         raise
+    if omitted := _required_source_issues(plan, _required_source_urls(cfg), events):
+        error = ReconPlanError('最终计划遗漏给定或先前来源')
+        error.diagnostics = diagnostics
+        error.safe_feedback = {'previous_plan': plan, 'known_urls': _required_source_urls(cfg),
+                               'issues': omitted}
+        raise error
     if str(Path(__file__).with_name("recon_runtime.cordis.yml")) in cfg.get("patches", ()):
         from server.recon_contract import disposition_event_issues
         issues = [*disposition_event_issues(plan, events), *selector_evidence_issues(plan, events)]

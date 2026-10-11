@@ -44,6 +44,11 @@ def _validate_plan(plan: dict[str, Any]) -> None:
     if not isinstance(branches, list):
         raise ValueError("plan requires a branches array")
     from server.recon_contract import validate_source_dispositions
+    from server.page_types import normalize_branch, validate_production_bindings
+    plan = {**plan, "branches": [normalize_branch(branch) for branch in branches]}
+    branches = plan["branches"]
+    for branch in branches:
+        validate_production_bindings(branch)
     validate_source_dispositions(plan)
     allowed_sources = {"university_faculty_roster", "hospital_doctor_roster"}
     if plan.get("source_kind") is not None and plan["source_kind"] not in allowed_sources:
@@ -57,7 +62,7 @@ def _validate_plan(plan: dict[str, Any]) -> None:
             parsed_image_url = urlparse(str(branch.get("url", "")))
             if (parsed_image_url.scheme not in ("http", "https") or not parsed_image_url.netloc
                     or parsed_image_url.username or parsed_image_url.password
-                    or set(branch) - ({"url", "kind", "source_kind", "card_selector", "single_page"} | SOURCE_FIELDS)
+                    or set(branch) - ({"url", "kind", "source_kind", "card_selector", "single_page", "page_types"} | SOURCE_FIELDS)
                     or branch.get("source_kind", "university_faculty_roster") not in allowed_sources):
                 raise ValueError("image_table requires a structure-only official URL branch")
             if (branch.get("single_page") is not True or not branch.get("card_selector")
@@ -82,19 +87,31 @@ def _validate_plan(plan: dict[str, Any]) -> None:
             max_children = branch.get("max_children")
             if max_children is not None and (type(max_children) is not int or max_children < 1):
                 raise ValueError("max_children must be a positive integer")
-            child = branch.get("child_branch")
-            if not isinstance(child, dict) or "url" in child:
-                raise ValueError("navigation branch requires a child_branch without url")
-            if not source_claim_valid(child):
-                raise ValueError('navigation children require their own source witness selectors')
-            if "empty_state_selector" in child or "roster_container_selector" in child:
-                raise ValueError("empty selectors are not supported in navigation children")
-            if child.get("source_kind") is not None and child["source_kind"] not in allowed_sources:
-                raise ValueError("invalid child source_kind")
-            if bool(child.get("single_page")) == bool(child.get("next_selector")):
-                raise ValueError("child_branch needs exactly one of single_page or next_selector")
-            if not str(child.get("card_selector", "")).strip():
-                raise ValueError("child_branch requires card_selector")
+            if ('child_branch' in branch) == ('child_branches' in branch):
+                raise ValueError('navigation requires exactly one child binding form')
+            if 'child_branches' in branch:
+                pagination = branch['page_types']['pagination']
+                if (branch.get('next_selector') or pagination['type_id'] != 'pagination.single_page'
+                        or pagination['implementation_version'] != 1):
+                    raise ValueError('explicit navigation pagination is not applicable; re-identify a supported entrance')
+                children = branch['child_branches']
+                if not isinstance(children, list) or not children or any(not isinstance(child, dict) for child in children):
+                    raise ValueError('child_branches must be a nonempty list of complete branches')
+                _validate_plan({**plan, 'branches': children, 'source_dispositions': []})
+            else:
+                child = branch.get("child_branch")
+                if not isinstance(child, dict) or "url" in child:
+                    raise ValueError("navigation branch requires a child_branch without url")
+                if not source_claim_valid(child):
+                    raise ValueError('navigation children require their own source witness selectors')
+                if "empty_state_selector" in child or "roster_container_selector" in child:
+                    raise ValueError("empty selectors are not supported in navigation children")
+                if child.get("source_kind") is not None and child["source_kind"] not in allowed_sources:
+                    raise ValueError("invalid child source_kind")
+                if bool(child.get("single_page")) == bool(child.get("next_selector")):
+                    raise ValueError("child_branch needs exactly one of single_page or next_selector")
+                if not str(child.get("card_selector", "")).strip():
+                    raise ValueError("child_branch requires card_selector")
             continue
         if branch.get("kind") == "segmented":
             from server.segmented_roster import branch_valid
@@ -827,6 +844,15 @@ async def _discover_children(context: Any, branch: dict[str, Any]) -> tuple[str 
         with contextlib.suppress(Exception):
             await page.wait_for_load_state("networkidle", timeout=3000)
         html = await page.content()
+        evidence.update(discovery_scope="rendered_navigation_state",
+                        source_html_sha256=hashlib.sha256(html.encode("utf-8")).hexdigest())
+        if 'child_branches' in branch:
+            proof = single_page_evidence(html, page.url, branch['child_link_selector'])
+            evidence['pagination_termination'] = proof
+            evidence['navigation_termination_verified'] = proof['confirmed'] and not branch.get('next_selector')
+            if not evidence['navigation_termination_verified']:
+                errors.append({'url': url, 'status': 'single_page_pagination_unverified',
+                               'reason': 'navigation_parent_range_unverified'})
         selected = BeautifulSoup(html, "html.parser").select(branch["child_link_selector"])
         if not selected:
             errors.append({"url": url, "status": "child_selector_empty"})
@@ -910,7 +936,13 @@ async def _capture_sources_with_state(plan, browser_context, state):
             state.save_roster_progress(branch, url, html, sequence)
         kwargs = {"on_page": checkpoint, "resume_pages": state.load_roster_progress(branch)
                   if branch.get("kind") != "image_table" and not branch.get('source_role') else []} if state else {}
-        pages, errors, evidence = await _capture_branch(context, branch, source_target=plan, **kwargs)
+        from server.page_types import invoke_async
+        pages, errors, evidence = await invoke_async(
+            'pagination', branch, _capture_branch, context, branch, source_target=plan, **kwargs)
+        evidence['executed_page_type_roles'] = ['pagination']
+        if evidence.get('url') != branch['url'] or not pages and not errors:
+            errors.append({'url': branch['url'], 'status': 'page_type_output_invalid',
+                           'reason': 'pagination_output_scope_or_pages_missing'})
         if evidence.get("restored_pages"):
             resumed_branches += 1
             restored_roster_pages += evidence["restored_pages"]
@@ -1132,6 +1164,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         canonical = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
         if state.plan_digest != hashlib.sha256(canonical.encode("utf-8")).hexdigest():
             raise ValueError("checkpoint state belongs to a different plan")
+    from server.page_types import normalize_branch
+    plan = {**plan, "branches": [normalize_branch(branch) for branch in plan["branches"]]}
     out = Path(output_dir).resolve()
     task_id = task_id or (out.parent.name if out.name.startswith('attempt-') else 'local-' + hashlib.sha256(str(out).encode()).hexdigest()[:24])
     out.mkdir(parents=True, exist_ok=True)
@@ -1268,7 +1302,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         candidates, candidate_sources, roster_urls)
     finish_stage("roster_reconciliation")
     profile_urls = sorted({cand.url for cand in candidates if cand.url and cand.url not in roster_urls})
-    profile_args = {"state": state} if state else {}
+    profile_args = {"profile_type_branches": roster_reconciliation.profile_type_branches}
+    profile_type_evidence = {}
+    profile_args['profile_type_evidence'] = profile_type_evidence
+    if state:
+        profile_args["state"] = state
     profile_live_evidence = {}
     if roster_reconciliation.profile_content_selectors:
         profile_args.update(profile_content_selectors=roster_reconciliation.profile_content_selectors,
@@ -1649,6 +1687,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "total": len(records),
         "with_email": sum(bool(str(row.get("邮箱", "")).strip()) for row in records),
         "branches": branches, "roster_observations": roster_observations,
+        "profile_page_type_evidence": profile_type_evidence,
         "profile_aliases": profile_aliases,
         "profile_page_reviews": profile_page_reviews,
         "email_alternates": extraction.get("email_alternates", []),

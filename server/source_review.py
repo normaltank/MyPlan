@@ -27,7 +27,8 @@ def contract() -> str:
     return digest({name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in
                    ('source_review.py', 'source_qualification.py', 'harvest_eligibility.py',
                     'faculty_extractor.py', 'detail_mecc.py', 'harvest_workflow.py', 'segmented_roster.py',
-                    'pdf_roster.py', 'image_table_roster.py', 'profile_content.py', 'profile_structure.py')})
+                    'pdf_roster.py', 'image_table_roster.py', 'profile_content.py', 'profile_structure.py',
+                    'page_types.py', 'page_type_rank_grid.py')})
 
 
 def item_id(item: dict) -> str:

@@ -9,7 +9,7 @@ remain plan data and do not become branches in the core collector.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 import re
 from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import urljoin
@@ -73,6 +73,7 @@ class RosterReconciliation:
     # browser session by server/pdf_roster.py.
     pdf_rosters: list[dict[str, Any]] = field(default_factory=list)
     image_table_sources: list[dict[str, Any]] = field(default_factory=list)
+    profile_type_branches: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 # Page conditions that pass with time (flaky site, late requests, a settling
@@ -89,6 +90,8 @@ async def capture_profiles(
     state: Any = None,
     profile_content_selectors: dict[str, set[tuple[str, str | None]]] | None = None,
     profile_content_evidence: dict[str, dict[str, Any]] | None = None,
+    profile_type_branches: dict[str, list[dict[str, Any]]] | None = None,
+    profile_type_evidence: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, str | None], list[dict[str, Any]]]:
     """Fetch candidate pages after roster reconciliation, with bounded fan-out."""
 
@@ -106,7 +109,7 @@ async def capture_profiles(
     pages: dict[str, str | None] = {}
     unresolved: list[dict[str, Any]] = []
 
-    async def capture(url: str) -> None:
+    async def capture_profile(url: str, *, page_ready_selector: str | None = None) -> None:
         scope_pairs = (profile_content_selectors or {}).get(url, set())
         scoped = bool(scope_pairs)
         saved_record = state.load_page_record("profile", url) if state is not None else None
@@ -136,8 +139,9 @@ async def capture_profiles(
                     if response is not None and response.status >= 400:
                         retryable = response.status == 429 or response.status >= 500
                         raise RuntimeError(f"HTTP {response.status}")
-                    if ready_selector:
-                        await page.locator(ready_selector).wait_for(state="visible", timeout=10000)
+                    effective_ready_selector = page_ready_selector or ready_selector
+                    if effective_ready_selector:
+                        await page.locator(effective_ready_selector).wait_for(state="visible", timeout=10000)
                     if scoped:
                         with contextlib.suppress(Exception):
                             await page.wait_for_load_state("networkidle", timeout=4000)
@@ -217,6 +221,35 @@ async def capture_profiles(
                         with contextlib.suppress(Exception):
                             await page.close()
 
+    async def capture(url: str) -> None:
+        from server.page_types import binding_for, invoke_async, normalize_branch
+        branches = [normalize_branch(branch) for branch in
+                    (profile_type_branches or {}).get(url, [{"url": url}])]
+        bindings = [binding_for(branch, 'detail') for branch in branches]
+        execution = {'bindings': [binding.model_dump() for binding in bindings],
+                     'source_branches': [{'url': branch.get('url'), 'binding': binding.model_dump()}
+                                         for branch, binding in zip(branches, bindings)],
+                     'executed_page_type_roles': []}
+        if profile_type_evidence is not None:
+            profile_type_evidence[url] = execution
+        ready_selectors = {branch.get('profile_ready_selector', ready_selector) for branch in branches}
+        # Content selector differences are reconciled against the same rendered
+        # page below; retain that snapshot even when the scopes differ. Different
+        # implementations or readiness conditions have no shared execution proof.
+        implementations = {(binding.type_id, binding.implementation_version) for binding in bindings}
+        if len(implementations) > 1 or len(ready_selectors) > 1:
+            pages[url] = None
+            unresolved.append({"url": url, "status": "profile_page_type_conflict"})
+            return
+        await invoke_async('detail', branches[0], capture_profile, url,
+                           page_ready_selector=next(iter(ready_selectors)))
+        execution['executed_page_type_roles'].append('detail')
+        if profile_content_evidence is not None and url in profile_content_evidence:
+            profile_content_evidence[url]['detail_page_type'] = bindings[0].model_dump()
+        if url not in pages:
+            pages[url] = None
+            unresolved.append({'url': url, 'status': 'profile_page_type_output_invalid'})
+
     await asyncio.gather(*(capture(url) for url in dict.fromkeys(urls)))
     return pages, unresolved
 
@@ -236,50 +269,81 @@ async def capture_sources(
     No arbitrary recursion is introduced here; the plan remains the boundary.
     """
 
+    from server.page_types import invoke_async, normalize_branch
+
     result = SourceCapture()
-    for branch in plan["branches"]:
+
+    async def capture_one(raw_branch: dict[str, Any], parent_url: str | None = None) -> dict:
+        branch = normalize_branch(raw_branch)
+        pagination = branch['page_types']['pagination']
+        if (branch.get('kind') == 'navigation' and 'child_branches' in branch
+                and (branch.get('next_selector') or pagination['type_id'] != 'pagination.single_page'
+                     or pagination['implementation_version'] != 1)):
+            raise ValueError('explicit navigation pagination is not applicable; re-identify a supported entrance')
         if branch.get("kind") == "navigation":
-            html, child_urls, errors, evidence = await discover_children(browser_context, branch)
+            html, child_urls, errors, evidence = await invoke_async(
+                'entrance', branch, discover_children, browser_context, branch)
+            if evidence.get('url') != branch['url'] or (not html and not errors):
+                errors.append({'url': branch['url'], 'status': 'page_type_output_invalid',
+                               'reason': 'entrance_output_scope_or_capture_missing'})
+            evidence = {**evidence, 'page_types': branch['page_types'], 'executed_page_type_roles': ['entrance']}
             if html is not None:
                 result.navigation_pages.append((branch["url"], html))
-            result.unresolved.extend({**item, "branch_url": branch["url"]} for item in errors)
+            result.unresolved.extend({**item, "branch_url": parent_url or branch["url"]} for item in errors)
             introductions = FacultyDirectoryExtractor.profile_introduction_links(
                 html, branch["url"], branch["child_link_selector"]) if html and branch.get("child_link_selector") else []
             if introductions:
-                # A person's introduction cannot be silently treated as a child
-                # roster. Mixed directories also need a new verified plan; no
-                # selected links are filtered or converted into completed work.
-                result.unresolved.append({"url": branch["url"], "branch_url": branch["url"],
+                result.unresolved.append({"url": branch["url"], "branch_url": parent_url or branch["url"],
                     "status": "child_roster_not_verified", "reason": "navigation_links_are_profiles",
                     "profile_intro_link_count": len(introductions), "sample_urls": introductions[:4]})
                 evidence["profile_intro_link_count"] = len(introductions)
-                result.branches.append(evidence)
-                continue
-            for child_url in child_urls:
-                child_branch = {**branch["child_branch"], "url": child_url}
-                if "profile_content_selector" in branch and "profile_content_selector" not in child_branch:
-                    child_branch["profile_content_selector"] = branch["profile_content_selector"]
-                    if "profile_content_start_selector" in branch:
-                        child_branch["profile_content_start_selector"] = branch["profile_content_start_selector"]
-                pages, child_errors, child_evidence = await capture_branch(browser_context, child_branch)
-                result.roster_pages.extend(
-                    CapturedRosterPage(url, page_html, child_branch, child_evidence.get("empty_roster"),
-                                       source_role_evidence=child_evidence.get('source_roles', {}).get(url))
-                    for url, page_html in pages
-                )
-                result.unresolved.extend({**item, "branch_url": branch["url"]} for item in child_errors)
-                evidence.setdefault("child_visits", []).append(child_evidence)
-            result.branches.append(evidence)
-            continue
+                return evidence
+            discovered = list(dict.fromkeys(child_urls))
+            if 'child_branches' in branch:
+                by_url: dict[str, list[dict]] = {}
+                for child in branch['child_branches']:
+                    by_url.setdefault(child['url'], []).append(child)
+                for url, children in by_url.items():
+                    if len(children) != 1 or url not in discovered:
+                        result.unresolved.append({"url": url, "branch_url": parent_url or branch['url'],
+                            "status": "child_roster_not_verified", "reason":
+                            "child_binding_duplicate" if len(children) != 1 else "child_binding_not_discovered"})
+                for child_url in discovered:
+                    bindings = by_url.get(child_url, [])
+                    if len(bindings) != 1:
+                        if not bindings:
+                            result.unresolved.append({"url": child_url, "branch_url": parent_url or branch['url'],
+                                "status": "child_roster_not_verified", "reason": "child_binding_missing"})
+                        continue
+                    child_evidence = await capture_one(bindings[0], parent_url or branch['url'])
+                    evidence.setdefault('child_visits', []).append(child_evidence)
+            else:
+                for child_url in discovered:
+                    child_branch = {**branch["child_branch"], "url": child_url}
+                    if "profile_content_selector" in branch and "profile_content_selector" not in child_branch:
+                        child_branch["profile_content_selector"] = branch["profile_content_selector"]
+                        if "profile_content_start_selector" in branch:
+                            child_branch["profile_content_start_selector"] = branch["profile_content_start_selector"]
+                    child_evidence = await capture_one(child_branch, parent_url or branch['url'])
+                    evidence.setdefault('child_visits', []).append(child_evidence)
+            return evidence
 
-        pages, errors, evidence = await capture_branch(browser_context, branch)
+        pages, errors, evidence = await invoke_async(
+            'entrance', branch, capture_branch, browser_context, branch)
+        if evidence.get('url') != branch['url'] or (not pages and not errors):
+            errors.append({'url': branch['url'], 'status': 'page_type_output_invalid',
+                           'reason': 'entrance_output_scope_or_capture_missing'})
+        evidence = {**evidence, 'kind': branch.get('kind', 'roster'), 'page_types': branch['page_types'],
+                    'executed_page_type_roles': ['entrance', *evidence.get('executed_page_type_roles', [])]}
         result.roster_pages.extend(
             CapturedRosterPage(url, page_html, branch, evidence.get("empty_roster"),
                                evidence.get("table_images", {}).get(url), evidence.get('source_roles', {}).get(url))
-            for url, page_html in pages
-        )
-        result.unresolved.extend({**item, "branch_url": branch["url"]} for item in errors)
-        result.branches.append(evidence)
+            for url, page_html in pages)
+        result.unresolved.extend({**item, "branch_url": parent_url or branch["url"]} for item in errors)
+        return evidence
+
+    for branch in plan["branches"]:
+        result.branches.append(await capture_one(branch))
     return result
 
 
@@ -440,7 +504,9 @@ def _apply_name_decisions(
     return awaiting
 
 
-def roster_card_reading(html: str, url: str, card_selector: str) -> dict[str, int] | None:
+def roster_card_reading(
+    html: str, url: str, card_selector: str, *, branch: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """What the harvest's own card check would say of this page, as counts only.
 
     The recon gate reads it when a plan is submitted, so a roster whose cards the
@@ -448,8 +514,29 @@ def roster_card_reading(html: str, url: str, card_selector: str) -> dict[str, in
     (集美大学海洋文化与法律学院, 10-09: 59 rows, a 导师 column, 3 people read).
     None when the harvest would not report a card mismatch.
     """
-    result = reconcile_rosters([CapturedRosterPage(url, html, {"card_selector": card_selector})],
+    from server.page_types import binding_for, normalize_branch, resolve_type
+    typed_branch = normalize_branch({**(branch or {}), "card_selector": card_selector})
+    result = reconcile_rosters([CapturedRosterPage(url, html, typed_branch)],
                                {"source_kind": "university_faculty_roster"})
+    binding = binding_for(typed_branch, 'roster')
+    if branch is not None and (binding.type_id, binding.implementation_version) != ('roster.cards', 1):
+        # The script owns the unit of reconciliation (a rank-grid cell can hold
+        # several people). Only counts and registered failure codes leave this
+        # local parser boundary; names and token text stay in the audit capture.
+        contract = set(resolve_type(binding, 'roster').failure_contract)
+        issues = sorted({item['status'] if item.get('status') in contract else 'roster_type_unresolved'
+                         for item in result.unresolved})
+        counts = {key: sum(item.get(key, 0) for item in result.observations
+                           if type(item.get(key, 0)) is int)
+                  for key in ('listed_items', 'extracted_candidates', 'awaiting_review', 'reviewed_exclusions')}
+        if (not result.observations or any(
+                any(type(item.get(key)) is not int or item[key] < 0 for key in counts)
+                for item in result.observations)):
+            issues.append('roster_type_output_invalid')
+        if (counts['listed_items'] != counts['extracted_candidates'] + counts['awaiting_review']
+                + counts['reviewed_exclusions']):
+            issues.append('roster_type_count_mismatch')
+        return {**counts, 'issues': issues}
     outside = next((item for item in result.unresolved
                     if item.get('status') == 'roster_profile_link_outside_card'), None)
     if outside is not None:
@@ -461,6 +548,75 @@ def roster_card_reading(html: str, url: str, card_selector: str) -> dict[str, in
 
 
 def reconcile_rosters(
+    captured: Iterable[CapturedRosterPage], plan: dict[str, Any], name_decisions=None,
+) -> RosterReconciliation:
+    """Run each trusted roster parser, retaining common cross-page bookkeeping."""
+    from server.page_types import invoke, normalize_branch
+    captured_pages = [replace(page, branch=normalize_branch(page.branch)) for page in captured]
+    combined = RosterReconciliation([], {}, [], [])
+    for page in captured_pages:
+        current = invoke('roster', page.branch, _reconcile_roster_pages, [page], plan,
+                         name_decisions=name_decisions)
+        if not isinstance(current, RosterReconciliation):
+            raise TypeError('roster implementation must return RosterReconciliation')
+        if not current.observations and not current.unresolved:
+            current.unresolved.append({'url': page.url, 'status': 'roster_page_type_output_invalid'})
+        for observation in current.observations:
+            observation['roster_page_type'] = page.branch['page_types']['roster']
+            observation['executed_page_type_roles'] = ['roster']
+        for member in fields(RosterReconciliation):
+            incoming, target = getattr(current, member.name), getattr(combined, member.name)
+            if isinstance(target, list):
+                target.extend(incoming)
+            elif isinstance(target, dict):
+                for key, value in incoming.items():
+                    if isinstance(value, set):
+                        target.setdefault(key, set()).update(value)
+                    elif isinstance(value, list):
+                        target.setdefault(key, []).extend(value)
+                    else:
+                        target[key] = value
+        for candidate in current.candidates:
+            if candidate.url and candidate.url != page.url:
+                branches = combined.profile_type_branches.setdefault(candidate.url, [])
+                if page.branch not in branches:
+                    branches.append(page.branch)
+    candidates = combined.candidates
+    unresolved = combined.unresolved
+    profile_content_selectors = combined.profile_content_selectors
+    unique = {}
+    for candidate in candidates:
+        key = (candidate.name, candidate.url)
+        previous = unique.get(key)
+        conflicts = tuple(dict.fromkeys((previous.mailto_conflicts if previous else ())
+                                        + candidate.mailto_conflicts))
+        unique[key] = replace(candidate, mailto_conflicts=conflicts)
+    # A rare-surname name on a list without personal pages that is also a teacher
+    # with a personal page in this college is that teacher (同名合并); the page
+    # already carries the evidence, so nobody has to confirm the name again.
+    page_urls = {page.url for page in captured_pages}
+    with_page = {candidate.name for candidate in candidates if candidate.url not in page_urls}
+    # A role-holder ('主任：王玮') collected as a member anywhere in this college
+    # is that member (学院内同名合并); only role-line-only people need a person.
+    from server.name_list import ROLE_LINE_REASON
+    collected = {candidate.name for candidate in candidates}
+    unresolved = [item for item in unresolved
+                  if not (item.get("status") == "rare_surname_needs_review"
+                          and item.get("profile_url") == item.get("url")
+                          and (item.get("name") in with_page
+                               or (item.get("reason") == ROLE_LINE_REASON
+                                   and item.get("name") in collected)))]
+    unresolved.extend({"url": url, "status": "profile_content_selector_conflict",
+                       "selectors": [{"profile_content_selector": scope,
+                                      "profile_content_start_selector": start}
+                                     for scope, start in sorted(selectors, key=lambda pair: (pair[0], pair[1] or ''))]}
+                      for url, selectors in profile_content_selectors.items() if len(selectors) > 1)
+    combined.candidates = list(unique.values())
+    combined.unresolved = unresolved
+    return combined
+
+
+def _reconcile_roster_pages(
     captured: Iterable[CapturedRosterPage],
     plan: dict[str, Any],
     name_decisions: dict[str, dict[str, Any]] | None = None,
@@ -648,35 +804,8 @@ def reconcile_rosters(
             unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
         candidates.extend(found)
 
-    unique = {}
-    for candidate in candidates:
-        key = (candidate.name, candidate.url)
-        previous = unique.get(key)
-        conflicts = tuple(dict.fromkeys((previous.mailto_conflicts if previous else ())
-                                        + candidate.mailto_conflicts))
-        unique[key] = replace(candidate, mailto_conflicts=conflicts)
-    # A rare-surname name on a list without personal pages that is also a teacher
-    # with a personal page in this college is that teacher (同名合并); the page
-    # already carries the evidence, so nobody has to confirm the name again.
-    page_urls = {page.url for page in captured_pages}
-    with_page = {candidate.name for candidate in candidates if candidate.url not in page_urls}
-    # A role-holder ('主任：王玮') collected as a member anywhere in this college
-    # is that member (学院内同名合并); only role-line-only people need a person.
-    from server.name_list import ROLE_LINE_REASON
-    collected = {candidate.name for candidate in candidates}
-    unresolved = [item for item in unresolved
-                  if not (item.get("status") == "rare_surname_needs_review"
-                          and item.get("profile_url") == item.get("url")
-                          and (item.get("name") in with_page
-                               or (item.get("reason") == ROLE_LINE_REASON
-                                   and item.get("name") in collected)))]
-    unresolved.extend({"url": url, "status": "profile_content_selector_conflict",
-                       "selectors": [{"profile_content_selector": scope,
-                                      "profile_content_start_selector": start}
-                                     for scope, start in sorted(selectors, key=lambda pair: (pair[0], pair[1] or ''))]}
-                      for url, selectors in profile_content_selectors.items() if len(selectors) > 1)
     return RosterReconciliation(
-        candidates=list(unique.values()),
+        candidates=candidates,
         candidate_sources=candidate_sources,
         observations=observations,
         unresolved=unresolved,

@@ -5,6 +5,39 @@ from collections import Counter
 TERMINAL = {"single_page_no_pagination_control_seen", "next_control_absent", "next_control_disabled"}
 
 
+def _termination_verified(branch, evidence, capture, observations):
+    if branch.get('kind') == 'navigation':
+        children = evidence.get('child_visits', [])
+        if not children:
+            return False
+        if 'child_branches' in branch:
+            if evidence.get('navigation_termination_verified') is not True:
+                return False
+            expected = {child['url']: child for child in branch['child_branches']}
+            urls = [child.get('url') for child in children]
+            if len(urls) != len(set(urls)) or set(urls) != set(expected):
+                return False
+            return all(_termination_verified(expected[child['url']], child, capture, observations)
+                       for child in children)
+        child_branch = branch.get('child_branch', {})
+        return all(_termination_verified({**child_branch, 'url': child.get('url')}, child,
+                                         capture, observations) for child in children)
+    if 'empty_state_selector' in branch or 'roster_container_selector' in branch:
+        if evidence.get('end') != 'confirmed_empty_roster':
+            return False
+        from server.empty_roster import empty_roster_proof_valid
+        from bs4 import BeautifulSoup
+        pages = [page for page in capture.roster_pages if page.branch.get('url') == branch['url']]
+        if len(pages) != 1 or any(row.get('url') == pages[0].url and
+                                 row.get('extracted_candidates', 0) != 0 for row in observations):
+            return False
+        page = pages[0]
+        return (empty_roster_proof_valid(evidence.get('empty_roster'), branch, page.html, url=page.url)
+                and empty_roster_proof_valid(page.empty_roster_evidence, branch, page.html, url=page.url)
+                and not BeautifulSoup(page.html, 'html.parser').select(branch['card_selector']))
+    return evidence.get('end') in TERMINAL
+
+
 def build_coverage_ledger(plan, capture, observations, candidates, profiles, eligibility, snapshots):
     issues = []
     completed = {branch["url"]: branch for branch in capture.branches}
@@ -14,25 +47,7 @@ def build_coverage_ledger(plan, capture, observations, candidates, profiles, eli
         if evidence is None:
             issues.append({"url": branch["url"], "status": "planned_branch_not_captured"})
             continue
-        children = evidence.get("child_visits", [])
-        end_proven = (all(child.get("end") in TERMINAL for child in children) and bool(children)
-                      if branch.get("kind") == "navigation" else evidence.get("end") in TERMINAL)
-        empty_declared = "empty_state_selector" in branch or "roster_container_selector" in branch
-        if empty_declared:
-            # An ordinary pagination terminal cannot stand in for empty proof.
-            end_proven = False
-        if evidence.get("end") == "confirmed_empty_roster":
-            from server.empty_roster import empty_roster_proof_valid
-            pages_for_branch = [page for page in capture.roster_pages if page.branch.get("url") == branch["url"]]
-            from bs4 import BeautifulSoup
-            end_proven = (len(pages_for_branch) == 1 and not any(
-                row.get("url") == pages_for_branch[0].url and row.get("extracted_candidates", 0) != 0
-                for row in observations))
-            if end_proven:
-                page = pages_for_branch[0]
-                end_proven = (empty_roster_proof_valid(evidence.get("empty_roster"), branch, page.html, url=page.url)
-                              and empty_roster_proof_valid(page.empty_roster_evidence, branch, page.html, url=page.url)
-                              and not BeautifulSoup(page.html, "html.parser").select(branch["card_selector"]))
+        end_proven = _termination_verified(branch, evidence, capture, observations)
         if not end_proven:
             issues.append({"url": branch["url"], "status": "branch_termination_unverified"})
         branches.append({**evidence, "termination_verified": end_proven})
