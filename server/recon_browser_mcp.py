@@ -331,9 +331,10 @@ class BrowserScout:
         if selector:
             value["confirmed_count"] = sum(item.get("confirmed") is True for item in results)
             return value
-        # A selector string that names a passing container on every sample page.
+        # A selector string that names a passing container on every sample page;
+        # an unreadable sample contributes no candidates, never partial support.
         pages = [[selector for entry in item.get("candidates", []) if entry.get("static_check") == "ok"
-                  for selector in entry["selectors"]] for item in results if "candidates" in item]
+                  for selector in entry["selectors"]] for item in results]
         value["common_candidates"] = ([selector for selector in dict.fromkeys(pages[0])
                                        if all(selector in other for other in pages[1:])][:PROFILE_CANDIDATES]
                                       if pages else [])

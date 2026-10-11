@@ -147,3 +147,29 @@ def test_preview_only_marks_lines_it_returned(tmp_path):
     assert second["repeated_lines_omitted"] == len(shown_first)
     assert second["new_text"].split("\n") == [line for line in lines if line not in shown_first]
     assert second["new_text_truncated"] is False and second["unshown_lines"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+@pytest.mark.parametrize('failed_sample', ['https://fixture.example.edu/unreachable', 'not-a-url'])
+async def test_failed_profile_sample_cannot_claim_common_container(tmp_path, failed_sample):
+    """A real successful DOM must not stand in for an unreadable second sample."""
+    good = 'https://fixture.example.edu/p/1'
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await new_browser_context(browser, polite=False)
+        async def serve(route):
+            if route.request.url == good:
+                await route.fulfill(body=PAGE.format(name='张老师', n=1, body_id='vsb_content'),
+                                    content_type='text/html; charset=utf-8')
+            else:
+                await route.abort('connectionrefused')
+        await context.route('**/*', serve)
+        page = await context.new_page()
+        scout = BrowserScout(page, tmp_path, 'branch')
+        result = json.loads((await scout.call('browser_verify_profile', {'urls': [good, failed_sample]}))['content'][0]['text'])
+        await browser.close()
+    assert len(result['results']) == 2
+    assert result['results'][0]['candidates'][0]['static_check'] == 'ok'
+    assert result['results'][1]['error']
+    assert result['common_candidates'] == []
