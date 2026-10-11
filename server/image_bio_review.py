@@ -226,6 +226,8 @@ _REVIEW_CSS = (
     "button.secondary{background:var(--surface);color:var(--text-2);border:1px solid var(--border-strong)}"
     "button.secondary:hover{background:var(--surface-2)}"
     ".actions{display:flex;flex-wrap:wrap;gap:8px}"
+    ".media-select{display:flex!important;align-items:center;gap:8px!important}"
+    ".media-batch{position:sticky;top:0;z-index:1;padding:14px;background:var(--surface);border:1px solid var(--border)}"
     "body>h2+p{color:var(--muted);margin-top:4px}"
     ".meta{color:var(--muted);font-size:13px}.status{font-size:13px;color:var(--ok)}.status:empty{display:none}"
     ".email-option{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 10px;padding:12px;"
@@ -423,12 +425,22 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             + (_IRRELEVANT_SAVED if irrelevant and item.get("saved_irrelevant") else '') + '</p>'
             '</section>')
     body = "\n".join(cards)
+    if media_kind_items:
+        body += ('<section class="media-batch"><h2>批量图片用途复核</h2>'
+            '<p>勾选你已逐项核对的图片，再保存同一种决定。已保存的决定仍可更改。</p>'
+            '<div class="actions"><button type="button" id="media-select-all">全选图片</button>'
+            '<button type="button" id="media-clear-selection" class="secondary">取消选择</button>'
+            '<button type="button" data-media-batch="photo">所选仅为人物照片，不含简介或邮箱</button>'
+            '<button type="button" data-media-batch="unreadable" class="secondary">所选用途未知或含文字</button></div>'
+            '<p id="media-selection-count">已选择 0 项</p><p id="media-batch-status" role="status"></p></section>')
     for item in media_kind_items or []:
+        selection = '<label class="media-select"><input type="checkbox" data-media-select>选择此图片</label>'
         if item.get('evidence_basis') == 'missing_source_snapshot':
             status = ('已确认仅为教师照片，完整可见简介保留' if item.get('saved_verdict') == 'photo'
-                      else '尚未确认用途，仍保持阻断')
+                      else '已保存：用途未知或含文字，仍需复核，可更改' if item.get('saved_verdict') == 'unreadable'
+                      else '尚未确认用途，仍需复核')
             body += ('<section class="card media-kind-card" data-id="' + escape(item['id']) + '">'
-                '<h2>失效图片用途复核</h2><p>官网在重复访问中返回 HTTP ' + str(item['http_status'])
+                + selection + '<h2>失效图片用途复核</h2><p>官网在重复访问中返回 HTTP ' + str(item['http_status'])
                 + '，原图不可查看。只有你明确知道此图片仅为教师照片、不含简介或邮箱，才可确认。'
                 '无法确认或可能含文字时保持阻断；尺寸不能证明图片用途。</p>'
                 '<p>个人页：' + _page_link(item['profile_url']) + ' · 图片链接：' + _page_link(item['media_url']) + '</p>'
@@ -441,7 +453,7 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
         status = {'photo': '已确认纯人物照片', 'irrelevant': _IRRELEVANT_SAVED,
                   'unreadable': '包含文字或无法确定，仍保持阻断'}.get(item.get('saved_verdict'), '')
         body += ('<section class="card media-kind-card" data-id="' + escape(item['id']) + '">'
-            '<h2>原图类型复核</h2><p>程序无法判断这是照片还是未读出的简历。请检查整张原图：'
+            + selection + '<h2>原图类型复核</h2><p>程序无法判断这是照片还是未读出的简历。请检查整张原图：'
             '只有纯人物照片、没有履历或其他文字时才能确认照片。含文字、扫描件或无法判断时保持阻断。</p>'
             '<p>来源：' + _page_link(item['profile_url']) + '</p>'
             '<img alt="需要判断类型的完整原图" src="data:image/png;base64,' + preview + '">'
@@ -545,16 +557,31 @@ def render_review_page(items: list[dict], email_items: list[dict] | None = None,
             "if(!response.ok)throw await failure(response);"
             "status.textContent=" + json.dumps(_PROFILE_PAGE_SAVED) + "[verdict];}"
             "catch(error){status.textContent='保存失败：'+error.message;}});});"
-            "document.querySelectorAll('.media-kind-card').forEach(card=>{"
-            "card.querySelectorAll('button').forEach(button=>button.onclick=async()=>{"
-            "const status=card.querySelector('.status');const verdict=button.dataset.verdict;"
+            "async function saveMedia(card,verdict){"
+            "const status=card.querySelector('.status');"
             "try{const response=await fetch(" + media_kind_js + ",{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':reviewCsrf},"
             "body:JSON.stringify({id:card.dataset.id,verdict})});"
             "if(!response.ok)throw await failure(response);"
-            "status.textContent=verdict==='photo'?'已确认纯人物照片；重新采集时校验原件':"
-            "verdict==='irrelevant'?" + json.dumps(_IRRELEVANT_SAVED) + ":'保持阻断，请处理原图文字';}"
-            "catch(error){status.textContent='保存失败：'+error.message;}});});"
+            "status.textContent=(verdict==='photo'?'已保存：仅为人物照片，不含简介或邮箱':"
+            "verdict==='irrelevant'?" + json.dumps(_IRRELEVANT_SAVED) + ":'已保存：用途未知或含文字，仍需复核')+'；可选择其他选项更改';return true;}"
+            "catch(error){status.textContent='保存失败：'+error.message;return false;}}"
+            "document.querySelectorAll('.media-kind-card').forEach(card=>{"
+            "card.querySelectorAll('button').forEach(button=>button.onclick=()=>saveMedia(card,button.dataset.verdict));});"
+            "const mediaChecks=Array.from(document.querySelectorAll('[data-media-select]'));"
+            "function updateMediaSelection(){const count=document.getElementById('media-selection-count');"
+            "if(count)count.textContent='已选择 '+mediaChecks.filter(input=>input.checked).length+' 项';}"
+            "mediaChecks.forEach(input=>input.onchange=updateMediaSelection);"
+            "const selectAll=document.getElementById('media-select-all'),clearMedia=document.getElementById('media-clear-selection');"
+            "if(selectAll)selectAll.onclick=()=>{mediaChecks.forEach(input=>input.checked=true);updateMediaSelection();};"
+            "if(clearMedia)clearMedia.onclick=()=>{mediaChecks.forEach(input=>input.checked=false);updateMediaSelection();};"
+            "document.querySelectorAll('[data-media-batch]').forEach(button=>button.onclick=async()=>{"
+            "const selected=mediaChecks.filter(input=>input.checked),status=document.getElementById('media-batch-status');"
+            "if(!selected.length){status.textContent='请先勾选要保存的图片';return;}"
+            "const controls=Array.from(document.querySelectorAll('.media-batch button'));controls.forEach(control=>control.disabled=true);"
+            "let saved=0;try{for(const input of selected){if(await saveMedia(input.closest('.media-kind-card'),button.dataset.mediaBatch)){"
+            "saved++;input.checked=false;}}status.textContent='已保存 '+saved+' 项，失败 '+(selected.length-saved)+' 项；失败项仍勾选，可重试';}"
+            "finally{controls.forEach(control=>control.disabled=false);updateMediaSelection();}});"
             "document.querySelectorAll('.card:not(.email-card):not(.name-card):not(.identity-card):not(.html-email-card):not(.media-kind-card):not(.profile-page-card)').forEach(card=>{"
             "card.querySelector('button').onclick=async()=>{const status=card.querySelector('.status');"
             "const verified_text=card.querySelector('textarea').value;"
