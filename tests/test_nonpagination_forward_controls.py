@@ -107,6 +107,33 @@ async def test_unproved_or_roster_controls_remain_blocked_when_selector_is_omitt
             await browser.close()
 
 
+@pytest.mark.asyncio
+async def test_external_ajax_listener_cannot_supply_current_navigation_proof(tmp_path):
+    html = ('<meta charset="utf-8">' + ROSTER + '<nav><a id="advance" href="/roster">当前名录</a></nav>'
+            '<script>document.querySelector("#advance").addEventListener("click",event=>{'
+            'event.preventDefault();document.querySelector(".roster").insertAdjacentHTML('
+            '"beforeend","<li>张明</li>");});</script>')
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        ctx = await browser.new_context()
+        await ctx.route('**/*', lambda r:r.fulfill(body=html,content_type='text/html; charset=utf-8'))
+        scout = BrowserScout(IsolatedPage(await ctx.new_page(), ctx), tmp_path, 'branch',
+            {'school':'Fixture','college':'Department','url':URL})
+        try:
+            await scout.call('browser_navigate', {'url':URL})
+            await _reply(scout, {'card_selector':CARDS,'next_selector':'#advance'})
+            await scout.call('browser_click', {'selector':'#advance'})
+            assert await scout.page.locator(CARDS).count() >= 3
+            final = await _reply(scout, {'card_selector':CARDS})
+            assert final['pagination_termination']['confirmed'] is False
+            assert not final['pagination_termination']['observed_forward_controls'][0].get('nonpagination')
+            submitted = json.loads((await scout.call('submit_plan', {'plan':
+                {'url':URL,'card_selector':CARDS,'single_page':True}}))['content'][0]['text'])
+            assert submitted['accepted'] is False
+        finally:
+            await browser.close()
+
+
 @pytest.mark.parametrize('control', [
     '<article><nav><a id="self" href="/roster">当前名录</a></nav></article>',
     '<nav><a id="self" href="/roster" rel="next">下一页</a></nav>',
@@ -118,3 +145,7 @@ async def test_unproved_or_roster_controls_remain_blocked_when_selector_is_omitt
 ])
 def test_current_navigation_proof_rejects_article_forward_pager_and_different_uri(control):
     assert nonpagination_evidence(ROSTER + control,URL,CARDS,'#self') is None
+
+
+def test_current_uri_and_navigation_markup_alone_do_not_prove_nonpagination():
+    assert nonpagination_evidence(ROSTER + NAV, URL, CARDS, 'nav a') is None
