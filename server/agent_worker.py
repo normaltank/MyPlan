@@ -834,7 +834,15 @@ class AgentWorker:
         # Unknown or unattributed profile failures cannot justify skipping a roster scout.
         damaged = self._damaged_branches(plan, feedback)
         if damaged is None:
-            return None
+            issues = feedback.get('issues', [])
+            dispositions = {item['url'] for item in plan.get('source_dispositions', [])}
+            if not issues or any(item.get('status') != 'source_disposition_unverified'
+                    or (item.get('branch_url') or item.get('directory_url') or item.get('url')) not in dispositions
+                    for item in issues):
+                return None
+            # Only declared source dispositions failed; active branches still
+            # need fresh proofs below, while discovery itself must run again.
+            damaged = set()
         verified = {}
         for index, (url, branch) in enumerate(branches.items()):
             if url in damaged:
