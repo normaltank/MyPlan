@@ -5,6 +5,7 @@ the name column headed 导师). The gate accepted it; the harvest read 3 people,
 stopped on the card mismatch, and the repair returned the same plan.
 """
 from __future__ import annotations
+from pagination_contract_fixture import completed_result
 
 import json
 
@@ -38,6 +39,7 @@ def test_the_reading_reports_cards_the_harvest_cannot_read():
 
 
 def _verify(result, selector=SELECTOR):
+    result = completed_result(result, {"card_selector": selector})
     return [{"type": "tool/call", "data": {"callId": "v", "name": "mcp__playwright__browser_verify",
                                              "arguments": json.dumps({"card_selector": selector})}},
             {"type": "tool/result", "data": {"message": {"content": [

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from playwright.async_api import async_playwright
+from pagination_contract_fixture import termination
 
 from server import agent_recon
 from server.faculty_extractor import FacultyCandidate
@@ -29,9 +30,10 @@ def proof(html=HTML):
             "media_count": 0, "busy_count": 0, "pagination_count": 0}
 
 
-def events(evidence):
+def events(evidence, terminal=None):
     args = {key: BRANCH[key] for key in ("card_selector", "empty_state_selector", "roster_container_selector")}
     value = {"url": BRANCH["url"], "cardCount": 0, "pagination": {"total": 0}, "empty_roster": evidence}
+    value['pagination_termination'] = terminal or termination(BRANCH['url'], BRANCH['card_selector'])
     return [{"type": "tool/call", "data": {"callId": "empty", "name": "mcp__playwright__browser_verify",
              "arguments": json.dumps(args)}},
             {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": "empty",
@@ -250,7 +252,8 @@ async def test_browser_verify_replays_empty_selector_arguments_with_real_dom(tmp
             reply = await scout.call("browser_verify", args)
             value = json.loads(reply["content"][0]["text"])
             assert value["empty_roster"]["confirmed"] is True
-            assert agent_recon.selector_evidence_issues({"branches": [BRANCH]}, events(value["empty_roster"])) == []
+            assert agent_recon.selector_evidence_issues({"branches": [BRANCH]}, events(
+                value["empty_roster"], value['pagination_termination'])) == []
         finally:
             await browser.close()
 

@@ -241,10 +241,10 @@ def _pagination_candidates(html: str, current_url: str,
     roster_nodes = soup.select(card_selector) if card_selector else []
     ignored = [node for selector in ignored_controls for node in soup.select(selector)]
     leads: list[str | None] = []
-    for control in soup.select("a, button"):
+    for control in soup.select('a, button, input[type="button"], input[type="submit"], [role="button"]'):
         if any(control is node for node in ignored):
             continue
-        if (control.has_attr("disabled") or control.get("aria-disabled") == "true"
+        if ((control.name in {'button', 'input'} and control.has_attr("disabled"))
                 or control.get("aria-current") == "page"):
             continue
         slider = control.parent
@@ -266,6 +266,12 @@ def _pagination_candidates(html: str, current_url: str,
         control_classes = " ".join(control.get("class", []))
         is_next = is_next or bool(re.search(r"(?:^|[-_\s])(?:next|nextpage)(?:$|[-_\s])",
                                              control_classes, re.I))
+        label = (control.get_text(" ", strip=True) or control.get("value")
+                 or control.get("aria-label") or control.get("title") or "").strip()
+        is_next = is_next or bool(re.fullmatch(
+            r"(?:下一页|下页|后一页|更多(?:人员|教师|师资)|加载更多(?:人员|教师|师资)?|"
+            r"next(?:\s+page)?|(?:load|show)\s+more(?:\s+(?:people|faculty|teachers))?)",
+            label, re.I))
         in_pager = _in_pager(control)
         if not (is_next or in_pager):
             continue
@@ -279,6 +285,20 @@ def _pagination_candidates(html: str, current_url: str,
         if len(leads) >= 8:
             break
     return leads
+
+
+def single_page_evidence(html: str, url: str, card_selector: str, ignored_controls=()) -> dict:
+    """Observed completion, separate from the scout's bounded candidate count.
+
+    Inspect the saved rendered document including input/value and labelled
+    forward controls. Only independently proven terminal/banner controls are
+    ignored. This is browser-produced evidence, never a field in a model plan.
+    """
+    leads = _pagination_candidates(html, url, card_selector, ignored_controls)
+    return {"url": url, "unit_selector": card_selector,
+            "source_sha256": hashlib.sha256(html.encode()).hexdigest(),
+            "confirmed": not leads, "unresolved_forward_controls": len(leads),
+            "basis": "rendered_forward_controls"}
 
 
 async def _probe_single_page(context: Any, html: str, url: str, card_selector: str,
@@ -678,6 +698,8 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                            if proof_valid(p, html, _unit_selector(branch))]
                 if proofs:
                     evidence['terminal_pagers'] = proofs
+                evidence['pagination_termination'] = single_page_evidence(
+                    html, page.url, _unit_selector(branch), ignored)
                 probe_errors = await _probe_single_page(context, html, page.url,
                                                          _unit_selector(branch), ignored)
                 unresolved.extend(probe_errors)
@@ -716,6 +738,11 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                                    "status": "pagination_not_verified", "selector": next_selector})
                 break
             if count == 0:
+                evidence['pagination_termination'] = {
+                    'confirmed': True, 'url': page.url, 'unit_selector': _unit_selector(branch),
+                    'source_sha256': hashlib.sha256(html.encode()).hexdigest(),
+                    'basis': 'verified_forward_control_absent', 'next_selector': next_selector,
+                    'forward_identity': forward_identity}
                 evidence["end"] = "next_control_absent"
                 break
             if count != 1:
@@ -736,6 +763,16 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 evidence['end']='next_selector_not_verified'
                 break
             if not await next_control.is_enabled():
+                if not await next_control.evaluate("node => node.matches(':disabled')"):
+                    unresolved.append({'url': page.url, 'status': 'pagination_not_verified',
+                        'reason': 'forward_control_not_natively_disabled', 'selector': next_selector})
+                    evidence['end'] = 'next_control_not_verified'
+                    break
+                evidence['pagination_termination'] = {
+                    'confirmed': True, 'url': page.url, 'unit_selector': _unit_selector(branch),
+                    'source_sha256': hashlib.sha256(html.encode()).hexdigest(),
+                    'basis': 'native_disabled_forward_control', 'next_selector': next_selector,
+                    'forward_identity': current_identity}
                 evidence["end"] = "next_control_disabled"
                 break
             if branch.get("max_pages") is not None and page_number == branch["max_pages"]:
@@ -760,6 +797,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 evidence["visited_pages"] = 1
                 probe_errors = await _probe_single_page(context, native_html, url,
                                                          _unit_selector(branch))
+                evidence['pagination_termination'] = single_page_evidence(native_html, url, _unit_selector(branch))
                 evidence["end"] = ("single_page_pagination_unverified" if probe_errors
                                    else "single_page_no_pagination_control_seen")
                 if branch.get("empty_state_selector"):

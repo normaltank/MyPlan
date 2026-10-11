@@ -1,5 +1,6 @@
 """A directory of personal introductions must not be captured as child rosters."""
 import json
+from pagination_contract_fixture import termination
 
 import pytest
 
@@ -47,7 +48,7 @@ def events(observations):
              'arguments': json.dumps({'card_selector': selector})}},
             {'type': 'tool/result', 'data': {'message': {'content': [
                 {'toolCallId': call_id, 'content': [{'type': 'text', 'text': json.dumps({
-                    'url': url, 'cardCount': 2, 'pagination': {'total': 0}, **extra})}]}]}}},
+                    'url': url, 'cardCount': 2, 'pagination': {'total': 0}, 'pagination_termination': termination(url, selector), **extra})}]}]}}},
         ])
     return result
 

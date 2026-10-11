@@ -13,6 +13,16 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+
+def pagination_termination_valid(result: dict, selector: str) -> bool:
+    proof = result.get('pagination_termination') or {}
+    return (proof.get('confirmed') is True and proof.get('url') == result.get('url')
+            and proof.get('unit_selector') == selector
+            and proof.get('basis') == 'rendered_forward_controls'
+            and proof.get('unresolved_forward_controls') == 0
+            and isinstance(proof.get('source_sha256'), str)
+            and re.fullmatch(r'[0-9a-f]{64}', proof['source_sha256']) is not None)
+
 FACTS = r'''selector => {
   const cards = [...document.querySelectorAll(selector)];
   const visible = node => {

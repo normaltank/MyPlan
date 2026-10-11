@@ -93,6 +93,9 @@
             && (!rosterNodes || !rosterNodes.some(n => slider.contains(n)))) return false;
       }
       if (control.relList?.contains('next')) return true;
+      const label = collapse(control.textContent || control.value || control.getAttribute('aria-label')
+        || control.getAttribute('title'));
+      if (/^(?:下一页|下页|后一页|更多(?:人员|教师|师资)|加载更多(?:人员|教师|师资)?|next(?:\s+page)?|(?:load|show)\s+more(?:\s+(?:people|faculty|teachers))?)$/i.test(label)) return true;
       for (let node = control; node && node !== root; node = node.parentElement) {
         const tokens = [...node.classList, node.id || ''].join(' ');
         if (/(?:^|[-_\s])(?:next|nextpage|pagination|pager|pages)(?:$|[-_\s])/i.test(tokens)
@@ -104,11 +107,11 @@
       const root = document.querySelector(selector);
       if (!root) return {error: 'container_empty', url: location.href};
       const rosterNodes = rosterSelector ? [...document.querySelectorAll(rosterSelector)] : null;
-      const candidates = [...root.querySelectorAll(nativeDisabledOnly ? 'a,button,input' : 'a,button')].filter(control => {
+      const candidates = [...root.querySelectorAll(nativeDisabledOnly ? 'a,button,input,[role="button"]' : 'a,button,input[type="button"],input[type="submit"],[role="button"]')].filter(control => {
         if (control.matches(':disabled') || (!nativeDisabledOnly && control.getAttribute('aria-disabled') === 'true')) return false;
         return this.isPaginationControl(control, root, rosterNodes);
       }).filter(n => nativeDisabledOnly || n.getAttribute('aria-current') !== 'page').map(n => ({selector: path(n),
-        url: n.href || null, label: (n.textContent || '').trim().slice(0, 16)}));
+        url: n.href || null, label: collapse(n.textContent || n.value || n.getAttribute('aria-label')).slice(0, 16)}));
       return page(candidates, offset, limit);
     },
     profileCandidates(selector = null, limit = 6) {
@@ -195,7 +198,7 @@
             const target=new URL(url);target.hash='';const current=new URL(location.href);current.hash='';
             return target.href!==current.href;}))].slice(0, 2),
         nextCount: next.length, nextUrl: next.length === 1 ? next[0].href || null : null,
-        nextDisabled: next.length === 1 ? Boolean(next[0].disabled || next[0].getAttribute('aria-disabled') === 'true') : null};
+        nextDisabled: next.length === 1 ? next[0].matches(':disabled') : null};
     }
   })});
 })();

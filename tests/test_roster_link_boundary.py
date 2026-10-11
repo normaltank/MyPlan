@@ -1,5 +1,6 @@
 """A name leaf inside a link cannot become a profile-less completed record."""
 import json
+from pagination_contract_fixture import termination
 
 import pytest
 
@@ -46,7 +47,7 @@ def test_gate_reports_the_same_boundary_failure_without_teacher_fields():
     selector = 'main > a > span'
     args = {'card_selector':selector}
     reply = {'url':URL,'cardCount':2,'pagination':{'total':0},'linkedSamples':[],
-             'card_mismatch':{'outside_profile_links':2}}
+             'card_mismatch':{'outside_profile_links':2}, 'pagination_termination': termination(URL, selector)}
     events = [{'type':'tool/call','data':{'callId':'v','name':'mcp__playwright__browser_verify',
         'arguments':json.dumps(args)}}, {'type':'tool/result','data':{'message':{'content':[
             {'toolCallId':'v','content':[{'type':'text','text':json.dumps(reply)}]}]}}}]

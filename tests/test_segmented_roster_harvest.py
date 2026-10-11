@@ -2,6 +2,7 @@
 
 from io import BytesIO
 import json
+from pagination_contract_fixture import completed_result
 from pathlib import Path
 
 from PIL import Image
@@ -120,6 +121,7 @@ def test_plan_validators_accept_only_the_segmented_contract():
 
 
 def _events(result):
+    result = completed_result(result, {"container_selector": BRANCH["container_selector"]})
     call = {"type": "tool/call", "data": {"name": "mcp__playwright__browser_verify_segments", "callId": "c1",
             "arguments": json.dumps({"container_selector": BRANCH["container_selector"],
                                      "record_start_selector": BRANCH["record_start_selector"]})}}

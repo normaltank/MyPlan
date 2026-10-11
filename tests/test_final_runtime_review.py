@@ -1,5 +1,6 @@
 """Independent checks of phase isolation and original resume timestamps."""
 import json
+from pagination_contract_fixture import completed_result
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -37,6 +38,7 @@ def test_concurrent_colleges_have_independent_runtime_files_and_phase_child_env(
             value = {"url": roster_url, "card_selector": "main li", "single_page": True}
             name, arguments, result = "browser_verify", {"card_selector": "main li"}, {
                 "url": roster_url, "cardCount": 3, "pagination": {"total": 0}}
+        result = completed_result(result, arguments)
         events = [{"type": "tool/call", "data": {"callId": session_id,
             "name": "mcp__playwright__" + name, "arguments": json.dumps(arguments)}},
             {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": session_id,
