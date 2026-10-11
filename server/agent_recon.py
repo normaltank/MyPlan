@@ -1204,9 +1204,9 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                            "evidence_root": str(recon_evidence_root() / discovery_session_id)})
         else:
             discovery, discovery_events, metric = run("discovery", target["url"], "discover")
-            events.extend(discovery_events)
             phases.append(metric)
             discovery_session_id = f"{session_id}-discover"
+        events.extend(discovery_events)
         from server.recon_contract import validate_submission
         issues = validate_submission(discovery, 'discovery', {**target, 'required_urls': required_urls},
                                      discovery_events)
