@@ -69,7 +69,9 @@ TOOLS = [
           'unit_selector': STRING},
          ('source_role', 'source_container_selector', 'role_evidence_selector', 'source_context_selector')),
     tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes, sample URLs and "
-         "pagination_termination. pagination.total counts candidates; single_page requires confirmed termination.",
+         "pagination_termination. Guessed current-page navigation links may be natively activated to prove a "
+         "same-URL document navigation with an unchanged roster. pagination.total counts candidates; "
+         "single_page requires confirmed termination.",
          {"card_selector": STRING, "next_selector": STRING,
           "empty_state_selector": STRING, "roster_container_selector": STRING}, ("card_selector",)),
     tool("browser_verify_segments", "Verify a flat multi-person article: the unique body container and the element "
@@ -131,6 +133,7 @@ class BrowserScout:
         self._dom_modified = False
         self._image_reads: dict[str, dict] = {}
         self._observed_forward_selectors: dict[tuple[str, str], set[str]] = {}
+        self._unproved_navigation_actions: set[tuple[str, str, str]] = set()
         # Rejected submissions by everything the gate reads: plan, evidence, DOM state.
         self._rejections: dict[tuple, tuple[int, list[dict]]] = {}
         self._unchanged_resubmissions = 0
@@ -427,16 +430,42 @@ class BrowserScout:
             known_forward = self._observed_forward_selectors.setdefault(forward_key, set())
             if arguments.get('next_selector') and value.get('nextCount', 0) > 0:
                 known_forward.add(arguments['next_selector'])
+            def visibility_error():
+                return {**self.text_result({**value, "status": "roster_cards_not_visible",
+                    "retry": "Verify a selector for the visible roster rather than hidden or preload nodes."}),
+                    "isError": True}
+            if value.get("hiddenCardCount", 0) > 0:
+                return visibility_error()
+            from server.nonpagination_controls import (nonpagination_evidence, nonpagination_evidence_valid,
+                                                       observe_current_navigation, without_nonpagination_controls)
+            pagination = await self.page.evaluate("selector => __facultyRecon.pagination('body',0,12,false,selector)",
+                                                   arguments['card_selector'])
+            navigations = {}
+            candidates = known_forward | {item['selector'] for item in pagination.get('items', [])}
+            for selector in sorted(candidates):
+                action_key = (*forward_key, selector)
+                if action_key in self._unproved_navigation_actions:
+                    continue
+                proof, activated = await observe_current_navigation(self.page, arguments['card_selector'], selector)
+                if proof is not None:
+                    navigations[selector] = proof
+                elif activated:
+                    # No repeat clicks on an unknown action: they may advance a
+                    # real AJAX roster. Its remembered control remains blocking.
+                    self._unproved_navigation_actions.add(action_key)
+            if self.page.url != forward_key[0]:
+                return {**self.text_result({'url':self.page.url, 'status':'roster_changed_during_verification',
+                    'retry':'Verify the current source again; the navigation probe changed its URL.'}), 'isError':True}
+            value = await self.page.evaluate('args => __facultyRecon.check(...args)',
+                                            [arguments['card_selector'], arguments.get('next_selector')])
+            if value.get('hiddenCardCount', 0) > 0:
+                return visibility_error()
             forward_observations = []
             for selector in sorted(known_forward):
                 current = await self.page.evaluate('args => __facultyRecon.check(...args)',
                                                   [arguments['card_selector'], selector])
-                forward_observations.append({'selector': selector, 'count': current.get('nextCount'),
-                                             'disabled': current.get('nextDisabled')})
-            if value.get("hiddenCardCount", 0) > 0:
-                return {**self.text_result({**value, "status": "roster_cards_not_visible",
-                    "retry": "Verify a selector for the visible roster rather than hidden or preload nodes."}),
-                    "isError": True}
+                forward_observations.append({'selector':selector, 'count':current.get('nextCount'),
+                                             'disabled':current.get('nextDisabled')})
             cards = await self.page.locator(arguments["card_selector"]).evaluate_all("nodes => nodes.map(n=>n.outerHTML)")
             if cards and all(card.lstrip().lower().startswith("<img") for card in cards):
                 from server.image_table_browser import verify_table_images
@@ -454,10 +483,9 @@ class BrowserScout:
                 if mismatch:
                     value["card_mismatch"] = mismatch
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()
-            from server.browser_batch_tool import without_banner_arrows
-            value["pagination"] = without_banner_arrows(await self.page.content(), arguments["card_selector"],
+            value["pagination"] = without_nonpagination_controls(await self.page.content(), self.page.url, arguments["card_selector"],
                 await self.page.evaluate("selector => __facultyRecon.pagination('body',0,12,false,selector)",
-                                         arguments["card_selector"]))
+                                         arguments["card_selector"]), navigations)
             from server.pager_evidence import terminal_pagers, without_terminal_pagers
             terminal = await terminal_pagers(self.page, arguments['card_selector'])
             current_cards = await self.page.locator(arguments['card_selector']).evaluate_all(
@@ -476,11 +504,17 @@ class BrowserScout:
                 item['terminal'] = without_terminal_pagers(html, {
                     'items': [{'selector': item['selector']}], 'total': 1},
                     terminal, arguments['card_selector'])['total'] == 0
+                nonpagination = nonpagination_evidence(html, self.page.url, arguments['card_selector'], item['selector'],
+                                                       navigations.get(item['selector']))
+                if nonpagination is not None:
+                    item['nonpagination'] = nonpagination
             value['pagination_termination'] = single_page_evidence(html, self.page.url, arguments['card_selector'], ignored)
             value['pagination_termination']['observed_forward_controls'] = forward_observations
             value['pagination_termination']['evidence_path'] = str(self.save('pagination-source.html', html.encode('utf-8')))
             if value['pagination'].get('total', 0) > 0 or any(
                     item['count'] != 0 and item['disabled'] is not True and not item['terminal']
+                    and not nonpagination_evidence_valid(item, self.page.url, arguments['card_selector'],
+                        value['pagination_termination']['source_sha256'])
                     for item in forward_observations):
                 value['pagination_termination']['confirmed'] = False
                 value['pagination_termination']['unresolved_forward_controls'] = max(

@@ -665,6 +665,7 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         return {"proofs_on_url": sum(resolve(result.get("url")) == resolve(url) for _, result, _ in found)}
 
     def completed(result, index, selector, found):
+        from server.nonpagination_controls import nonpagination_evidence_valid
         # An earlier absence observation cannot erase a later forward control.
         if not pagination_termination_valid(result, selector) or any(
             later_index > index and resolve(later.get('url')) == resolve(result.get('url'))
@@ -684,7 +685,9 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         return all(observed.get('nextCount') == 0 or observed.get('nextDisabled') is True
                    or (key in current_controls and (current_controls[key].get('count') == 0
                        or current_controls[key].get('disabled') is True
-                       or current_controls[key].get('terminal') is True))
+                       or current_controls[key].get('terminal') is True
+                       or nonpagination_evidence_valid(current_controls[key], result.get('url'), selector,
+                           result['pagination_termination']['source_sha256'])))
                    for key, observed in controls.items())
 
     for branch in plan["branches"]:
