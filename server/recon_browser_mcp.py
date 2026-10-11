@@ -454,8 +454,9 @@ class BrowserScout:
                 if mismatch:
                     value["card_mismatch"] = mismatch
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()
-            from server.browser_batch_tool import without_banner_arrows
-            value["pagination"] = without_banner_arrows(await self.page.content(), arguments["card_selector"],
+            from server.nonpagination_controls import (nonpagination_evidence, nonpagination_evidence_valid,
+                                                       without_nonpagination_controls)
+            value["pagination"] = without_nonpagination_controls(await self.page.content(), self.page.url, arguments["card_selector"],
                 await self.page.evaluate("selector => __facultyRecon.pagination('body',0,12,false,selector)",
                                          arguments["card_selector"]))
             from server.pager_evidence import terminal_pagers, without_terminal_pagers
@@ -476,11 +477,16 @@ class BrowserScout:
                 item['terminal'] = without_terminal_pagers(html, {
                     'items': [{'selector': item['selector']}], 'total': 1},
                     terminal, arguments['card_selector'])['total'] == 0
+                nonpagination = nonpagination_evidence(html, self.page.url, arguments['card_selector'], item['selector'])
+                if nonpagination is not None:
+                    item['nonpagination'] = nonpagination
             value['pagination_termination'] = single_page_evidence(html, self.page.url, arguments['card_selector'], ignored)
             value['pagination_termination']['observed_forward_controls'] = forward_observations
             value['pagination_termination']['evidence_path'] = str(self.save('pagination-source.html', html.encode('utf-8')))
             if value['pagination'].get('total', 0) > 0 or any(
                     item['count'] != 0 and item['disabled'] is not True and not item['terminal']
+                    and not nonpagination_evidence_valid(item, self.page.url, arguments['card_selector'],
+                        value['pagination_termination']['source_sha256'])
                     for item in forward_observations):
                 value['pagination_termination']['confirmed'] = False
                 value['pagination_termination']['unresolved_forward_controls'] = max(
