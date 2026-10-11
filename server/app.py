@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 if sys.platform == "win32":
     try:
@@ -234,6 +234,14 @@ class SourceRelationshipRequest(BaseModel):
     source_refs: list[str] = []
 
 
+class SourceDispositionRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    id: str
+    verdict: Literal['exclude', 'recon', 'unknown', 'revoked']
+    reason: str
+    entry_url: str = ''
+
+
 class NameReviewRequest(BaseModel):
     id: str
     verdict: str
@@ -367,6 +375,8 @@ async def start_batch_collection(req: BatchCollectRequest, request: Request = No
 
 def present_task(data, scope):
     data["delivery_scope"] = scope
+    if data.get('stats', {}).get('source_disposition_reviews'):
+        data['source_disposition_review_url'] = f"/review/task/{data['task_id']}/source-disposition"
     if (data.get("status") == "running" and
             data.get("current_step") == "工单已进入队列，等待智能体接单..."):
         data["current_step"] = "后台已接单，正在核实官网结构"
@@ -453,7 +463,7 @@ async def task_image_review_page(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
         items = review_registry.collect(audit, 'image_bio_text', 'image_bio_email', 'name', 'identity',
-                                        'html_email', 'media_kind', 'profile_page', 'source_relationship')
+                                        'html_email', 'media_kind', 'profile_page', 'source_relationship', 'source_disposition')
         page_decisions = profile_page_review.load_decisions(audit.parent / profile_page_review.DECISIONS_FILE)
         for item in items['profile_page']:
             item['saved_verdict'] = page_decisions.get(item['id'], {}).get('verdict', '')
@@ -483,6 +493,11 @@ async def task_image_review_page(task_id: str, request: Request):
     rendered = rendered.replace('</html>', source_review.render_section(items['source_relationship'],
         endpoint=f'/api/task/{task_id}/review/source-relationship',
         artifact_endpoint=f'/api/task/{task_id}/review/source-original', csrf=request.cookies.get(CSRF_COOKIE, '')) + '</html>')
+    from server import source_disposition_review
+    rendered = rendered.replace('</html>', source_disposition_review.render_section(items['source_disposition'],
+        endpoint=f'/api/task/{task_id}/review/source-disposition',
+        artifact_endpoint=f'/api/task/{task_id}/review/disposition-original',
+        csrf=request.cookies.get(CSRF_COOKIE, '')) + '</html>')
     return rendered
 
 
@@ -541,6 +556,43 @@ async def retry_official_site_task(task_id: str, request: Request):
     if not agent_queue.retry_failed_review_task(task_id):
         raise HTTPException(status_code=409, detail='工单状态已变化，请刷新页面')
     return {'status': 'queued', 'task_id': task_id}
+
+
+@app.post('/api/task/{task_id}/review/source-disposition', status_code=204)
+async def save_task_source_disposition(task_id: str, payload: SourceDispositionRequest, request: Request):
+    task, audit = _source_review_task(task_id, request)
+    from server import source_disposition_review
+    item = next((item for item in source_disposition_review.collect_items(audit) if item['id'] == payload.id), None)
+    if item is None:
+        raise HTTPException(status_code=409, detail='来源页面或原件已变化，请重新核验')
+    try:
+        source_disposition_review.save_decision(audit.parent, item, payload.verdict, payload.reason,
+                                              _user(request).id, payload.entry_url)
+        if task.status != 'failed':
+            agent_queue.invalidate_source_relationship(task_id, _user(request).id)
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail='请提供当前原件与决定依据；打不开不能当作非师资名录') from exc
+    return Response(status_code=204)
+
+
+@app.get('/api/task/{task_id}/review/disposition-original')
+async def task_disposition_original(task_id: str, item_id: str, request: Request):
+    _, audit = _source_review_task(task_id, request)
+    from server import source_disposition_review
+    item = next((item for item in source_disposition_review.collect_items(audit) if item['id'] == item_id), None)
+    if item is None or not item.get('original_path'):
+        raise HTTPException(status_code=404, detail='没有可读的当前保存原件')
+    return FileResponse(item['original_path'], media_type='text/plain; charset=utf-8',
+                        headers={'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/review/task/{task_id}/source-disposition', response_class=HTMLResponse)
+async def task_source_disposition_page(task_id: str, request: Request):
+    _, audit = _source_review_task(task_id, request)
+    from server import source_disposition_review
+    return '<!doctype html><html><meta charset="utf-8"><p>更改决定会保留原记录并重新核验工单。</p>' + source_disposition_review.render_section(
+        source_disposition_review.collect_items(audit), endpoint=f'/api/task/{task_id}/review/source-disposition',
+        artifact_endpoint=f'/api/task/{task_id}/review/disposition-original', csrf=request.cookies.get(CSRF_COOKIE, '')) + '</html>'
 
 
 @app.post('/api/task/{task_id}/review/source-relationship', status_code=204)
@@ -726,7 +778,7 @@ async def retry_task_after_image_review(task_id: str, request: Request):
     _require_site_available(task)
     try:
         if not review_registry.review_complete(audit):
-            raise HTTPException(status_code=409, detail='请先完成全部原图类型、图片文字、邮箱、姓名和身份复核；不可读文字或证据不足仍保持阻断')
+            raise HTTPException(status_code=409, detail='请先完成全部来源用途、原图类型、图片文字、邮箱、姓名和身份复核；未知决定或证据不足仍保持阻断')
         prepare_review_resume(audit, task_id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=409, detail='复核证据无效') from exc

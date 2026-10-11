@@ -1,5 +1,7 @@
 # 来源角色与学院师资关系证据
 
+来源处置未决现在由 `source_disposition_review` 独立接入 `review_registry`、原件查看、保存接口与 worker。用途排除只在新一轮来源原件仍匹配时应用；重新侦察请求绕过旧计划与计划缓存，未受影响分支仍须通过现有新鲜证明。已应用来源决定可撤回，原记录保留并使交付失效。业务边界见 [类型库](../site-types/source-purpose-and-faculty-relationship.md)，联动回归见 `tests/test_source_disposition_review.py`。
+
 本轮修复旧全局 university_faculty_roster 标志把组织名单直接当师资的问题。该标志可保留为兼容形态元数据，资格只由 SourceEvidence 的当前来源角色、完整HTML/范围/用途/学院上下文SHA及服务端浏览器证明决定。模型只给枚举和CSS，不写字段、原文引用、确认状态或摘要。
 
 source_qualification 为共同策略。Discovery/branch严格Schema、计划卫生、BrowserScout专用工具和提交门禁使用同一结构字段；缓存契约升级并重新读取用途证据。采集每个页面重新核验，带新角色的来源不沿用旧已完成/分页前缀缓存。普通/顿号名单、分段、PDF、图片表格将同一来源证据传到eligibility。缺证据和组织来源保留原件/观察及资格待核，不恢复只采专任筛选。实际个人URL相同的多个来源可同时提供证据；不同URL的同名观察不能转移资格。

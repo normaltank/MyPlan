@@ -1137,6 +1137,9 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     out.mkdir(parents=True, exist_ok=True)
     from server.source_qualification import capture_source_dispositions
     disposition_issues, disposition_evidence = await capture_source_dispositions(browser_context, plan, out)
+    from server import source_disposition_review
+    disposition_issues, source_disposition_reviews = source_disposition_review.apply_decisions(
+        plan, disposition_evidence, disposition_issues, out, task_id)
     cached_profile_urls = {row["url"] for row in state.list_pages("profile")} if state else set()
     restored_profiles = len(cached_profile_urls)
     source_capture, source_checkpoints = await _capture_sources_with_state(plan, browser_context, state)
@@ -1587,6 +1590,14 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     # A reviewer can withdraw/replace a decision while the resumed native pass
     # reads assets. Recheck the authoritative task store before any export.
     latest_source_decisions = source_review.decisions_for(out, task_id)
+    disposition_items = {item['id']: item for item in source_disposition_review.build_items(
+        plan, disposition_evidence, out, task_id)}
+    latest_dispositions = source_disposition_review.review_store.load(source_disposition_review.decision_path(out, task_id))
+    for applied in source_disposition_reviews:
+        item = disposition_items[applied['id']]
+        if source_disposition_review.valid_decision(item, latest_dispositions.get(item['id'])) != applied:
+            unresolved.append({'url': item['url'], 'status': item['reason'],
+                               'reason': 'source_disposition_changed_during_capture'})
     for applied in source_relationship_reviews:
         item = next(item for item in source_review_items if item['id'] == applied['id'])
         latest = source_review.valid_decision(item, latest_source_decisions.get(item['id']), include_unknown=True)
@@ -1628,6 +1639,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         'task_id': task_id, 'source_review_items': source_review_items,
         'source_dispositions': plan.get('source_dispositions', []),
         'source_disposition_evidence': disposition_evidence,
+        'source_disposition_reviews': source_disposition_reviews,
         'source_relationship_reviews': source_relationship_reviews,
         'source_qualification_evidence': [
             {'source_url': page.url, 'source_role': page.branch.get('source_role', 'unverified_people_source'),
