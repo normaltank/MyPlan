@@ -132,6 +132,42 @@ async def test_actual_original_submit_staged_and_capture_closure(tmp_path, monke
 
 @pytest.mark.browser
 @pytest.mark.asyncio
+@pytest.mark.parametrize('title,heading', [('教师名录', '教师名录'), ('人员展示', '教师名录')])
+async def test_faculty_page_purpose_prevents_retirement_from_organizational_navigation(tmp_path, title, heading):
+    html = (f'<meta charset="utf-8"><title>{title}</title><header>样本大学样本学院</header>'
+            '<nav><a class="current" href="/people">学院领导</a></nav>'
+            f'<h1>{heading}</h1><main><ul><li>王芳教授</li><li>李华教授</li></ul><p>'
+            + '正式师资名录原文与当前教师身份说明。' * 30 + '</p></main>')
+    claim = {**FIELDS, 'role_evidence_selector': 'nav .current'}
+    value = plan({'url': URL, 'reason': 'not_faculty_roster', **claim})
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context()
+        await context.add_init_script(Path('server/recon_dom_probe.js').read_text(encoding='utf8'))
+        await context.route('**/*', lambda route: route.fulfill(
+            body=html, content_type='text/html; charset=utf-8'))
+        scout = BrowserScout(await context.new_page(), tmp_path / 'scout', 'discovery',
+                             {**TARGET, 'required_urls': [URL]})
+        navigation = json.loads((await scout.call('browser_navigate', {'url': URL}))['content'][0]['text'])
+        original = Path(navigation['original_path']).read_bytes()
+        proof = json.loads((await scout.call('browser_verify_source', claim))['content'][0]['text'])
+        result = json.loads((await scout.call('submit_plan', {'plan': value}))['content'][0]['text'])
+        report = await run_plan(value, context, tmp_path / 'capture')
+        await browser.close()
+    assert proof['current_link_bound'] is True
+    assert proof['non_faculty_purpose'] is False
+    assert result['accepted'] is False
+    assert 'source_disposition_unverified' in {i['status'] for i in result['issues']}
+    assert 'source_disposition_unverified' in {i['status'] for i in report['unresolved']}
+    evidence = report['source_disposition_evidence'][0]
+    assert evidence['status'] == 'unverified'
+    assert evidence['browser_proof']['non_faculty_purpose'] is False
+    assert Path(navigation['original_path']).read_bytes() == original
+    assert hashlib.sha256(Path(evidence['original_path']).read_bytes()).hexdigest() == evidence['source_html_sha256']
+
+
+@pytest.mark.browser
+@pytest.mark.asyncio
 async def test_saved_wxc_committees_retire_only_with_actual_article_heading(tmp_path):
     from test_source_role_qualification import CASES, FIXTURES, PLAN, claim
     from server.source_qualification import capture_source_dispositions

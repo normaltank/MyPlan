@@ -1,8 +1,14 @@
 """The actual queue/HTTP payload consumers retain native source disposition evidence."""
 import json
+import hashlib
+from pathlib import Path
 
 import pytest
+from playwright.async_api import async_playwright
 
+from server import agent_worker
+from server.agent_recon import ReconResult
+from server.browser_batch_tool import run_plan
 from server.browser_batch_sync import build_payload
 from test_browser_batch_sync import _report
 from test_worker_resume_cache import worker_and_task
@@ -48,3 +54,47 @@ def test_success_sync_payload_preserves_source_scope_and_native_evidence(tmp_pat
         assert stats[key] == value
     assert stats['previous_source_audit_path'] == 'prior-native-audit.json'
     assert path.read_bytes() == audit_bytes
+
+
+@pytest.mark.browser
+@pytest.mark.asyncio
+async def test_failed_process_preserves_actual_capture_evidence_through_runtime_and_queue(tmp_path, monkeypatch):
+    worker, task, root = worker_and_task(tmp_path, repairs=0)
+    url = 'https://example.edu/people'
+    plan = {'school': task.school, 'college': task.college, 'branches': [],
+            'source_dispositions': [{'url': url, 'reason': 'not_faculty_roster',
+                'source_role': 'organizational_membership', 'source_container_selector': 'main',
+                'role_evidence_selector': 'h1', 'source_context_selector': 'header'}]}
+    html = ('<meta charset="utf-8"><title>学院领导</title><header>University College</header>'
+            '<h1>学院领导</h1><main><p>' + '本学院当前组织成员与实际任职原文。' * 30 + '</p></main>')
+    async def recon(*_args, **_kwargs):
+        return ReconResult(plan, 0, 'completed', 'isolated-source-publication')
+    async def no_cache(*_args, **_kwargs):
+        return None
+    monkeypatch.setattr(agent_worker, 'reconnoiter', recon)
+    monkeypatch.setattr(worker, '_cached_recon', no_cache)
+    captured = []
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context()
+        await context.route('**/*', lambda route: route.fulfill(
+            body=html, content_type='text/html; charset=utf-8'))
+        async def capture(value, directory):
+            report = await run_plan(value, context, directory, task_id=task.task_id)
+            captured.append(report)
+            return report
+        monkeypatch.setattr(worker, '_run_browser_plan', capture)
+        await worker._process(task)
+        await browser.close()
+    assert len(captured) == 1
+    saved = worker.queue.get_task(task.task_id)
+    runtime = json.loads((root / 'runtime-report.json').read_text(encoding='utf8'))
+    audit = json.loads(Path(captured[0]['audit_path']).read_text(encoding='utf8'))
+    assert saved.status == 'failed'
+    assert 'no_active_roster_sources' in saved.stats['failure_codes']
+    for key in ('source_dispositions', 'source_disposition_evidence'):
+        assert audit[key] == runtime[key] == saved.stats[key] == saved.stats['runtime_report'][key]
+    evidence = audit['source_disposition_evidence'][0]
+    assert evidence['status'] == 'inactive'
+    assert hashlib.sha256(Path(evidence['original_path']).read_bytes()).hexdigest() == evidence['source_html_sha256']
+    assert hashlib.sha256(Path(evidence['navigation_evidence_path']).read_bytes()).hexdigest() == evidence['navigation_evidence_sha256']

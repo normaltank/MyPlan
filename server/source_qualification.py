@@ -173,8 +173,12 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
     # A positive, source-bound organizational purpose can retire an old roster
     # claim. Merely failing the faculty vocabulary is never negative evidence.
+    faculty_page_purpose = (faculty_purpose(title, target)
+                            or any(faculty_purpose(node.get_text(' ', strip=True), target)
+                                   for node in soup.find_all('h1')))
     result['non_faculty_purpose'] = bool(
         branch['source_role'] == 'organizational_membership' and college_bound
+        and not faculty_page_purpose
         and ((title_bound and _ORGANIZATIONAL_PURPOSE.fullmatch(_purpose_label(title, target)))
              or any(_ORGANIZATIONAL_PURPOSE.fullmatch(_purpose_label(text, target)) for text in own_links)))
     if branch['source_role'] == 'faculty_roster':

@@ -429,6 +429,9 @@ class AgentWorker:
             result['recovery'] = classify_issues(result.get('unresolved') or []).summary()
             result["runtime_report"] = build_runtime_report(attempts, browser_runs,
                 result.get("unresolved") or [], time.monotonic() - started, budget.snapshot())
+            for key in ('source_dispositions', 'source_disposition_evidence', 'previous_source_audit_path'):
+                if key in result:
+                    result['runtime_report'][key] = result[key]
             (output_dir / "runtime-report.json").write_text(json.dumps(
                 result["runtime_report"], ensure_ascii=False, indent=2), encoding="utf-8")
             return result
