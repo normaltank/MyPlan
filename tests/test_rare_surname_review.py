@@ -116,7 +116,7 @@ def test_undecided_name_blocks_with_its_own_status_not_a_card_mismatch():
     assert result.observations[0]["visible_cards"] == 5
 
 
-def test_confirmed_name_is_admitted_and_rejected_name_leaves_the_card_unexplained(tmp_path):
+def test_confirmed_name_is_admitted_and_rejected_name_is_separately_accounted(tmp_path):
     item = _reconcile().unresolved[0]
     path = tmp_path / name_review.DECISIONS_FILE
     name_review.save_decision(path, item, "person", "阚文涛")
@@ -127,7 +127,10 @@ def test_confirmed_name_is_admitted_and_rejected_name_leaves_the_card_unexplaine
     name_review.save_decision(path, item, "not_person")
     rejected = _reconcile(name_review.load_decisions(path))
     assert [c.name for c in rejected.candidates] == NAMES[:4]
-    assert [u["status"] for u in rejected.unresolved] == ["roster_card_mismatch"]
+    assert rejected.unresolved == []
+    observation = rejected.observations[0]
+    assert observation['visible_cards'] == 5 and observation['extracted_candidates'] == 4
+    assert len(observation['reviewed_non_person_cards']) == 1
 
 
 def test_decision_binds_to_the_exact_card_evidence(tmp_path):
