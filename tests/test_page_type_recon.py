@@ -262,6 +262,57 @@ async def test_type_catalog_is_discoverable_without_browser_and_returns_trusted_
     assert 'rank heading' in rank_grid['applicability_contract']
 
 
+@pytest.mark.browser
+@pytest.mark.asyncio
+@pytest.mark.parametrize('phase_source,phase', [('cli', 'branch'), ('cli', 'full'), ('env', 'full')])
+async def test_explicit_production_mcp_phase_exposes_and_serves_catalog_in_real_subprocess(tmp_path, phase_source, phase):
+    import asyncio
+    import os
+    import sys
+    from server.page_types import catalog
+    environment = {key: value for key, value in os.environ.items()
+        if not any(secret in key.upper() for secret in ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PROXY', 'AUTH'))}
+    environment.pop('FACULTY_RECON_PHASE', None)
+    environment['FACULTY_RECON_EVIDENCE_ROOT'] = str(tmp_path / 'evidence')
+    environment['HARVEST_TASK_DB'] = str(tmp_path / 'tasks.db')
+    environment['HARVEST_SITE_CLOCK_DB'] = str(tmp_path / 'site-clock.db')
+    arguments = [sys.executable, '-m', 'server.recon_browser_mcp']
+    if phase_source == 'cli':
+        arguments += ['--phase', phase]
+    else:
+        environment['FACULTY_RECON_PHASE'] = phase
+    process = await asyncio.create_subprocess_exec(*arguments, env=environment,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    async def request(index, method, params=None):
+        process.stdin.write((json.dumps({'jsonrpc': '2.0', 'id': index, 'method': method,
+                                        'params': params or {}})+'\n').encode())
+        await process.stdin.drain()
+        response = json.loads(await asyncio.wait_for(process.stdout.readline(), 30))
+        assert response['id'] == index and 'error' not in response
+        return response['result']
+    try:
+        assert (await request(1, 'initialize'))['capabilities'] == {'tools': {}}
+        entries = (await request(2, 'tools/list'))['tools']
+        assert 'page_type_catalog' in {entry['name'] for entry in entries}
+        reply = await request(3, 'tools/call', {'name': 'page_type_catalog',
+            'arguments': {'type_id': 'roster.rank_grid', 'limit': 1}})
+        assert reply['isError'] is False
+        result = json.loads(reply['content'][0]['text'])
+        assert result['total'] == 1 and result['nextOffset'] is None
+        assert result['items'] == [item for item in catalog() if item['type_id'] == 'roster.rank_grid']
+        # The child process queried only local trusted metadata. No URL was
+        # opened, source qualified, or model invoked by this protocol test.
+        assert not list((tmp_path / 'evidence').rglob('*.html'))
+    finally:
+        if process.stdin:
+            process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), 15)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+
+
 def test_registered_cards_version_cannot_reuse_legacy_browser_proof(monkeypatch):
     from dataclasses import replace
     from server import page_types

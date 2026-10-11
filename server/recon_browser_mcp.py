@@ -733,8 +733,14 @@ async def serve(*, phase: str | None = None, session: str | None = None, target:
         browser = await pw.chromium.launch(headless=True)
         try:
             context = await new_browser_context(browser)
-            phase = phase or os.environ.get("FACULTY_RECON_PHASE", "full")
+            configured_phase = phase or os.environ.get("FACULTY_RECON_PHASE")
+            phase = configured_phase or 'full'
             tools = phase_tools(phase)
+            if not configured_phase:
+                # Preserve the standalone MCP protocol's original tool surface.
+                # Production runtime patches explicitly select branch/full and
+                # retain the registry catalog for mechanism selection.
+                tools = [entry for entry in tools if entry['name'] != 'page_type_catalog']
             session = session or os.environ.get("FACULTY_RECON_SESSION", "standalone")
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session):
                 session = hashlib.sha256(session.encode()).hexdigest()
