@@ -31,6 +31,7 @@ browser_navigate 的 page 摘要已给出标题、常见正文容器（命中数
 分段平铺名录除四个来源结构字段外只输出 url、kind:"segmented"、container_selector、record_start_selector、single_page:true，两个 CSS 须与成功的 browser_verify_segments 调用完全一致，不含 card_selector、next_selector 或个人页字段。
 普通名录除四个来源结构字段外输出本分支的一个 JSON 对象：url、card_selector，恰好给 single_page:true 或 next_selector；总页数未核实时省略 max_pages，不猜测固定数量。目录型名录改用 url、kind:"navigation"、child_link_selector、child_branch，子分支按普通名录填写 card_selector 与分页字段，但不填 url。严格空态验证通过的普通单页分支可成对加 empty_state_selector 与 roster_container_selector，保留 card_selector、single_page:true，不能添加 next_selector。url 必须等于本入口 URL。动态 Tab 可加 initial_click_selector。CSS 使用容器锚定路径，例如 div.list_container ul.teacher > li。不要输出学校、学院、branches 数组或其他入口。
 有实际个人主页时另给已核实的 profile_content_selector，可选 profile_content_start_selector。CSS 必须与成功 browser_verify_profile 调用完全一致，两个不同样例都须验证；只有一个个人主页时验证该实际样例即可。正文工具只回传结构与摘要，所有教师字段仍由本地确定性代码提取。
+结构补缺反馈列出失败个人页时，先在这些实际失败 URL 上读取候选，分批使用 urls（每批最多两个）覆盖反馈中的每个失败页，再验证同一完整正文 CSS；不能只重复验证此前已通过的样例。common_candidates 只表示本次所有样例均通过静态检查的候选，任一样例访问失败就没有共同候选，仍须实际正文证明。不要从某页的编号 ID 推测其它页面的 ID，也不能缩到一段正文来消除失败。
 禁止额外添加 name、label、count、说明或备注字段；名录分支只用 URL 标识。
 模型输出只含目标标识、URL、CSS 选择器和结构控制值，严禁姓名、职称、邮箱、简介及其总结；数据由确定性代码原样提取。
 
