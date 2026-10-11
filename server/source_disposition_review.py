@@ -12,7 +12,11 @@ from server.source_review import digest
 
 STATUSES = frozenset({'source_relationship_unverified', 'source_structure_unresolved', 'source_unreadable'})
 DECISIONS_FILE = 'source_disposition_reviews.json'
-VERDICTS = frozenset({'exclude', 'recon', 'unknown', 'revoked'})
+DECISION_LABELS = {'exclude': '审核人选择该保存页面不是师资名录',
+                   'recon': '审核人要求重新侦察该来源',
+                   'unknown': '审核人暂不能确定该来源用途',
+                   'revoked': '审核人撤回原来源决定'}
+VERDICTS = frozenset(DECISION_LABELS)
 SOURCE_KEYS = ('url', 'reason', 'source_role', 'source_container_selector',
                'role_evidence_selector', 'source_context_selector')
 
@@ -86,7 +90,9 @@ def save_decision(directory: Path, item: dict, verdict: str, reason: str,
     if (entry_url and (verdict != 'recon' or not _is_structure_url(entry_url))) or len(reason) > 2000:
         raise ValueError('collection requests accept only a source URL, never a plan or teacher fields')
     decision = {'id': item['id'], 'binding': item['binding'], 'verdict': verdict,
-                'reason': reason.strip(), 'reviewed_by': reviewed_by, 'reviewed_at': time.time(),
+                'reason': reason.strip() or DECISION_LABELS.get(verdict, ''),
+                'note': reason.strip(),
+                'reviewed_by': reviewed_by, 'reviewed_at': time.time(),
                 'entry_url': entry_url}
     if valid_decision(item, decision) is None:
         raise ValueError('current original and explicit reviewer basis required')
@@ -167,8 +173,8 @@ def render_section(items: list[dict], *, endpoint: str, artifact_endpoint: str, 
             '<p><a target="_blank" rel="noopener" href="' + escape(item['url'], quote=True) + '">' + escape(item['url']) + '</a></p>'
             '<p>' + escape(item['reason']) + ' · ' + original + '</p>'
             '<p>只判断这页是否需要作为师资来源采集，不确认其中每个人的教师身份。请求重新侦察不会视为采集成功。</p>'
-            '<label>决定依据<textarea class="disposition-reason" placeholder="说明原件中的页面用途或仍需检查的问题">'
-            + escape(saved.get('reason', '')) + '</textarea></label>'
+            '<label>补充说明（选填）<textarea class="disposition-reason" placeholder="可说明原件中的页面用途或仍需检查的问题">'
+            + escape(saved.get('note', saved.get('reason', ''))) + '</textarea></label>'
             '<label>可选补充官方入口<input class="disposition-entry" type="url" value="'
             + escape(saved.get('entry_url', ''), quote=True) + '"></label>'
             '<div class="actions"><button data-verdict="exclude"' + ('' if can_exclude(item) else ' disabled')
@@ -187,4 +193,5 @@ def render_section(items: list[dict], *, endpoint: str, artifact_endpoint: str, 
         'if(!response.ok)throw new Error((await response.json()).detail||"保存失败");' \
         'status.textContent=["unknown","revoked"].includes(button.dataset.verdict)?"已保存：仍待复核，可改选":' \
         'button.dataset.verdict==="recon"?"已保存重新侦察请求；复核完成后重试，原问题仍须重新核验":' \
-        '"已保存来源用途决定，可改选；不改变人员资格";}catch(error){status.textContent=error.message;}});});</script>'
+        '"已保存来源用途决定，可改选；不改变人员资格";status.style.color="";}' \
+        'catch(error){status.textContent="未保存："+error.message;status.style.color="var(--danger,#b91c1c)";}});});</script>'

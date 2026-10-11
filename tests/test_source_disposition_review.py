@@ -38,6 +38,17 @@ def test_only_source_items_render_and_unknown_never_settles_retry(tmp_path):
     assert not review_registry.review_complete(audit)
 
 
+def test_source_purpose_choice_does_not_require_a_redundant_free_text_note(tmp_path):
+    audit, _, item = fixture(tmp_path)
+    decision = review.save_decision(audit.parent, item, 'exclude', '', 7)
+    assert decision['reason'] == review.DECISION_LABELS['exclude']
+    assert decision['note'] == ''
+    assert decision['binding'] == item['binding'] and decision['reviewed_by'] == 7
+    assert review_registry.review_complete(audit)
+    review.save_decision(audit.parent, item, 'unknown', '', 7)
+    assert not review_registry.review_complete(audit)
+
+
 @pytest.mark.parametrize('change', ['raw', 'college', 'url', 'role', 'task'])
 def test_exclusion_never_survives_a_changed_source_or_target(tmp_path, change):
     audit, payload, item = fixture(tmp_path)
@@ -132,6 +143,7 @@ def test_authenticated_source_only_page_original_and_save(tmp_path, monkeypatch)
     headers = {'X-CSRF-Token': csrf}
     assert client.post(endpoint, json={**body, 'teacher_name': '王芳'}, headers=headers).status_code == 422
     assert client.post(endpoint, json=body, headers=headers).status_code == 204
+    assert client.post(endpoint, json={'id': item['id'], 'verdict': 'exclude'}, headers=headers).status_code == 204
     original = client.get('/api/task/task/review/disposition-original', params={'item_id': item['id']})
     assert original.status_code == 200 and original.headers['content-type'].startswith('text/plain')
     assert '机构设置' in original.text and original.headers['x-content-type-options'] == 'nosniff'
@@ -148,7 +160,8 @@ def test_authenticated_source_only_page_original_and_save(tmp_path, monkeypatch)
     assert presented['source_disposition_review_url'] == '/review/task/task/source-disposition'
     editor = client.get('/review/task/task/source-disposition')
     assert editor.status_code == 200 and '撤回原决定' in editor.text
-    assert '逐页核对机构设置原文' in editor.text
+    from bs4 import BeautifulSoup
+    assert BeautifulSoup(editor.text, 'html.parser').select_one('.disposition-reason').get_text() == ''
     assert client.post(endpoint, json={**body, 'verdict': 'revoked', 'reason': '误选后撤回'}, headers=headers).status_code == 204
     assert queue.get_task('task').status == 'failed' and not queue.get_task('task').download_url
     assert queue.get_task('task').records == before
@@ -215,7 +228,10 @@ async def test_source_disposition_buttons_submit_only_purpose_intent_and_can_be_
             page.on('pageerror', lambda error: errors.append(str(error)))
             async def respond(route):
                 calls.append((route.request.post_data_json, route.request.headers.get('x-csrf-token')))
-                await route.fulfill(status=204)
+                if route.request.post_data_json['verdict'] == 'exclude':
+                    await route.fulfill(status=409, json={'detail': '保存证据已变化'})
+                else:
+                    await route.fulfill(status=204)
             await page.route(endpoint, respond)
             await page.set_content('<html>' + html + '</html>')
             await page.locator('.disposition-reason').fill('原件说明仍需检查列表结构')
@@ -224,8 +240,10 @@ async def test_source_disposition_buttons_submit_only_purpose_intent_and_can_be_
             await page.locator('.status', has_text='已保存重新侦察请求').wait_for()
             await page.locator('button[data-verdict="unknown"]').click()
             await page.locator('.status', has_text='仍待复核，可改选').wait_for()
-            assert [call[0]['verdict'] for call in calls] == ['recon', 'unknown']
-            assert [call[0]['entry_url'] for call in calls] == ['https://example.edu/faculty', '']
+            await page.locator('button[data-verdict="exclude"]').click()
+            await page.locator('.status', has_text='未保存：保存证据已变化').wait_for()
+            assert [call[0]['verdict'] for call in calls] == ['recon', 'unknown', 'exclude']
+            assert [call[0]['entry_url'] for call in calls] == ['https://example.edu/faculty', '', '']
             assert all(set(call[0]) == {'id', 'verdict', 'reason', 'entry_url'} and call[1] == 'token' for call in calls)
             assert not errors
         finally:
