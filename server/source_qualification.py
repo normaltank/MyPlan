@@ -168,6 +168,9 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     separate_context = all(scope is not context and scope not in context.descendants
                            and context not in scope.descendants for context in contexts)
     institutional_context = all(_institution_context(context) for context in contexts)
+    result['non_institutional_context_count'] = sum(not _institution_context(context) for context in contexts)
+    result['source_context_issue'] = ('source_context_overlaps_content' if not separate_context else
+                                      'source_context_not_institutional' if not institutional_context else None)
     college_bound = bool(college and college in branding['college'] and school and school in branding['school']
                          and separate_context and institutional_context)
     result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
