@@ -238,7 +238,7 @@ class SourceDispositionRequest(BaseModel):
     model_config = {'extra': 'forbid'}
     id: str
     verdict: Literal['exclude', 'recon', 'unknown', 'revoked']
-    reason: str
+    reason: str = ''
     entry_url: str = ''
 
 
