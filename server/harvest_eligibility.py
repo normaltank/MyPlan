@@ -15,13 +15,15 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 from server.faculty_extractor import FacultyCandidate
+from server.source_qualification import SourceEvidence, owned_profile_relationship
 
 
 def classify_candidates(
     candidates: list[FacultyCandidate],
-    sources: dict[tuple[str, str], set[str]],
+    sources: dict[tuple[str, str], set[str | SourceEvidence]],
     profiles: dict[str, str | None],
     plan: dict[str, Any],
+    *, profile_scope_evidence: dict | None = None,
 ) -> tuple[list[FacultyCandidate], list[dict[str, Any]], list[dict[str, Any]]]:
     """Apply the configured source-evidence policy to reconciled candidates."""
 
@@ -43,11 +45,23 @@ def classify_candidates(
         # The cleaned name is an identity field, not a replacement for the
         # original roster evidence (e.g. an annotation outside the name link).
         decision = {"name": candidate.name, "profile_url": candidate.url,
-                    "roster_context": candidate.card_context}
-        if "university_faculty_roster" in source_kinds:
-            decision.update(status="eligible", evidence_kind="university_faculty_roster")
+                    "roster_context": candidate.card_context,
+                    'source_evidence': [source.to_dict() for source in source_kinds if isinstance(source, SourceEvidence)]}
+        qualified = [source for source in source_kinds if isinstance(source, SourceEvidence)
+                     and source.role == 'faculty_roster' and source.status == 'verified']
+        profile_evidence = None if qualified else owned_profile_relationship(
+            profiles.get(candidate.url), candidate.url, candidate.name, plan,
+            (profile_scope_evidence or {}).get(candidate.url),
+            unique_owner=sum(person.url == candidate.url for person in candidates) == 1)
+        if profile_evidence:
+            qualified.append(profile_evidence)
+            decision['source_evidence'].append(profile_evidence.to_dict())
+        if qualified:
+            decision.update(status="eligible", evidence_kind="verified_faculty_relationship")
             admitted.append(candidate)
-        elif "hospital_doctor_roster" in source_kinds:
+        elif ('hospital_doctor_roster' in source_kinds or any(
+                isinstance(source, SourceEvidence) and source.source_kind == 'hospital_doctor_roster'
+                for source in source_kinds)):
             if key in reviewed_exclusions:
                 decision.update(status="excluded", reason=reviewed_exclusions[key])
             else:

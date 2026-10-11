@@ -218,5 +218,8 @@ def test_download_link_card_without_people_is_a_pdf_roster_source():
     html = '<div id="content"><p><a href="/files/mentors.pdf">导师名单下载</a></p></div>'
     result = reconcile_rosters([CapturedRosterPage(PAGE, html, {"card_selector": "#content"})], {})
     assert result.candidates == []
-    assert result.pdf_rosters == [{"url": PAGE, "selector": "#content", "media_urls": [PDF],
-                                   "source_kind": "university_faculty_roster"}]
+    source, = result.pdf_rosters
+    evidence = source.pop('source_evidence')
+    assert evidence.status == 'unknown' and evidence.source_url == PAGE
+    assert source == {"url": PAGE, "selector": "#content", "media_urls": [PDF],
+                       "source_kind": "university_faculty_roster"}

@@ -54,3 +54,6 @@ async def test_annotation_is_written_to_the_persistent_batch_audit(tmp_path):
     audit = json.loads(Path(report['audit_path']).read_text(encoding='utf-8'))
     assert audit['eligibility'][0]['roster_context'] == '王芳（兼任）'
     assert audit['eligibility'][0]['name'] == '王芳'
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

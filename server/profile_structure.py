@@ -19,7 +19,7 @@ _FACTS = r"""args => {
          || Number(s.opacity)===0) return false;}
     return true;
   };
-  const root=nodes.length===1?nodes[0]:null;
+  const root=Number.isInteger(args.index)?nodes[args.index]:(nodes.length===1?nodes[0]:null);
   const starts=args.start?[...document.querySelectorAll(args.start)]:[];
   const startValid=!args.start || (starts.length===1 && starts[0].parentElement===root && visible(starts[0]));
   let kept=root?[...root.children]:[];

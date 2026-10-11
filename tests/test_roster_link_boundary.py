@@ -8,6 +8,9 @@ from server.harvest_workflow import CapturedRosterPage, reconcile_rosters, roste
 from server.agent_recon import selector_evidence_issues
 from server.recovery_policy import recovery_action
 
+# These card/link components stipulate source purpose, while retaining their own link proof.
+pytestmark = pytest.mark.verified_source_boundary
+
 URL = 'https://faculty.example.edu/list'
 HTML = '<main><a href="/p/1"><span>张伟</span></a><a href="/p/2"><span>李明</span></a></main>'
 

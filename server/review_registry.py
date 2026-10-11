@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from server import (html_email_review, identity_review, image_bio_review, image_table_review, media_kind_review,
-                    name_review, profile_page_review, missing_media_review)
+                    name_review, profile_page_review, missing_media_review, source_review)
 from server.image_table_roster import REVIEW_FILE as IMAGE_TABLE_REVIEW_FILE
 
 
@@ -52,6 +52,10 @@ def _nonempty_and(check):
 
 
 KINDS: tuple[ReviewKind, ...] = (
+    ReviewKind('source_relationship', source_review.STATUSES, (source_review.DECISIONS_FILE,),
+               source_review.collect_items, lambda path, audit, items: source_review.review_complete(path, items),
+               triggered=lambda audit: _has_status(source_review.STATUSES)(audit) or bool(audit.get('source_relationship_reviews')),
+               rerun_only=lambda path, audit: source_review.rerun_only(audit)),
     ReviewKind(
         "media_kind", frozenset({media_kind_review.STATUS,missing_media_review.STATUS}), (media_kind_review.DECISIONS_FILE,),
         media_kind_review.collect_items, lambda path, audit, items: media_kind_review.review_complete(path, items),
@@ -101,7 +105,8 @@ def _audit(audit_path: Path) -> dict:
 
 def has_review(audit_path: Path) -> bool:
     """Some unresolved issue can be settled on the review page."""
-    return any(kind.is_shown(issue) for issue in _audit(audit_path).get("unresolved", []) for kind in KINDS)
+    return bool(source_review.collect_items(audit_path)) or any(
+        kind.is_shown(issue) for issue in _audit(audit_path).get("unresolved", []) for kind in KINDS)
 
 
 BY_NAME = {kind.name: kind for kind in KINDS}
@@ -118,7 +123,8 @@ def review_complete(audit_path: Path) -> bool:
     Issues no kind owns do not hold the retry: the rerun's own audit decides them.
     """
     audit = _audit(audit_path)
-    waiting = [kind for kind in KINDS if kind.is_triggered(audit)]
+    waiting = [kind for kind in KINDS if kind.is_triggered(audit)
+               or (kind.name == 'source_relationship' and source_review.collect_items(audit_path))]
     if not waiting:
         return False
     for kind in waiting:

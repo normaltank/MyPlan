@@ -12,6 +12,9 @@ from server.agent_queue import AgentTaskQueue
 from server.agent_recon import ReconResult
 from server.agent_worker import AgentWorker
 
+# Source qualification is stipulated here; these component cases test worker deadlines.
+pytestmark = pytest.mark.verified_source_boundary
+
 PLAN = {"school": "U", "college": "C", "source_kind": "university_faculty_roster",
         "branches": [{"url": "https://e.edu/roster", "card_selector": "main li", "single_page": True}]}
 

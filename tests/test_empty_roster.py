@@ -281,3 +281,6 @@ async def test_hidden_pseudo_content_in_marker_or_visible_inline_descendant_is_n
                 assert (await verify_empty_roster(page, BRANCH, await page.content()))["confirmed"]
         finally:
             await browser.close()
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

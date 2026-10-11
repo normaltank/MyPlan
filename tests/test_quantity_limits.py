@@ -71,3 +71,6 @@ async def test_actual_pagination_cycle_stops_without_a_count_cap(tmp_path):
             assert evidence['end'] == 'unresolved'
         finally:
             await browser.close()
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

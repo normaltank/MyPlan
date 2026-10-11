@@ -28,3 +28,6 @@ def test_case_plan_matches_the_recon_contract(path):
     plan = case["plan"]
     _validate_plan(plan)
     validate_model_plan(plan, school=plan["school"], college=plan["college"])
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

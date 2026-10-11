@@ -13,6 +13,9 @@ import pytest
 from server.agent_recon import selector_evidence_issues
 from server.harvest_workflow import roster_card_reading
 
+# Card-reading accuracy is tested against an independently verified formal source.
+pytestmark = pytest.mark.verified_source_boundary
+
 URL = "https://chin.x.edu.cn/info/1831/62623.htm"
 # The real rows: most link the same department page, one links a profile.
 INTRO = ["http://chin.x.edu.cn/szdw/js.htm"] * 5 + ["https://chin.x.edu.cn/info/2141/58723.htm"]

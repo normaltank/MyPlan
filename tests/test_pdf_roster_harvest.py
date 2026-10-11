@@ -14,7 +14,7 @@ from playwright.async_api import async_playwright
 import pytest
 
 from server.browser_batch_tool import run_plan
-from tests.test_pdf_roster import TEXT_PAGES, _pdf
+from test_pdf_roster import TEXT_PAGES, _pdf
 
 PDF_BYTES = _pdf(TEXT_PAGES)
 
@@ -139,13 +139,20 @@ async def test_pdf_roster_page_delivers_people_from_the_pdf(site, tmp_path, card
 @pytest.mark.asyncio
 @pytest.mark.browser
 async def test_pdf_and_web_observations_of_one_person_are_not_counted_twice(site, tmp_path):
-    report, records = await _run(site, tmp_path, VIEWER, listing=True)
+    from server import identity_review
+    first, observations = await _run(site, tmp_path / "attempt_1", VIEWER, listing=True)
+    assert len(observations) == 4
+    [item] = identity_review.collect_items(Path(first["audit_path"]))
+    primary = site["root"] + "/szdw/zhangwei.htm"
+    identity_review.save_decision(tmp_path / "attempt_2" / identity_review.DECISIONS_FILE,
+                                  item, "same", primary, reviewed_by=1)
+    report, records = await _run(site, tmp_path / "attempt_2", VIEWER, listing=True)
+    assert sorted(row["姓名"] for row in records) == ["张伟", "李娜", "王强"]
+    [certificate] = report["identity_reviews"]
+    assert set(certificate["resolution"].values()) == {primary}
+    assert set(certificate["resolution"]) == {primary, site["root"] + "/info/1132/19852.htm"}
+    assert report["identity_merges"] == []
 
-    names = [row["姓名"] for row in records]
-    assert sorted(names) == ["张伟", "李娜", "王强"]
-    merge = next(item for item in report["identity_merges"] if item["name"] == "张伟")
-    assert merge["kept_url"] == site["root"] + "/szdw/zhangwei.htm"
-    assert merge["merged_list_urls"] == [site["root"] + "/info/1132/19852.htm"]
 
 
 @pytest.mark.asyncio
@@ -174,7 +181,7 @@ async def test_html_served_for_the_pdf_keeps_the_source_review_stop(site, tmp_pa
 @pytest.mark.browser
 async def test_table_pdf_roster_waits_for_the_name_review_then_delivers(site, tmp_path):
     from server import name_review
-    from tests.test_pdf_table_roster import _table_pdf
+    from test_pdf_table_roster import _table_pdf
     site["pdf"] = (_table_pdf(), "application/pdf")
 
     report, records = await _run(site, tmp_path, VIEWER)
@@ -195,3 +202,6 @@ async def test_table_pdf_roster_waits_for_the_name_review_then_delivers(site, tm
     assert report["total"] == 8 and report["no_email"] == 8
     workbook = load_workbook(report["excel_path"])
     assert workbook["教师列表"].max_row - 1 + workbook["无邮箱教师列表"].max_row - 1 == 8
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

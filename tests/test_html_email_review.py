@@ -348,3 +348,6 @@ def test_group_page_linked_as_one_profile_is_not_another_teachers_own_scope():
     pages[PEER] = "<main><h1>许文海</h1><p>lxzhou@example.edu</p></main>"
     [item] = html_email_review.build_items([issue], records, candidates, pages)
     assert "in_other_teacher_scope" in item["candidates"][0]["reasons"]
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

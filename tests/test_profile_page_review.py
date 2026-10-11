@@ -134,3 +134,6 @@ async def test_reviewed_link_is_delivered_from_the_roster(tmp_path):
     row = next(r for r in records if r["姓名"] == "赵红霞")
     assert row["主页"] == ROSTER and row["简介"] == ""
     assert audit["profile_page_reviews"][0]["verdict"] == "roster_only"
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

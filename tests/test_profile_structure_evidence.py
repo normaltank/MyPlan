@@ -194,3 +194,6 @@ def test_submit_gate_reads_the_failed_profile_pages_from_its_target():
     repair = {**target, "repair_profiles": {URL: ["https://scope.example.edu/p/9"]}}
     assert [item["status"] for item in validate_submission(branch, "branch", repair, samples)] == [
         "profile_content_not_verified"]
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

@@ -370,3 +370,6 @@ async def test_redirected_image_recovery_reads_final_resource_base(local_faculty
             assert result['evidence'][0]['original_path']
         finally:
             await browser.close()
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

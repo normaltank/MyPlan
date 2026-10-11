@@ -50,9 +50,10 @@ async def test_worker_persists_context_then_queue_api_and_report_agree(
     reports = []
 
     async def scout(*args, **kwargs):
-        return ReconResult({'school': task.school, 'college': task.college,
-                            'branches': [{'url': task.url, 'card_selector': 'main li',
-                                          'single_page': True}]}, 0, 'completed', 'fixture')
+        from source_contract_fixture import upgrade
+        plan = {'school': task.school, 'college': task.college,
+                'branches': [{'url': task.url, 'card_selector': 'main li', 'single_page': True}]}
+        return ReconResult(upgrade(plan), 0, 'completed', 'fixture')
 
     async def capture(_plan, directory):
         audit = directory/'audit.json'

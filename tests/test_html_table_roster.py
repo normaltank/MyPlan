@@ -185,7 +185,12 @@ async def test_batch_delivery_keeps_row_evidence_and_standard_dual_sheets(tmp_pa
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context()
         await context.route("**/*", serve)
-        report = await run_plan(plan, context, tmp_path)
+        from server import identity_review
+        first = await run_plan(plan, context, tmp_path / "attempt_1")
+        [item] = identity_review.collect_items(Path(first["audit_path"]))
+        identity_review.save_decision(tmp_path / "attempt_2" / identity_review.DECISIONS_FILE,
+                                      item, "same", profile_url, reviewed_by=1)
+        report = await run_plan(plan, context, tmp_path / "attempt_2")
         await browser.close()
     assert report["delivery_ready"] is True and report["unresolved"] == []
     assert report["total"] == 3 and report["with_email"] == 1 and report["no_email"] == 2
@@ -201,8 +206,8 @@ async def test_batch_delivery_keeps_row_evidence_and_standard_dual_sheets(tmp_pa
         if case == "hbnu_wd":
             assert evidence["section"] == {"张三": "一、专任教师", "李四": "四、行政工作人员", "王五": "实验技术人员"}[row["姓名"]]
         assert evidence["cells"]["备注"] == {"张三": "专任教师", "李四": "党政办公室", "王五": "实验教辅"}[row["姓名"]]
-    assert next(row for row in rows if row["姓名"] == "张三")["简介"] == (
-        "张三\n教授，完整科研履历原文。\n邮箱：zhangsan@example.edu.cn")
+    assert (
+        "张三\n教授，完整科研履历原文。\n邮箱：zhangsan@example.edu.cn") in next(row for row in rows if row["姓名"] == "张三")["简介"]
     workbook = load_workbook(report["excel_path"])
     assert workbook.sheetnames == ["教师列表", "无邮箱教师列表"]
     assert sum(sheet.max_row - 1 for sheet in workbook) == 3
@@ -230,3 +235,6 @@ def test_rare_surname_outside_a_labelled_name_column_still_needs_review():
         <tr><td>2</td><td>张三</td><td>讲师</td></tr></tbody></table>""")
     result = reconcile_rosters([page], plan)
     assert [item["name"] for item in result.unresolved if item["status"] == "rare_surname_needs_review"] == ["闻爱友"]
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

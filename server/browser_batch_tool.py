@@ -31,6 +31,8 @@ from server.faculty_extractor import (
 )
 from server.harvest_eligibility import classify_candidates
 from server.harvest_workflow import capture_profiles, capture_sources, commit_records, reconcile_rosters
+from server.source_qualification import (SOURCE_FIELDS, SourceEvidence, captured_source_evidence,
+                                         source_claim_valid, verify_source)
 
 
 def _validate_plan(plan: dict[str, Any]) -> None:
@@ -39,19 +41,23 @@ def _validate_plan(plan: dict[str, Any]) -> None:
     if not str(plan.get("school", "")).strip() or not str(plan.get("college", "")).strip():
         raise ValueError("plan requires school and college")
     branches = plan.get("branches")
-    if not isinstance(branches, list) or not branches:
-        raise ValueError("plan requires at least one branch")
+    if not isinstance(branches, list):
+        raise ValueError("plan requires a branches array")
+    from server.recon_contract import validate_source_dispositions
+    validate_source_dispositions(plan)
     allowed_sources = {"university_faculty_roster", "hospital_doctor_roster"}
     if plan.get("source_kind") is not None and plan["source_kind"] not in allowed_sources:
         raise ValueError("invalid source_kind")
     for branch in branches:
         if not isinstance(branch, dict):
             raise ValueError("each branch must be an object")
+        if not source_claim_valid(branch):
+            raise ValueError('each branch requires current source relationship witness selectors')
         if branch.get("kind") == "image_table":
             parsed_image_url = urlparse(str(branch.get("url", "")))
             if (parsed_image_url.scheme not in ("http", "https") or not parsed_image_url.netloc
                     or parsed_image_url.username or parsed_image_url.password
-                    or set(branch) - {"url", "kind", "source_kind", "card_selector", "single_page"}
+                    or set(branch) - ({"url", "kind", "source_kind", "card_selector", "single_page"} | SOURCE_FIELDS)
                     or branch.get("source_kind", "university_faculty_roster") not in allowed_sources):
                 raise ValueError("image_table requires a structure-only official URL branch")
             if (branch.get("single_page") is not True or not branch.get("card_selector")
@@ -79,6 +85,8 @@ def _validate_plan(plan: dict[str, Any]) -> None:
             child = branch.get("child_branch")
             if not isinstance(child, dict) or "url" in child:
                 raise ValueError("navigation branch requires a child_branch without url")
+            if not source_claim_valid(child):
+                raise ValueError('navigation children require their own source witness selectors')
             if "empty_state_selector" in child or "roster_container_selector" in child:
                 raise ValueError("empty selectors are not supported in navigation children")
             if child.get("source_kind") is not None and child["source_kind"] not in allowed_sources:
@@ -113,25 +121,20 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         raise ValueError("profile_ready_selector must be non-empty")
     # Same rule as the server recon plan: names come from captured pages by
     # deterministic code (DOM, PDF text layer or local OCR), never from a plan.
-    manual = sorted(key for key in ("verified_candidates", "poster_reviews") if key in plan)
+    manual = sorted(key for key in ("verified_candidates", "poster_reviews", 'verified_appointments',
+                                   'reviewed_exclusions') if key in plan)
     if manual:
         raise ValueError(f"plan fields {manual} are no longer accepted: roster names must be read "
                          "from the captured page by DOM, PDF or local OCR; an image roster that "
                          "cannot be read stays unresolved")
-    appointments = plan.get("verified_appointments", [])
-    if not isinstance(appointments, list):
-        raise ValueError("verified_appointments must be a list")
-    for item in appointments:
-        if not isinstance(item, dict) or any(not str(item.get(key, "")).strip()
-                                               for key in ("name", "profile_url", "quote", "academic_title")):
-            raise ValueError("verified appointment requires name, profile_url, quote and academic_title")
-        parsed = urlparse(item["profile_url"])
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("appointment profile_url must be absolute HTTP(S)")
-        if len(item["quote"]) > 300 or item["academic_title"] not in item["quote"]:
-            raise ValueError("appointment quote must be short and contain academic_title")
-        if plan["school"] not in item["quote"] and plan["college"] not in item["quote"]:
-            raise ValueError("appointment quote must name target university or college")
+    # Shared public structure contract also closes arbitrary renamed teacher
+    # JSON channels. The local operator label is the only non-model metadata.
+    from pydantic import ValidationError
+    from server.recon_contract import Plan
+    try:
+        Plan.model_validate({key: value for key, value in plan.items() if key != 'agent_name'})
+    except ValidationError as exc:
+        raise ValueError('plan must contain only supported structure fields and source witness selectors') from exc
 
 
 def _ocr_cache_dir(out: Path) -> Path:
@@ -565,7 +568,7 @@ def _restorable_prefix(branch: dict, pages: list[dict]) -> bool:
 
 
 async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
-                          resume_pages=None) -> tuple[list[tuple[str, str]], list[dict], dict]:
+                          resume_pages=None, source_target=None) -> tuple[list[tuple[str, str]], list[dict], dict]:
     page = await context.new_page()
     from server.browser_readiness import install_request_tracking
     tracker = install_request_tracking(page)
@@ -634,6 +637,19 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                 with contextlib.suppress(Exception):
                     await page.wait_for_load_state("networkidle", timeout=3000)
             html = await page.content()
+            if source_claim_valid(branch):
+                captured_source = {}
+                try:
+                    source_proof = await verify_source(page, branch, source_target or {}, local_capture=captured_source)
+                except Exception as exc:
+                    # A failed purpose proof cannot erase an already readable
+                    # source. Keep its native observations and the repair blocker.
+                    source_proof = {'url': page.url, 'confirmed': False, 'reason': 'source_verification_failed',
+                                    'error_type': type(exc).__name__}
+                    unresolved.append({'url': page.url, 'status': 'source_role_evidence_unverified',
+                                       'reason': 'source_verification_failed'})
+                evidence.setdefault('source_roles', {})[page.url] = source_proof
+                html = captured_source.get('html') or html
             if branch.get("kind") == "image_table":
                 from server.image_table_browser import verify_table_images
                 proof = await verify_table_images(page, branch["card_selector"])
@@ -816,7 +832,7 @@ async def _capture_sources_with_state(plan, browser_context, state):
     async def capture_branch(context, branch):
         nonlocal restored_branches, resumed_branches, restored_roster_pages
         key = json.dumps(branch, sort_keys=True, separators=(",", ":"))
-        bundle = state.load_page_record("branch", branch["url"], key=key) if state and not branch.get("empty_state_selector") and branch.get("kind") != "image_table" else None
+        bundle = state.load_page_record("branch", branch["url"], key=key) if state and not branch.get("source_role") and not branch.get("empty_state_selector") and branch.get("kind") != "image_table" else None
         if bundle:
             # A valid HTML digest alone cannot establish a completed branch.
             # Treat incomplete/corrupt cursor metadata as a cache miss; errors
@@ -855,8 +871,8 @@ async def _capture_sources_with_state(plan, browser_context, state):
         def checkpoint(url, html, sequence):
             state.save_roster_progress(branch, url, html, sequence)
         kwargs = {"on_page": checkpoint, "resume_pages": state.load_roster_progress(branch)
-                  if branch.get("kind") != "image_table" else []} if state else {}
-        pages, errors, evidence = await _capture_branch(context, branch, **kwargs)
+                  if branch.get("kind") != "image_table" and not branch.get('source_role') else []} if state else {}
+        pages, errors, evidence = await _capture_branch(context, branch, source_target=plan, **kwargs)
         if evidence.get("restored_pages"):
             resumed_branches += 1
             restored_roster_pages += evidence["restored_pages"]
@@ -888,19 +904,19 @@ def _save_capture_snapshots(out, name, navigation_pages, all_pages, profile_html
     for index, (url, html) in enumerate(navigation_pages, 1):
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
         path = snapshot_dir / f"navigation_{index:03d}_{digest}.html"
-        path.write_text(html, encoding="utf-8")
+        path.write_bytes(html.encode('utf-8'))
         snapshots.append({"kind": "navigation", "url": url, "path": str(path)})
     for index, (url, html) in enumerate(all_pages, 1):
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
         path = snapshot_dir / f"directory_{index:03d}_{digest}.html"
-        path.write_text(html, encoding="utf-8")
+        path.write_bytes(html.encode('utf-8'))
         snapshots.append({"kind": "directory", "url": url, "path": str(path)})
     for index, (url, html) in enumerate(profile_html.items(), 1):
         if not html:
             continue
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
         path = snapshot_dir / f"profile_{index:03d}_{digest}.html"
-        path.write_text(html, encoding="utf-8")
+        path.write_bytes(html.encode('utf-8'))
         snapshots.append({"kind": "profile", "url": url, "path": str(path)})
     return snapshot_dir, snapshots
 
@@ -1059,7 +1075,8 @@ def page_names_person(name: str, html: str, image_biography: str = "") -> bool:
     return compact in page or compact in re.sub(r"\s+", "", image_biography)
 
 
-async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str | Path, *, state=None) -> dict[str, Any]:
+async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str | Path, *, state=None,
+                   task_id: str | None = None) -> dict[str, Any]:
     """Capture a Subagent-selected college plan using an existing browser context."""
     started = time.perf_counter()
     stage_started = started
@@ -1077,7 +1094,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         if state.plan_digest != hashlib.sha256(canonical.encode("utf-8")).hexdigest():
             raise ValueError("checkpoint state belongs to a different plan")
     out = Path(output_dir).resolve()
+    task_id = task_id or (out.parent.name if out.name.startswith('attempt-') else 'local-' + hashlib.sha256(str(out).encode()).hexdigest()[:24])
     out.mkdir(parents=True, exist_ok=True)
+    from server.source_qualification import capture_source_dispositions
+    disposition_issues, disposition_evidence = await capture_source_dispositions(browser_context, plan, out)
     cached_profile_urls = {row["url"] for row in state.list_pages("profile")} if state else set()
     restored_profiles = len(cached_profile_urls)
     source_capture, source_checkpoints = await _capture_sources_with_state(plan, browser_context, state)
@@ -1091,11 +1111,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             if cards and all(card.name == "img" for card in cards):
                 image_roster_cards[captured_page.url] = len(cards)
     navigation_pages = source_capture.navigation_pages
-    unresolved: list[dict] = list(source_capture.unresolved)
+    unresolved: list[dict] = [*source_capture.unresolved, *disposition_issues]
     branches = source_capture.branches
 
     candidates = []
-    candidate_sources: dict[tuple[str, str], set[str]] = {}
+    candidate_sources: dict[tuple[str, str], set[str | SourceEvidence]] = {}
     roster_reconciliation = reconcile_rosters(
         source_capture.roster_pages, plan,
         name_decisions=name_review.load_decisions(out / name_review.DECISIONS_FILE))
@@ -1118,7 +1138,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         for record in segment_naming["admitted"]:
             person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
             candidates.append(person)
-            candidate_sources.setdefault((person.name, person.url), set()).add(record.source_kind)
+            if record.source_evidence is not None:
+                candidate_sources.setdefault((person.name, person.url), set()).add(record.source_evidence)
     pdf_reading = {"records": [], "unresolved": [], "evidence": [], "name_evidence": [],
                    "observations": {}, "read_pages": set()}
     if roster_reconciliation.pdf_rosters:
@@ -1137,7 +1158,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         for record in pdf_reading["records"]:
             person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
             candidates.append(person)
-            candidate_sources.setdefault((person.name, person.url), set()).add(record.source_kind)
+            if record.source_evidence is not None:
+                candidate_sources.setdefault((person.name, person.url), set()).add(record.source_evidence)
         for observation in roster_reconciliation.observations:
             pdf_observations = pdf_reading["observations"].get(observation["url"])
             if observation.get("status") != "embedded_pdf_roster_requires_review" or not pdf_observations:
@@ -1162,7 +1184,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         for record in table_reading["records"]:
             person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
             candidates.append(person)
-            candidate_sources.setdefault((person.name, person.url), set()).add(record.source_kind)
+            if record.source_evidence is not None:
+                candidate_sources.setdefault((person.name, person.url), set()).add(record.source_evidence)
         for observation in roster_reconciliation.observations:
             tables = table_reading["observations"].get(observation["url"])
             if tables:
@@ -1273,16 +1296,14 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
                 item.get("url") == url and item.get("status") == "profile_content_browser_unverified"
                 for item in unresolved):
             unresolved.append({"url": url, "status": "profile_content_browser_unverified"})
-    admitted, eligibility, eligibility_errors = classify_candidates(
-        candidates, candidate_sources, profile_html, plan)
-    unresolved.extend(eligibility_errors)
     name = _safe_name(f"{plan['school']}_{plan['college']}")
     snapshot_dir, snapshots = _save_capture_snapshots(out, name, navigation_pages, all_pages, profile_html)
-    base_url = all_pages[0][0] if all_pages else plan["branches"][0]["url"]
+    base_url = all_pages[0][0] if all_pages else (
+        plan['branches'] or plan['source_dispositions'])[0]['url']
     # Preserve raw captures above; only the parser receives the verified subtree copy.
     scoped_profile_html, profile_scope_evidence, scope_issues = _scope_captured_profiles(
         profile_html, roster_reconciliation.profile_content_selectors,
-        profile_live_evidence, roster_reconciliation.profile_content_sources, admitted)
+        profile_live_evidence, roster_reconciliation.profile_content_sources, candidates)
     unresolved.extend(scope_issues)
     finish_stage("profile_capture_and_scope")
     from server.image_biography import (audit_profile_media, browser_asset_size, fetch_browser_asset,
@@ -1306,34 +1327,50 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     pdf_roster_urls = set()
     roster_pdf_pages = {item["url"] for item in roster_reconciliation.pdf_rosters}
     for url, html in all_pages:
-        if url in roster_pdf_pages or not any(candidate.url == url for candidate in admitted):
+        if url in roster_pdf_pages or not any(candidate.url == url for candidate in candidates):
             continue
         soup = BeautifulSoup(html, "html.parser")
         content = soup.select_one("article") or soup.select_one("main") or soup.body or soup
         if any(ref.kind == "pdf" for ref in media_references(str(content), url)):
             pdf_roster_urls.add(url)
     media_pages = dict(scoped_profile_html)
+    # Auxiliary sources remain original evidence even when none of their
+    # observations qualify for export. Reading their media cannot donate fields
+    # to accepted rows; enrichment below receives only the admitted pipeline.
+    auxiliary_source_urls = set()
+    for captured_page in source_capture.roster_pages:
+        source = captured_source_evidence(captured_page.html, captured_page.url, captured_page.branch,
+                                          plan, captured_page.source_role_evidence)
+        if source.role == 'faculty_roster' and source.status == 'verified':
+            continue
+        scopes = BeautifulSoup(captured_page.html, 'html.parser').select(
+            captured_page.branch['source_container_selector'])
+        if len(scopes) == 1:
+            media_pages[captured_page.url] = str(scopes[0])
+            auxiliary_source_urls.add(captured_page.url)
     media_pages.update((url, html) for url, html in all_pages
-                       if url in image_roster_cards or url in pdf_roster_urls)
-    # Only admitted records of a segmented article carry media into the audit;
-    # a record still waiting for its name has no owner yet.
+                       if url not in auxiliary_source_urls and (url in image_roster_cards or url in pdf_roster_urls))
+    # Known segments provide owned media; auxiliary sources keep the complete
+    # original scope, including segments still waiting for a name.
     segment_media: dict[str, list[str]] = {}
     for (page_url, _name), record in sorted(segment_records.items(),
                                             key=lambda item: (item[0][0], item[1].segment.index)):
         if record.segment.images:
             segment_media.setdefault(page_url, []).append(record.segment.html)
-    media_pages.update((url, "".join(parts)) for url, parts in segment_media.items())
+    media_pages.update((url, "".join(parts)) for url, parts in segment_media.items() if url not in auxiliary_source_urls)
     segment_media_urls = set(segment_media)
     media_owners: dict[str, set[str]] = {}
-    for candidate in admitted:
+    for candidate in candidates:
         if candidate.url in media_pages:
             media_owners.setdefault(candidate.url, set()).add(candidate.name)
+    for url in auxiliary_source_urls:
+        media_owners.setdefault(url, set())
     ocr_cache_dir = _ocr_cache_dir(out)
     media_audit = await audit_profile_media(
         media_pages, media_owners, snapshot_dir / "profile_media",
         profile_source_html=profile_html,
         profile_source_urls={url: proof.get('url',url) for url,proof in profile_live_evidence.items()},
-        fetch_asset=fetch_original_media, scoped_urls=set(profile_scope_evidence) | segment_media_urls,
+        fetch_asset=fetch_original_media, scoped_urls=set(profile_scope_evidence) | segment_media_urls | auxiliary_source_urls,
         known_names={candidate.name for candidate in candidates},
         review_decisions_path=out / "image_bio_reviews.json",
         media_kind_decisions_path=out / "media_kind_reviews.json",
@@ -1360,7 +1397,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             unresolved.append({"url": record.page_url, "name": record.name,
                                "segment": record.segment.index, "status": "segment_image_bio_unassigned"})
     for roster_url, card_count in image_roster_cards.items():
-        roster_names = {candidate.name for candidate in admitted if candidate.url == roster_url}
+        roster_names = {candidate.name for candidate in candidates if candidate.url == roster_url}
         assigned_names = {name for url, name in media_audit["assigned_biographies"]
                           if url == roster_url}
         image_evidence = [item for item in media_audit["evidence"]
@@ -1380,6 +1417,14 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             unresolved.append({"url": roster_url, "status": "image_roster_coverage_mismatch",
                                "visible_cards": card_count, "candidate_count": len(roster_names),
                                "assigned_images": len(assigned_names)})
+    admitted, eligibility, eligibility_errors = classify_candidates(
+        candidates, candidate_sources, profile_html, plan, profile_scope_evidence=profile_scope_evidence)
+    from server import source_review
+    source_review_items = source_review.build_items(candidates, candidate_sources, profile_html, plan, task_id,
+        snapshots, media_audit['evidence'] + pdf_reading['evidence'] + segment_naming['evidence'] + table_reading['evidence'])
+    admitted, eligibility, eligibility_errors, source_relationship_reviews = source_review.apply_decisions(
+        candidates, admitted, eligibility, eligibility_errors, source_review_items, out, task_id)
+    unresolved.extend(eligibility_errors)
     for candidate in admitted:
         html = profile_html.get(candidate.url)
         if html and not page_names_person(candidate.name, html,
@@ -1457,6 +1502,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         for merge in identity_merges:
             if merge["name"] == row["姓名"] and merge["kept_url"] == row["主页"]:
                 urls.update(merge["merged_list_urls"])
+        # Current source observations no longer merge on name alone. A validated
+        # human identity resolution must retain the supplementary row provenance.
+        for certificate in identity_reviews:
+            urls.update(source_url for source_url, primary in certificate["resolution"].items()
+                        if primary == row["主页"])
         return [source for source in table_sources
                 if source["name"] == row["姓名"] and source["profile_url"] in urls]
 
@@ -1492,6 +1542,18 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             row["主页"] = ""
     for source, row in zip(coverage["field_sources"], records):
         source["receipt_sha256"] = identity_review.record_digest(row)
+    # A reviewer can withdraw/replace a decision while the resumed native pass
+    # reads assets. Recheck the authoritative task store before any export.
+    latest_source_decisions = source_review.decisions_for(out, task_id)
+    for applied in source_relationship_reviews:
+        item = next(item for item in source_review_items if item['id'] == applied['id'])
+        latest = source_review.valid_decision(item, latest_source_decisions.get(item['id']), include_unknown=True)
+        if latest != applied:
+            unresolved.append({'url': item['profile_url'], 'name': item['name'], 'status': source_review.STATUS,
+                               'reason': 'relationship_review_changed_during_capture'})
+    coverage["issues"] = list(unresolved)
+    coverage["complete"] = coverage["complete"] and not unresolved
+    coverage["unresolved_count"] = len(unresolved)
     coverage_path.write_text(json.dumps(coverage, ensure_ascii=False, indent=2), encoding="utf-8")
     ready = bool(extraction_ready and not unresolved and coverage["complete"])
     records_path = out / f"{name}_records.json"
@@ -1521,6 +1583,15 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "candidate_count": len(candidates),
         "excluded_count": sum(item["status"] == "excluded" for item in eligibility),
         "eligibility": eligibility,
+        'task_id': task_id, 'source_review_items': source_review_items,
+        'source_dispositions': plan.get('source_dispositions', []),
+        'source_disposition_evidence': disposition_evidence,
+        'source_relationship_reviews': source_relationship_reviews,
+        'source_qualification_evidence': [
+            {'source_url': page.url, 'source_role': page.branch.get('source_role', 'unverified_people_source'),
+             'source_html_sha256': hashlib.sha256(page.html.encode('utf-8')).hexdigest(),
+             'browser_proof': page.source_role_evidence}
+            for page in source_capture.roster_pages],
         "total": len(records),
         "with_email": sum(bool(str(row.get("邮箱", "")).strip()) for row in records),
         "branches": branches, "roster_observations": roster_observations,
@@ -1686,7 +1757,7 @@ async def _run_cli(args: argparse.Namespace) -> dict[str, Any]:
             from server.browser_context import new_browser_context
             context = await new_browser_context(browser)
             try:
-                harvest = lambda: run_plan(plan, context, args.output_dir)
+                harvest = lambda: run_plan(plan, context, args.output_dir, task_id=args.task_id or None)
                 if args.task_id:
                     async with httpx.AsyncClient(base_url="http://127.0.0.1:8000", timeout=15) as client:
                         return await run_with_lease(
