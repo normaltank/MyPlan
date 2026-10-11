@@ -815,6 +815,7 @@ async def read_pdf_rosters(
             layout_path.write_text(json.dumps(result["layout"], ensure_ascii=False, indent=2), encoding="utf-8")
             for record in result["records"]:
                 record.source_kind = source.get("source_kind") or record.source_kind
+                record.source_evidence = source.get('source_evidence')
             records.extend(result["records"])
             unresolved.extend({**issue, "ocr_path": str(ocr_path)} if issue.get("status") in {
                 "image_bio_low_confidence", "segment_name_needs_review"} else issue

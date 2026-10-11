@@ -7,6 +7,9 @@ from server.agent_recon import ReconResult
 from server.agent_worker import AgentWorker
 from server.recovery_policy import classify_issues
 
+# These repair-control components start from an independently verified source.
+pytestmark = pytest.mark.verified_source_boundary
+
 
 def test_access_dependency_and_review_are_separate_from_structure_and_unknown():
     issues = [{"status": "browser_navigation_failed", "url": "https://example.edu/list"},

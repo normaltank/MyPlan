@@ -200,8 +200,8 @@ async def test_batch_resume_preserves_all_people_and_fetches_only_missing_profil
         assert resumed['delivery_ready'] and resumed['total'] == 3
         assert resumed['with_email'] + resumed['no_email'] == 3
         assert resumed['coverage']['complete']
-        assert resumed['checkpoints']['restored_roster_pages'] == 2
-        assert visits == ['https://example.edu/list/2', 'https://example.edu/list/3', 'https://example.edu/p/3']
+        assert resumed['checkpoints']['restored_roster_pages'] == 0  # fresh source relationship proof
+        assert visits == [ROOT, 'https://example.edu/list/2', 'https://example.edu/list/3', 'https://example.edu/p/3']
         await browser.close()
 
 
@@ -233,3 +233,6 @@ async def test_cancellation_preserves_last_successful_page_and_cursor(tmp_path):
         assert len(pages) == 3 and not errors
         assert visits == ['https://example.edu/list/2', 'https://example.edu/list/3']
         await browser.close()
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

@@ -238,3 +238,6 @@ def test_conflicting_card_fields_require_review_unless_own_profile_field_is_auth
         assert not actual['delivery_ready'] and rows(actual)[0]['职称'] == '教师'
         assert actual['unresolved'][0]['status'] == 'title_field_conflict'
         assert set(actual['unresolved'][0]['matches']) == {'教授', '副教授'}
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

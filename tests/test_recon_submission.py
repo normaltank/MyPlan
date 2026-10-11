@@ -85,7 +85,8 @@ async def test_discovery_submission_rejects_unobserved_or_omitted_urls(tmp_path)
             assert body(await scout.call("submit_plan", {"plan": discovery}))["accepted"] is True
             scout.target = {**TARGET, "required_urls": ["https://example.edu/other"]}
             result = body(await scout.call("submit_plan", {"plan": discovery}))
-            assert result["issues"] == [{"path": "$.branches", "status": "previous_branch_omitted"}]
+            assert result["issues"] == [{"path": "$.branches", "url": "https://example.edu/other",
+                                         "status": "previous_branch_omitted"}]
         finally:
             await browser.close()
 
@@ -101,3 +102,6 @@ def test_harness_uses_only_successful_digest_bound_submissions():
     assert submitted_plan(events({"accepted": True, "digest": plan_digest(BRANCH)})) == BRANCH
     assert submitted_plan(events({"accepted": False, "digest": plan_digest(BRANCH)})) is None
     assert submitted_plan(events({"accepted": True, "digest": "wrong"})) is None
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

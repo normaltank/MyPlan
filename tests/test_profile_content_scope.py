@@ -330,3 +330,6 @@ async def test_native_fallback_profile_cannot_authorize_scoped_delivery(tmp_path
     assert records and not report['delivery_ready'] and report['excel_path'] is None
     assert any(issue['status'] == 'profile_content_browser_unverified' for issue in report['unresolved'])
     assert report['coverage']['field_sources'][0]['attribution_scope'] == 'unverified_profile_container'
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

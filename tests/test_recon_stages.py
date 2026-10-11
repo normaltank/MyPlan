@@ -210,7 +210,11 @@ def test_invalid_discovery_retains_safe_repair_issues(monkeypatch):
     target = {"school": "样本大学", "college": "样本学院", "url": "https://example.edu/"}
     with pytest.raises(agent_recon.ReconPlanError) as caught:
         agent_recon._run_staged_harness("invalid", {"target": target, "timeout_seconds": 60}, ())
-    assert caught.value.safe_feedback["issues"] == [{"status": "plan_contract_rejected"}]
+    assert caught.value.safe_feedback["issues"] == [{'status': 'plan_contract_rejected', 'gate_issues': [
+        {'path': '$.school', 'status': 'schema_missing'},
+        {'path': '$.college', 'status': 'schema_missing'},
+        {'path': '$.branches', 'status': 'schema_missing'},
+    ]}]
 
 
 @pytest.mark.parametrize("url", ["https://person@example.edu/list", "https://example.edu/list?email=person%40example.edu"])
@@ -224,3 +228,6 @@ def test_rejected_discovery_url_is_never_replayed_in_repair_feedback(monkeypatch
         agent_recon._run_staged_harness("invalid-url", {"target": target, "timeout_seconds": 60}, ())
     assert caught.value.safe_feedback["known_urls"] == []
     assert url not in json.dumps(caught.value.safe_feedback)
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

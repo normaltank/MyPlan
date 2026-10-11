@@ -58,3 +58,6 @@ async def test_heartbeat_runs_while_field_extraction_is_busy(tmp_path, monkeypat
     assert len(rows) == 1
     assert rows[0]['邮箱'] == '1234567890@example.edu'
     assert rows[0]['简介'] == '张富有\n邮箱：1234567890@example.edu\n完整履历：张富有的学习经历、科研项目、论文甲。'
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary

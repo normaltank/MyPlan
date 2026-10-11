@@ -282,3 +282,6 @@ def test_branch_repair_must_prove_its_profile_selector_on_the_failed_profiles(mo
     issue = caught.value.safe_feedback["issues"][0]
     assert issue["status"] == "profile_content_not_verified" and issue["url"] == URLS[0]
     assert issue["sample_urls"] == [failed]
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

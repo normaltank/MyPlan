@@ -225,6 +225,15 @@ class ProfilePageReviewRequest(BaseModel):
     verdict: str
 
 
+class SourceRelationshipRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    id: str
+    verdict: str
+    evidence_basis: str
+    reason: str
+    source_refs: list[str] = []
+
+
 class NameReviewRequest(BaseModel):
     id: str
     verdict: str
@@ -377,7 +386,8 @@ def present_task(data, scope):
         if audit is not None:
             saved = json.loads(audit.read_text(encoding='utf-8'))
             source_issues = [item for item in saved.get('unresolved', [])
-                             if item.get('status') == 'embedded_pdf_roster_requires_review'
+                             if item.get('status') in {'embedded_pdf_roster_requires_review', 'source_qualification_missing',
+                                                       'source_role_evidence_unverified'}
                              or str(item.get('status', '')).startswith('pdf_roster_')]
             if source_issues:
                 data['source_review_required'] = True
@@ -443,7 +453,7 @@ async def task_image_review_page(task_id: str, request: Request):
     _, audit = _review_task(task_id, request)
     try:
         items = review_registry.collect(audit, 'image_bio_text', 'image_bio_email', 'name', 'identity',
-                                        'html_email', 'media_kind', 'profile_page')
+                                        'html_email', 'media_kind', 'profile_page', 'source_relationship')
         page_decisions = profile_page_review.load_decisions(audit.parent / profile_page_review.DECISIONS_FILE)
         for item in items['profile_page']:
             item['saved_verdict'] = page_decisions.get(item['id'], {}).get('verdict', '')
@@ -469,6 +479,10 @@ async def task_image_review_page(task_id: str, request: Request):
     if json.loads(audit.read_text(encoding="utf-8")).get("image_table_evidence"):
         rendered = rendered.replace("</html>", '<p><a href="/review/task/' + escape(task_id)
                                     + '/table">图片表格逐格复核</a></p></html>')
+    from server import source_review
+    rendered = rendered.replace('</html>', source_review.render_section(items['source_relationship'],
+        endpoint=f'/api/task/{task_id}/review/source-relationship',
+        artifact_endpoint=f'/api/task/{task_id}/review/source-original', csrf=request.cookies.get(CSRF_COOKIE, '')) + '</html>')
     return rendered
 
 
@@ -514,7 +528,7 @@ async def retry_official_site_task(task_id: str, request: Request):
     try:
         if audit is not None:
             saved = json.loads(audit.read_text(encoding='utf8'))
-            if any(kind.is_triggered(saved) for kind in review_registry.KINDS):
+            if any(kind.is_triggered(saved) for kind in review_registry.KINDS) or review_registry.has_review(audit):
                 if not review_registry.review_complete(audit):
                     raise HTTPException(status_code=409, detail='尚有未完成的字段复核，请先保存相应决定')
             prepare_review_resume(audit, task_id)
@@ -523,6 +537,58 @@ async def retry_official_site_task(task_id: str, request: Request):
     if not agent_queue.retry_failed_review_task(task_id):
         raise HTTPException(status_code=409, detail='工单状态已变化，请刷新页面')
     return {'status': 'queued', 'task_id': task_id}
+
+
+@app.post('/api/task/{task_id}/review/source-relationship', status_code=204)
+async def save_task_source_relationship(task_id: str, payload: SourceRelationshipRequest, request: Request):
+    task, audit = _source_review_task(task_id, request)
+    from server import source_review
+    item = next((item for item in source_review.existing_items(audit) if item['id'] == payload.id), None)
+    if item is None or item['binding']['task_id'] != task_id:
+        raise HTTPException(status_code=409, detail='来源观察或目标已变化，旧决定不能应用')
+    try:
+        source_review.save_decision(audit.parent/source_review.DECISIONS_FILE, item, payload.verdict,
+            evidence_basis=payload.evidence_basis, reason=payload.reason, source_refs=payload.source_refs,
+            reviewed_by=_user(request).id)
+        if task.status != 'failed':
+            agent_queue.invalidate_source_relationship(task_id, _user(request).id)
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail='逐观察决定必须有当前原件、审核人和依据；不能批量赋予师资身份') from exc
+    return Response(status_code=204)
+
+
+def _source_review_task(task_id: str, request: Request):
+    _user(request)
+    task = agent_queue.get_task(task_id)
+    if task is None or task.task_type != 'harvest':
+        raise HTTPException(status_code=404, detail='工单不存在')
+    audit = task_review_audit(OUTPUT_DIR, task)
+    if audit is None:
+        raise HTTPException(status_code=404, detail='没有当前原件证据')
+    return task, audit
+
+
+@app.get('/review/task/{task_id}/source', response_class=HTMLResponse)
+async def task_source_relationship_page(task_id: str, request: Request):
+    _, audit = _source_review_task(task_id, request)
+    from server import source_review
+    return '<!doctype html><html><meta charset="utf-8">' + source_review.render_section(source_review.existing_items(audit),
+        endpoint=f'/api/task/{task_id}/review/source-relationship', artifact_endpoint=f'/api/task/{task_id}/review/source-original',
+        csrf=request.cookies.get(CSRF_COOKIE, '')) + '</html>'
+
+
+@app.get('/api/task/{task_id}/review/source-original')
+async def task_source_original(task_id: str, item_id: str, index: int, request: Request):
+    _, audit = _source_review_task(task_id, request)
+    from server import source_review
+    from fastapi.responses import FileResponse
+    item = next((item for item in source_review.existing_items(audit) if item['id'] == item_id), None)
+    if item is None or item['binding']['task_id'] != task_id or not 0 <= index < len(item['artifacts']):
+        raise HTTPException(status_code=404, detail='原件不存在或已经变化')
+    artifact = item['artifacts'][index]
+    # HTML is displayed as text, never executed as a same-origin document.
+    media_type = 'text/plain; charset=utf-8' if Path(artifact['path']).suffix.lower() == '.html' else 'application/octet-stream'
+    return FileResponse(artifact['path'], media_type=media_type, headers={'X-Content-Type-Options': 'nosniff'})
 
 
 def _mark_html_email_decisions(audit: Path, task_id: str, items: list[dict]) -> None:

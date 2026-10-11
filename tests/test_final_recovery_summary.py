@@ -16,7 +16,8 @@ async def test_final_report_recovery_matches_complete_final_issues(tmp_path, mon
     worker = AgentWorker(db_path=tmp_path/'tasks.db', output_dir=tmp_path/'output', max_recon_repairs=1)
     queued = worker.queue.submit_task('U', 'C', 'https://example.edu/roster')
     task = worker.queue.claim_task('independent-spec', task_id=queued.task_id)
-    plan = {'school': 'U', 'college': 'C', 'branches': [{'url': task.url, 'card_selector': 'li', 'single_page': True}]}
+    from source_contract_fixture import upgrade
+    plan = upgrade({'school': 'U', 'college': 'C', 'branches': [{'url': task.url, 'card_selector': 'li', 'single_page': True}]})
     calls = 0
     audit_paths = []
 

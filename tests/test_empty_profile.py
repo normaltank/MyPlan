@@ -181,3 +181,6 @@ async def test_empty_body_with_outstanding_content_request_is_blocked(tmp_path):
         assert issues[0]['status'] == 'profile_content_browser_unverified'
         assert issues[0]['browser_evidence']['reason'] == 'network_not_idle'
         await browser.close()
+
+# Source purpose is a trusted component boundary; the profile/empty proof remains real Chromium.
+pytestmark = pytest.mark.verified_source_boundary

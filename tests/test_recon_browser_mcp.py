@@ -11,6 +11,9 @@ import pytest
 from server.recon_browser_mcp import BrowserScout, MAX_INLINE_BYTES
 from server.agent_recon import selector_evidence_issues
 
+# Protocol/pagination/profile components stipulate source purpose; source-tool proofs have own integration cases.
+pytestmark = pytest.mark.verified_source_boundary
+
 
 def test_oversized_ranges_keep_explicit_remaining_range_and_complete_local_evidence(tmp_path):
     scout = BrowserScout(None, tmp_path)
@@ -63,7 +66,7 @@ async def test_mcp_protocol_drives_real_browser_navigation_and_verification(tmp_
         tools = (await request(2, "tools/list"))["tools"]
         assert {t["name"] for t in tools} == {
             "browser_navigate", "browser_navigation", "browser_survey", "browser_structure", "browser_verify",
-            "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_evaluate",
+            "browser_verify_segments", "browser_verify_profile", "browser_verify_source", "browser_click", "browser_evaluate",
             "browser_screenshot", "browser_read_image", "submit_plan"}
         reply = await request(3, "tools/call", {"name": "browser_navigate",
                                               "arguments": {"url": f"http://127.0.0.1:{http.server_port}/"}})

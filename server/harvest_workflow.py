@@ -18,6 +18,7 @@ from bs4 import BeautifulSoup
 
 from server.faculty_extractor import FacultyCandidate, FacultyDirectoryExtractor, html_table_rows
 from server.detail_mecc import mailto_address_conflicts
+from server.source_qualification import SourceEvidence, captured_source_evidence
 
 
 CaptureBranch = Callable[
@@ -39,6 +40,7 @@ class CapturedRosterPage:
     branch: dict[str, Any]
     empty_roster_evidence: dict[str, Any] | None = None
     image_table_evidence: dict[str, Any] | None = None
+    source_role_evidence: dict[str, Any] | None = None
 
 
 @dataclass
@@ -56,7 +58,7 @@ class RosterReconciliation:
     """Deterministic page-level reconciliation before eligibility policy."""
 
     candidates: list[FacultyCandidate]
-    candidate_sources: dict[tuple[str, str], set[str]]
+    candidate_sources: dict[tuple[str, str], set[str | SourceEvidence]]
     observations: list[dict[str, Any]]
     unresolved: list[dict[str, Any]]
     profile_content_selectors: dict[str, set[tuple[str, str | None]]] = field(default_factory=dict)
@@ -261,7 +263,8 @@ async def capture_sources(
                         child_branch["profile_content_start_selector"] = branch["profile_content_start_selector"]
                 pages, child_errors, child_evidence = await capture_branch(browser_context, child_branch)
                 result.roster_pages.extend(
-                    CapturedRosterPage(url, page_html, child_branch, child_evidence.get("empty_roster"))
+                    CapturedRosterPage(url, page_html, child_branch, child_evidence.get("empty_roster"),
+                                       source_role_evidence=child_evidence.get('source_roles', {}).get(url))
                     for url, page_html in pages
                 )
                 result.unresolved.extend({**item, "branch_url": branch["url"]} for item in child_errors)
@@ -272,7 +275,7 @@ async def capture_sources(
         pages, errors, evidence = await capture_branch(browser_context, branch)
         result.roster_pages.extend(
             CapturedRosterPage(url, page_html, branch, evidence.get("empty_roster"),
-                               evidence.get("table_images", {}).get(url))
+                               evidence.get("table_images", {}).get(url), evidence.get('source_roles', {}).get(url))
             for url, page_html in pages
         )
         result.unresolved.extend({**item, "branch_url": branch["url"]} for item in errors)
@@ -452,7 +455,7 @@ def reconcile_rosters(
     """
 
     candidates: list[FacultyCandidate] = []
-    candidate_sources: dict[tuple[str, str], set[str]] = {}
+    candidate_sources: dict[tuple[str, str], set[str | SourceEvidence]] = {}
     observations: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
     default_source = plan.get("source_kind") or "university_faculty_roster"
@@ -467,13 +470,17 @@ def reconcile_rosters(
     image_tables: list[dict[str, Any]] = []
     captured_pages = list(captured)
     for page in captured_pages:
+        source_evidence = captured_source_evidence(page.html, page.url, page.branch, plan, page.source_role_evidence)
+        # Capturing people and qualifying their relationship are separate.
+        # Even an unproven/organizational page retains every original observation.
+        source_kind = page.branch.get('source_kind') or default_source
         if page.branch.get("kind") == "image_table":
             proof = page.image_table_evidence or {}
             if proof.get("valid") is not True or not proof.get("image_urls"):
                 unresolved.append({"url": page.url, "status": "table_image_selector_unverified"})
             else:
                 image_tables.append({"url": page.url, "media_urls": proof["image_urls"],
-                                     "source_kind": page.branch.get("source_kind") or default_source})
+                                     "source_kind": source_kind, 'source_evidence': source_evidence})
             observations.append({"url": page.url, "kind": "image_table",
                                  "status": "image_table_pending", "visible_images": proof.get("image_count", 0)})
             continue
@@ -487,12 +494,13 @@ def reconcile_rosters(
             segment_shared[page.url] = result.shared_emails
             for record in result.records + result.pending_ocr:
                 record.source_kind = source_kind
+                record.source_evidence = source_evidence
             segment_pending.extend(result.pending_ocr)
             for record in result.records:
                 segment_records.append(record)
                 person = FacultyCandidate(name=record.name, url=page.url, title=record.title)
                 candidates.append(person)
-                candidate_sources.setdefault((person.name, person.url), set()).add(source_kind)
+                candidate_sources.setdefault((person.name, person.url), set()).add(source_evidence)
             if not result.records and not result.pending_ocr and not result.unresolved:
                 unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
             continue
@@ -517,7 +525,7 @@ def reconcile_rosters(
                 observations.append(listed.observation)
                 source_kind = page.branch.get("source_kind") or default_source
                 for person in listed.found:
-                    candidate_sources.setdefault((person.name, person.url), set()).add(source_kind)
+                    candidate_sources.setdefault((person.name, person.url), set()).add(source_evidence)
                 if not listed.found and not awaiting:
                     unresolved.append({"url": page.url, "status": "no_candidates_on_roster_page"})
                 candidates.extend(listed.found)
@@ -547,7 +555,7 @@ def reconcile_rosters(
                     unresolved.append({"url": page.url, "status": "embedded_pdf_roster_requires_review",
                                        "selector": selector, "media_urls": pdf_urls})
                     pdf_rosters.append({"url": page.url, "selector": selector, "media_urls": pdf_urls,
-                                        "source_kind": page.branch.get("source_kind") or default_source})
+                                        "source_kind": source_kind, 'source_evidence': source_evidence})
                     continue
             if outside or outside_review:
                 # Kept out of the roster, and still reported: the page is not explained.
@@ -562,7 +570,7 @@ def reconcile_rosters(
         awaiting = _apply_name_decisions(page.url, found, review, name_decisions or {}, unresolved)
         source_kind = page.branch.get("source_kind") or default_source
         for person in found:
-            candidate_sources.setdefault((person.name, person.url), set()).add(source_kind)
+            candidate_sources.setdefault((person.name, person.url), set()).add(source_evidence)
             if "profile_content_selector" in page.branch and person.url != page.url:
                 scope = page.branch["profile_content_selector"]
                 start = page.branch.get("profile_content_start_selector")

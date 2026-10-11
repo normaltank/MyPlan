@@ -4,6 +4,7 @@
 testpaths = ["tests"]
 addopts = "--strict-markers"
 markers = [
+    "verified_source_boundary: explicit source-proof producer substitute for component tests; source qualification integration remains unmocked",
     "browser: 启动真实 Chromium（需先运行 python -m playwright install chromium）；用 -m \"not browser\" 可跳过",
 ]
 

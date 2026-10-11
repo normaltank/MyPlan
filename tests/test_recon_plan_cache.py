@@ -164,3 +164,6 @@ async def test_cached_plan_is_revalidated_in_real_browser_and_detects_new_links(
             assert not invalid["valid"] and invalid["reason"] == "discovery_changed"
         finally:
             await browser.close()
+
+# Source verification is a separately protected integration boundary.
+pytestmark = pytest.mark.verified_source_boundary

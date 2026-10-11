@@ -16,7 +16,7 @@ from server import app as web
 from server.access_control import AccountStore
 from server.agent_queue import AgentTaskQueue
 from server.browser_batch_tool import _validate_plan, run_plan
-from tests.test_image_table_roster import scanned_rows
+from test_image_table_roster import scanned_rows
 
 
 @pytest.mark.browser
@@ -128,3 +128,6 @@ def test_table_review_does_not_hide_other_review_kinds(tmp_path, monkeypatch):
     assert review_registry.review_complete(audit)
     decided["table"] = False
     assert not review_registry.review_complete(audit)
+
+# This component fixture stipulates verified source purpose; purpose integration is unmocked elsewhere.
+pytestmark = pytest.mark.verified_source_boundary
