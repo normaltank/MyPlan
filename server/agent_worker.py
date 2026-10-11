@@ -429,7 +429,8 @@ class AgentWorker:
                 "checkpoints": {key: value for key, value in (result.get("checkpoints") or {}).items()
                                 if key not in {"plan_digest", "evidence_captured_at"}},
                 "delivery_ready": bool(result.get("delivery_ready"))})
-            return result
+            # Keep every finished pass observable even if the next one times out.
+            return save_runtime(result)
 
         def save_runtime(result):
             from server.harvest_runtime_report import build_runtime_report
@@ -554,6 +555,15 @@ class AgentWorker:
                 recovery = classify_issues(issues)
                 if not recovery.access or recovery.stop:
                     break
+                if deadline is not None:
+                    remaining = max(0, deadline - time.monotonic())
+                    measured = browser_runs[-1]['elapsed_seconds']
+                    if remaining < measured:
+                        report['unresolved'] = [*issues, {
+                            'status': 'repair_skipped_task_deadline',
+                            'remaining_seconds': int(remaining),
+                            'previous_capture_seconds': measured}]
+                        break
                 print("[worker]   访问失败，按页面断点补缺", flush=True)
                 local_attempts.append({"retry": retry + 1, "issues": build_repair_feedback(recon.plan, report)["issues"],
                                        "model_calls": 0})
