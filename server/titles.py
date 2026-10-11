@@ -66,6 +66,13 @@ def declared_title_mentions(value: str) -> tuple[str, ...]:
     return ('教师',) if value.strip() == '教师' else title_mentions(value)
 
 
+def declared_title_cells(cells: dict) -> tuple[TitleField, ...]:
+    """Carry a real labelled title cell, including its literal 教师 value."""
+    value = cells.get('职称', '').strip()
+    mentions = declared_title_mentions(value)
+    return (TitleField(value, mentions, (1, len(value.splitlines()))),) if mentions else ()
+
+
 def title_expression_tail(text: str) -> bool:
     """Only title tokens and expression punctuation can extend a field line."""
     alternatives = sorted([*TITLE_KEYWORDS, *_ENGLISH_TITLES], key=len, reverse=True)

@@ -175,6 +175,11 @@ class FacultyCandidate:
     table_row: Optional[dict] = None
     title_fields: Tuple[TitleField, ...] = ()
 
+    @classmethod
+    def from_roster_record(cls, record):
+        return cls(name=record.name, url=record.page_url, title=record.title,
+                   title_fields=record.title_fields)
+
 @dataclass(frozen=True)
 class FacultyProfile:
     name: str

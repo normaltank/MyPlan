@@ -1012,7 +1012,8 @@ def _enrich_extracted_records(pipeline_records, segment_records, media_audit, ou
         # Use only this person's already scoped DOM. A shared page's other
         # profiles must never donate their explicit fields to this record.
         key = (record['主页'], record['姓名'])
-        if segment is None and title_field_evidence is not None and key in title_field_evidence:
+        if (title_field_evidence is not None and key in title_field_evidence
+                and (segment is None or title_field_evidence[key])):
             return title_field_evidence[key]
         sole_owner = (record['主页'] in verified_profile_urls
                       and sum(candidate.url == record['主页'] for candidate in admitted) == 1)
@@ -1174,7 +1175,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             shared_emails=roster_reconciliation.segment_shared_emails)
         unresolved.extend(segment_naming["unresolved"])
         for record in segment_naming["admitted"]:
-            person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
+            person = FacultyCandidate.from_roster_record(record)
             candidates.append(person)
             if record.source_evidence is not None:
                 candidate_sources.setdefault((person.name, person.url), set()).add(record.source_evidence)
@@ -1194,7 +1195,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             name_decisions_path=out / name_review.DECISIONS_FILE)
         unresolved.extend(pdf_reading["unresolved"])
         for record in pdf_reading["records"]:
-            person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
+            person = FacultyCandidate.from_roster_record(record)
             candidates.append(person)
             if record.source_evidence is not None:
                 candidate_sources.setdefault((person.name, person.url), set()).add(record.source_evidence)
@@ -1220,7 +1221,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
             reviews_path=out / REVIEW_FILE)
         unresolved.extend(table_reading["unresolved"])
         for record in table_reading["records"]:
-            person = FacultyCandidate(name=record.name, url=record.page_url, title=record.title)
+            person = FacultyCandidate.from_roster_record(record)
             candidates.append(person)
             if record.source_evidence is not None:
                 candidate_sources.setdefault((person.name, person.url), set()).add(record.source_evidence)
@@ -1512,7 +1513,8 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         # A reviewed e-mail may move a row between sheets; numbering follows the rows.
         records = [{**row, "序号": index} for index, row in enumerate(records, 1)]
     records, identity_items, identity_reviews = identity_review.apply_decisions(records, source_hashes, decision_path,
-        source_html={**dict(all_pages), **profile_html}, source_evidence=profile_scope_evidence)
+        source_html={**dict(all_pages), **profile_html}, source_evidence=identity_review.source_scope_evidence(
+            profile_scope_evidence, eligibility, media_audit['evidence']))
     reviewed_pairs = identity_review.validated_pairs(records, identity_reviews, decision_path)
     from server.faculty_identity import identity_review_issues
     unresolved.extend(identity_review_issues(records, reviewed_pairs))

@@ -5,7 +5,7 @@ their complete biographies and explicitly selects the primary row's other fields
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import combinations
 import hashlib
 import json
@@ -159,6 +159,46 @@ def _certificate(decision, results, *, current_item=None, equivalence=None):
     return certificate
 
 
+def source_scope_evidence(profile_evidence, eligibility, media_evidence):
+    """Keep the actual admission ledger beside each captured identity source."""
+    result = {url: {**evidence, 'image_biography_evidence': [m for m in media_evidence
+                       if m.get('profile_url') == url and m.get('assigned_name')]}
+              for url, evidence in profile_evidence.items()}
+    for row in eligibility:
+        entry = result.setdefault(row['profile_url'], {})
+        entry.setdefault('source_eligibility', {})[row['name']] = {
+            key: row[key] for key in ('name', 'profile_url', 'status', 'reason', 'source_evidence') if key in row}
+    return result
+
+
+def _qualification_projection(previous, current, source_html, source_evidence):
+    old_urls = {o['url'] for o in previous['observations']}
+    current_urls = {o['url'] for o in current['observations']}
+    if not current_urls < old_urls:
+        return None
+    admitted, observations = set(), []
+    for url in sorted(old_urls):
+        row = source_evidence.get(url, {}).get('source_eligibility', {}).get(current['name'], {})
+        sources = row.get('source_evidence') or []
+        if row.get('name') != current['name'] or row.get('profile_url') != url or not sources:
+            return None
+        for source in sources:
+            html = source_html.get(source.get('source_url'))
+            if html is None or hashlib.sha256(html.encode()).hexdigest() != source.get('source_html_sha256'):
+                return None
+        qualified = any(s.get('role') == 'faculty_roster' and s.get('status') == 'verified' for s in sources)
+        if row.get('status') == 'eligible' and qualified:
+            admitted.add(url)
+        elif (row.get('status') != 'unresolved' or row.get('reason') != 'source_qualification_missing'
+              or any(s.get('role') not in {'organizational_membership', 'unverified_people_source'} for s in sources)):
+            return None
+        observations.append(row)
+    if admitted != current_urls:
+        return None
+    return {'basis': 'current_source_qualification_projection', 'old_urls': sorted(old_urls),
+            'admitted_urls': sorted(current_urls), 'qualification': observations}
+
+
 def _reviewed_item(item, decision_path, *, source_html=None, source_evidence=None):
     if item.get('id') != item_id(item):
         return None, None
@@ -170,15 +210,57 @@ def _reviewed_item(item, decision_path, *, source_html=None, source_evidence=Non
         return None,None
     if source_html is None or source_evidence is None:
         return None, None
-    from server.review_evidence import old_review_items, identity_equivalence
-    for bundle, previous in old_review_items(Path(decision_path).parent.parent,'identity_review_items'):
+    from server.review_evidence import (old_review_items, identity_equivalence, identity_source_reparse,
+                                       register_identity_checkpoint_source, retain_current, _put, _json)
+    urls = {o['url'] for o in item['observations']}
+    matching = [row for row in decisions.values() if row.get('item', {}).get('name') == item['name']
+                and ({o['url'] for o in row['item']['observations']} == urls
+                     or _qualification_projection(row['item'], item, source_html, source_evidence))]
+    latest = max(matching, key=lambda row: row.get('reviewed_at', 0), default=None)
+    if latest is not None:
+        if not _valid_decision(latest['item'], latest):
+            return None, None
+        register_identity_checkpoint_source(Path(decision_path).parent.parent, Path(decision_path), latest)
+    archived = list(old_review_items(Path(decision_path).parent.parent, 'identity_review_items'))
+    for bundle, previous in archived:
+        saved = bundle.decisions(DECISIONS_FILE).get(previous.get('id'), {})
+        if (previous.get('name') == item['name'] and ({o['url'] for o in previous['observations']} == urls
+                or _qualification_projection(previous, item, source_html, source_evidence))
+                and saved.get('reviewed_at', 0) > (latest or {}).get('reviewed_at', 0)):
+            return None, None
+    for bundle, previous in archived:
         try:
             decision = bundle.decisions(DECISIONS_FILE).get(previous['id'],{})
+            if latest is not None and decision.get('id') != latest['id']:
+                continue
             if (previous.get('id') != item_id(previous) or decisions.get(previous['id']) != decision
                     or not _valid_decision(previous,decision)):
                 continue
-            proof = identity_equivalence(bundle,previous,item,source_html,source_evidence)
+            compared = previous
+            projection = _qualification_projection(previous, item, source_html, source_evidence)
+            if projection:
+                if decision['verdict'] != 'same' or not set(decision['resolution'].values()) <= urls:
+                    continue
+                compared = {**previous, 'observations': [o for o in previous['observations'] if o['url'] in urls]}
+                compared['id'] = item_id(compared)
+            proof = identity_equivalence(bundle,compared,item,source_html,source_evidence,
+                                         require_originals=bool(projection))
+            if not proof:
+                proof = identity_source_reparse(bundle, compared, item, source_html, source_evidence)
             if proof:
+                if projection:
+                    # Removed auxiliary rows are not passed to _resolved_records.
+                    for entry in proof:
+                        entry['qualification_projection'] = projection
+                        if not entry.get('new_scope_evidence_sha256'):
+                            entry['new_scope_evidence_sha256'] = _put(bundle.root,
+                                _json(source_evidence.get(entry['source_url'], {})).encode('utf-8'), '.json')
+                    present = {entry['source_url'] for entry in proof}
+                    for url in sorted({s['source_url'] for row in projection['qualification'] for s in row['source_evidence']} - present):
+                        proof.append({'source_url': url, 'qualification_source': True,
+                            'new_original_sha256': retain_current(bundle.root, source_html[url]),
+                            'new_scope_evidence_sha256': _put(bundle.root,
+                                _json(source_evidence.get(url, {})).encode('utf-8'), '.json')})
                 return decision, proof
         except (OSError,ValueError,KeyError,TypeError):
             continue
@@ -195,25 +277,44 @@ def apply_decisions(records, source_hashes, decision_path, *, source_html=None, 
             pending.append(item)
             continue
         results = _resolved_records(item, decision["resolution"])
-        replacements[item["name"]] = results
+        replacements[item["name"]] = (results, {observation_key(o['record']) for o in item['observations']})
         certificates.append(_certificate(decision, results,current_item=item,equivalence=proof))
     result, emitted = [], set()
     for row in records:
         name = field_value(row, "姓名")
-        if name not in replacements:
+        if name not in replacements or observation_key(row) not in replacements[name][1]:
             result.append(row)
         elif name not in emitted:
-            result.extend(replacements[name])
+            result.extend(replacements[name][0])
             emitted.add(name)
     if certificates:
         result = [{**row, "序号": index} for index, row in enumerate(result, 1)]
     return result, pending, certificates
 
 
-def validated_pairs(records, certificates, decision_path):
+def validated_pairs(records, certificates, decision_path, *, field_sources=()):
     """Revalidate output rows against the actual human decision, not a claimed flag."""
     decisions = load_decisions(decision_path)
     keys = {observation_key(row) for row in records}
+    published_keys = {}
+    source_indices = Counter(source.get('record_index') for source in field_sources
+                             if type(source.get('record_index')) is int)
+    # A published blank homepage has not erased its internal source identity.
+    # The existing receipt binds only this current row; no old fields are read.
+    for source in field_sources:
+        index = source.get('record_index')
+        if type(index) is not int or not 1 <= index <= len(records) or source_indices[index] != 1:
+            continue
+        row = records[index - 1]
+        url = source.get('profile_url')
+        if (field_value(row, '主页') or not url
+                or url not in source.get('roster_snapshot_urls', [])
+                or source.get('receipt_sha256') != record_digest(row)):
+            continue
+        internal = {**row, '主页': url}
+        internal_key = observation_key(internal)
+        keys.add(internal_key)
+        published_keys[internal_key] = observation_key(row)
     pairs = set()
     for certificate in certificates:
         if not isinstance(certificate, dict):
@@ -229,8 +330,10 @@ def validated_pairs(records, certificates, decision_path):
             root = Path(decision_path).parent.parent
             html = {p['source_url']:_read(root,p['new_original_sha256'],'.html').decode('utf8')
                     for p in certificate['source_equivalence']}
-            evidence = {p['source_url']:{'profile_content_selector':p['bounds'][0],
-                         'profile_content_start_selector':p['bounds'][1]} for p in certificate['source_equivalence']}
+            evidence = {p['source_url']:(json.loads(_read(root, p['new_scope_evidence_sha256'], '.json'))
+                        if p.get('new_scope_evidence_sha256') else
+                        {'profile_content_selector':p['bounds'][0],
+                         'profile_content_start_selector':p['bounds'][1]}) for p in certificate['source_equivalence']}
             reviewed, proof = _reviewed_item(current,decision_path,source_html=html,source_evidence=evidence)
             if reviewed != decision or proof != certificate['source_equivalence']:
                 raise ValueError('identity source equivalence is missing or invalid')
@@ -238,7 +341,9 @@ def validated_pairs(records, certificates, decision_path):
         results = _resolved_records(item, decision["resolution"])
         if certificate != _certificate(decision, results,current_item=item,equivalence=proof) or any(observation_key(r) not in keys for r in results):
             raise ValueError("identity review does not match output records")
-        pairs.update(frozenset((observation_key(a), observation_key(b))) for a,b in combinations(results, 2))
+        pairs.update(frozenset((published_keys.get(observation_key(a), observation_key(a)),
+                               published_keys.get(observation_key(b), observation_key(b))))
+                     for a,b in combinations(results, 2))
     return pairs
 
 
@@ -253,7 +358,9 @@ def audit_pairs(records, stats, task_id):
     if (root.name != task_id or root.parent.name != "tasks" or decision_path.name != DECISIONS_FILE
             or not decision_path.is_relative_to(root) or not audit.is_file()):
         raise ValueError("identity review is not bound to this task")
-    return validated_pairs(records, certificates, decision_path)
+    saved = json.loads(audit.read_text(encoding='utf-8'))
+    return validated_pairs(records, certificates, decision_path,
+                           field_sources=(saved.get('coverage') or {}).get('field_sources', []))
 
 
 def review_complete(audit_path, items):

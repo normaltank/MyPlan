@@ -477,6 +477,7 @@ def table_layout(lines: list[LayoutLine], *, allowed_sources=("pdf_text_layer",)
 def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256: str,
                     title_default: str, name_decisions: dict[str, dict]) -> dict:
     from server.faculty_extractor import FacultyCandidate
+    from server.titles import declared_title_cells
     from server import name_review
 
     source = {"url": page_url, "media_url": media_url}
@@ -512,6 +513,12 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
                 accounted[row.number] = 'unresolved'
                 continue
         title = row.cells.get(TITLE_HEADER, "").strip() or title_default
+        # A normalized default is not a printed title cell. The shared PDF /
+        # image adapter carries only values retained in this row's raw lines.
+        raw_values = {re.sub(r'\s+', '', re.split(r'[/／]', line.text, maxsplit=1)[0])
+                      for line in row.lines}
+        title_fields = (declared_title_cells(row.cells)
+                        if re.sub(r'\s+', '', row.cells.get(TITLE_HEADER, '')) in raw_values else ())
         evidence = {"section": table.sections[row.section]["heading"], "cells": row.cells, "page": row.page,
                     "bboxes": [[round(value, 2) for value in line.bbox] for line in row.lines]}
         if any(line.cell_id for line in row.lines):
@@ -549,7 +556,8 @@ def reconcile_table(table: TableLayout, *, page_url: str, media_url: str, sha256
             name, basis = decision["verified_name"], "human_reviewed_name"
         segment = Segment(index=row.number, html="", text="", emails=emails_by_row[row.number])
         record = PdfRecord(page_url, segment, name, title, name_source="pdf_table", name_basis=basis,
-                           media_url=media_url, sha256=sha256, pages=[row.page], table_row=evidence)
+                           media_url=media_url, sha256=sha256, pages=[row.page], table_row=evidence,
+                           title_fields=title_fields)
         email, email_basis, issue = choose_email(segment, name, shared)
         if issue:
             unresolved.append({**item, **issue})
