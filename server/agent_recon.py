@@ -666,10 +666,26 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
 
     def completed(result, index, selector, found):
         # An earlier absence observation cannot erase a later forward control.
-        return pagination_termination_valid(result, selector) and not any(
+        if not pagination_termination_valid(result, selector) or any(
             later_index > index and resolve(later.get('url')) == resolve(result.get('url'))
             and (args.get('card_selector') or args.get('container_selector')) == selector
-            for args, later, later_index in found)
+            for args, later, later_index in found):
+            return False
+        # Omitting a previously observed selector is not evidence that its
+        # control disappeared. Its latest actual recheck must show the end.
+        controls = {}
+        for args, observed, observed_index in found:
+            if (observed_index <= index and resolve(observed.get('url')) == resolve(result.get('url'))
+                    and (args.get('card_selector') or args.get('container_selector')) == selector
+                    and args.get('next_selector')):
+                controls[args['next_selector']] = observed
+        current_controls = {item['selector']: item for item in
+                            (result.get('pagination_termination') or {}).get('observed_forward_controls', [])}
+        return all(observed.get('nextCount') == 0 or observed.get('nextDisabled') is True
+                   or (key in current_controls and (current_controls[key].get('count') == 0
+                       or current_controls[key].get('disabled') is True
+                       or current_controls[key].get('terminal') is True))
+                   for key, observed in controls.items())
 
     for branch in plan["branches"]:
         issues.extend(source_event_issues(branch, events))
