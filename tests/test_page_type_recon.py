@@ -433,6 +433,19 @@ async def test_registered_cards_new_version_browser_proof_dispatches_and_binds_e
             changed['roster_type_evidence']['implementation_version'] = 1
             last_text['text'] = json.dumps(changed)
             assert agent_recon.selector_evidence_issues(plan(value), scout.events)
+            changed = json.loads(saved_text)
+            changed['roster_type_evidence']['implementation_digest'] = '0' * 64
+            last_text['text'] = json.dumps(changed)
+            assert agent_recon.selector_evidence_issues(plan(value), scout.events)
+            last_text['text'] = saved_text
+            def revised_cards(fallback, captured, plan, **kwargs):
+                return typed_cards(fallback, captured, plan, **kwargs)
+            # Replacing trusted code without changing the declared version
+            # invalidates its previously captured typed-roster proof.
+            page_types._REGISTRY[('roster.cards', 2)] = replace(
+                page_types.resolve_type(value['page_types']['roster'], 'roster'),
+                implementation=revised_cards)
+            assert agent_recon.selector_evidence_issues(plan(value), scout.events)
         finally:
             await browser.close()
 
@@ -557,3 +570,113 @@ async def test_rank_grid_browser_proof_uses_registered_parser_and_token_disposit
                     for issue in agent_recon.selector_evidence_issues(plan(value), scout.events))
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mutation', ['none', 'old_proof', 'version', 'params', 'source_hash',
+    'requested_url', 'final_url', 'digest', 'code_changed', 'original_missing', 'original_tampered',
+    'capture_missing', 'capture_tampered', 'missing_child', 'duplicate_source', 'personal_introduction',
+    'large_packet', 'full_packet_missing', 'full_packet_tampered', 'full_packet_hash',
+    'full_packet_wrong_role', 'newest_bad_packet'])
+async def test_stage_tool_retains_actual_dto_and_gate_rejects_stale_or_incomplete_entrance(
+        tmp_path, monkeypatch, mutation):
+    """Synthetic trusted handler through real tool + submission validators, without network."""
+    from dataclasses import replace
+    import hashlib
+    from pathlib import Path
+    from types import SimpleNamespace
+    from bs4 import BeautifulSoup
+    from server import page_types
+    from server import recon_browser_mcp
+    from server.recon_browser_mcp import BrowserScout
+    monkeypatch.setattr(page_types, '_REGISTRY', dict(page_types._REGISTRY))
+    html = source_html()
+    captured_urls = CHILDREN
+    if mutation == 'duplicate_source':
+        html = html.replace('</div>', f'<a href="{CHILDREN[0]}">Duplicate department</a></div>', 1)
+        captured_urls = CHILDREN + [CHILDREN[0]]
+    if mutation == 'personal_introduction':
+        html = html.replace('Department 0', '王芳教授个人简介')
+    calls = []
+    async def entrance(_fallback, context, value):
+        calls.append(value['url'])
+        return page_types.EntranceCapture(html, captured_urls, [], {'url': PARENT, 'final_url': PARENT})
+    def probe(context, result):
+        return {'sha256': context.source_html_sha256, 'count': len(result.source_urls)}
+    def validator(context, result, payload):
+        nodes = BeautifulSoup(context.source_html, 'html.parser').select(context.branch['child_link_selector'])
+        return (isinstance(result, page_types.EntranceCapture) and not result.errors
+                and result.source_urls == [node['href'] for node in nodes]
+                and payload == {'sha256': context.source_html_sha256, 'count': len(nodes)})
+    original = page_types.resolve_type(binding('entrance.navigation'), 'entrance')
+    definition = replace(original, type_id='entrance.recon_transport', implementation=entrance,
+        stage_probe=probe, evidence_validator=validator, evidence_contract='all retained anchors equal actual sources')
+    page_types.register_type(definition)
+    value = navigation()
+    value['page_types']['entrance'] = binding(definition.type_id, child_link_selector='#nav > a')
+    normalized = normalize_branch(value)
+    args = {key: normalized[key] for key in SOURCE_FIELDS}
+    args['unit_selector'] = source_unit_selector(normalized)
+    source = witness(html, PARENT, normalized, TARGET)
+    assert source['role_supported']
+    source.update(confirmed=True, dom_stable=True, network_idle=True, witness_visible=True)
+    events = pair('browser_verify_source', args, source, 'stage-source')
+    events += [event for index, child in enumerate(value['child_branches'])
+               for event in selector_events(child, f'stage-child-{index}')]
+    scout = BrowserScout(SimpleNamespace(context=object(), url=PARENT), tmp_path, 'branch', TARGET)
+    arguments = {'role': 'entrance', 'branch': value}
+    referenced = mutation == 'large_packet' or mutation.startswith('full_packet_') or mutation == 'newest_bad_packet'
+    if referenced:
+        monkeypatch.setattr(recon_browser_mcp, 'MAX_INLINE_BYTES', 800)
+    reply = await scout.call('browser_verify_stage', arguments)
+    transport = json.loads(reply['content'][0]['text'])
+    packet = agent_recon._read_stage_packet(transport, 'entrance')
+    assert packet is not None
+    if referenced:
+        assert set(transport) == {'role', 'full_stage_result'}
+    row = packet['results'][0]
+    proof = row['stage_evidence']
+    assert proof['implementation_digest'] == page_types.implementation_digest(
+        normalized['page_types']['entrance'], 'entrance')
+    assert '王芳' not in reply['content'][0]['text']
+    assert calls == [PARENT]
+    assert row['originals'][0]['source_html_sha256'] == hashlib.sha256(html.encode()).hexdigest()
+    if mutation == 'old_proof':
+        row['stage_evidence'] = None
+    elif mutation == 'version':
+        proof['implementation_version'] = 2
+    elif mutation == 'params':
+        proof['params']['child_link_selector'] = '#different > a'
+    elif mutation in {'source_hash', 'digest'}:
+        proof['source_html_sha256' if mutation == 'source_hash' else 'implementation_digest'] = '0' * 64
+    elif mutation in {'requested_url', 'final_url'}:
+        proof[mutation] = CHILDREN[0]
+    elif mutation == 'code_changed':
+        async def revised(_fallback, context, value):
+            return await entrance(_fallback, context, value)
+        page_types._REGISTRY[(definition.type_id, 1)] = replace(definition, implementation=revised)
+    elif mutation.startswith('original_'):
+        path = Path(row['originals'][0]['evidence_path'])
+        path.unlink() if mutation == 'original_missing' else path.write_text(html + '<p>changed</p>')
+    elif mutation.startswith('capture_'):
+        path = Path(row['capture_metadata']['evidence_path'])
+        path.unlink() if mutation == 'capture_missing' else path.write_text('{}')
+    elif mutation == 'missing_child':
+        value['child_branches'].pop()
+    elif mutation in {'full_packet_missing', 'full_packet_tampered', 'newest_bad_packet'}:
+        if mutation == 'newest_bad_packet':
+            events += pair('browser_verify_stage', arguments, packet, 'earlier-valid-stage')
+        path = Path(transport['full_stage_result']['evidence_path'])
+        path.unlink() if mutation == 'full_packet_missing' else path.write_text('{}')
+    elif mutation == 'full_packet_hash':
+        transport['full_stage_result']['sha256'] = '0' * 64
+    elif mutation == 'full_packet_wrong_role':
+        transport['role'] = 'detail'
+    if referenced:
+        packet = transport
+    events += pair('browser_verify_stage', arguments, packet, 'stage-capture')
+    issues = validate_submission(value, 'branch', {**TARGET, 'url': PARENT}, events)
+    assert not issues if mutation in {'none', 'large_packet'} else issues
+    if mutation == 'personal_introduction':
+        assert any(issue.get('failed_condition') == 'navigation_links_are_profiles' for issue in issues)
+    assert calls == [PARENT]  # Submit consumes captures; it cannot rerun a handler.

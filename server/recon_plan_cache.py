@@ -15,10 +15,14 @@ HERE = Path(__file__).resolve().parent
 
 
 def _contract() -> str:
+    from server.page_types import registered_implementation_manifest
     digest = hashlib.sha256(b"faculty-plan-cache-v3-source-relationship")
     for name in ("recon_discovery.md", "recon_instructions.md", "recon_provided_links.md", "recon_dom_probe.js",
                  'recon_contract.py', 'source_qualification.py', 'page_types.py', 'page_type_rank_grid.py'):
         digest.update((HERE / name).read_bytes())
+    override = HERE if HERE.resolve() != Path(__file__).resolve().parent else None
+    digest.update(json.dumps(registered_implementation_manifest(root=override), sort_keys=True,
+                             separators=(",", ":")).encode())
     return digest.hexdigest()
 
 
@@ -245,6 +249,8 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
         plan = entry["plan"]
         _validate_plan(plan)
         validate_model_plan(plan, school=plan["school"], college=plan["college"])
+        from server.page_types import normalize_branch
+        plan = {**plan, 'branches': [normalize_branch(branch) for branch in plan['branches']]}
         if verify_discovery:
             if not entry.get("discovery_pages"):
                 return outcome(valid=False, reason="discovery_evidence_missing")
@@ -277,12 +283,21 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
                 if structural_fingerprint(await page.content()) != expected_template:
                     return outcome(valid=False, reason="template_changed")
             args = {"card_selector": branch["card_selector"]}
+            from server.page_types import ROLE_PARAMETERS, binding_for, resolve_type
+            args.update({key: branch[key] for key in ROLE_PARAMETERS['roster'] if key in branch})
+            if branch.get('page_types'):
+                args['page_types'] = branch['page_types']
             for selector in ("empty_state_selector", "roster_container_selector"):
                 if selector in branch:
                     args[selector] = branch[selector]
             if branch.get("next_selector"):
                 args["next_selector"] = branch["next_selector"]
             first = await tool("browser_verify", args)
+            for role in ('entrance', 'pagination'):
+                definition = resolve_type(binding_for(branch, role), role)
+                if definition.stage_probe is not None:
+                    await tool('page_type_catalog', {'type_id': definition.type_id})
+                    await tool('browser_verify_stage', {'role': role, 'branch': branch})
             if expected_template and (not first.get("cardCount") or not first.get("linkedSamples")
                                       or not branch.get("profile_content_selector")):
                 return outcome(valid=False, reason="unsupported_template_roster")
@@ -302,6 +317,10 @@ async def validate_cached_plan(entry: dict, context: Any, evidence_dir: str | Pa
                 for profile_url in samples:
                     await tool("browser_navigate", {"url": profile_url})
                     await tool("browser_verify_profile", profile_args)
+                definition = resolve_type(binding_for(branch, 'detail'), 'detail')
+                if definition.stage_probe is not None and samples:
+                    await tool('page_type_catalog', {'type_id': definition.type_id})
+                    await tool('browser_verify_stage', {'role': 'detail', 'branch': branch, 'urls': samples})
             issues = selector_evidence_issues({**plan, "branches": [branch]}, events)
             if issues:
                 return outcome(valid=False, reason="branch_verification_failed", issues=issues)

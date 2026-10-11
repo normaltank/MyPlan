@@ -691,6 +691,97 @@ def resolved_browser_url(url: str, aliases: dict[str, str]) -> str:
     return url
 
 
+def _read_stage_originals(result: dict[str, Any]) -> list[tuple[str, str]] | None:
+    """Recheck local originals; an envelope's claimed hash is not its witness."""
+    originals = result.get('originals')
+    if not isinstance(originals, list) or not originals:
+        return None
+    documents = []
+    for original in originals:
+        if (not isinstance(original, dict)
+                or set(original) != {'url', 'source_html_sha256', 'evidence_path'}
+                or not _is_structure_url(original.get('url'))
+                or not isinstance(original.get('source_html_sha256'), str)
+                or not re.fullmatch(r'[a-f0-9]{64}', original['source_html_sha256'])
+                or not isinstance(original.get('evidence_path'), str)):
+            return None
+        path = Path(original['evidence_path'])
+        if path.suffix != '.html':
+            return None
+        try:
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != original['source_html_sha256']:
+                return None
+            html = raw.decode('utf-8')
+        except (OSError, UnicodeError, ValueError):
+            return None
+        if not html.strip():
+            return None
+        documents.append((original['url'], html))
+    return documents
+
+
+def _read_stage_packet(packet: dict[str, Any], role: str) -> dict[str, Any] | None:
+    """Expand a stage-only hashed transport reference without truncating its evidence."""
+    if packet.get('role') != role:
+        return None
+    if 'full_stage_result' in packet:
+        reference = packet['full_stage_result']
+        if (set(packet) != {'role', 'full_stage_result'} or not isinstance(reference, dict)
+                or set(reference) != {'sha256', 'evidence_path'}
+                or not isinstance(reference['sha256'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', reference['sha256'])
+                or not isinstance(reference['evidence_path'], str)):
+            return None
+        path = Path(reference['evidence_path'])
+        if path.suffix != '.json':
+            return None
+        try:
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != reference['sha256']:
+                return None
+            packet = json.loads(raw)
+        except (OSError, UnicodeError, ValueError):
+            return None
+    if (not isinstance(packet, dict) or set(packet) != {'role', 'results'}
+            or packet['role'] != role or not isinstance(packet['results'], list)
+            or not packet['results'] or not all(isinstance(item, dict) for item in packet['results'])):
+        return None
+    return packet
+
+
+def _read_stage_capture(role: str, observation: dict[str, Any], documents: list[tuple[str, str]]):
+    """Rebuild the universal DTO; mechanism-specific payloads stay with their validator."""
+    from server.page_types import EntranceCapture, ProfileCapture
+    metadata = observation.get('capture_metadata')
+    if (not isinstance(metadata, dict) or set(metadata) != {'sha256', 'evidence_path'}
+            or not isinstance(metadata.get('sha256'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', metadata['sha256'])
+            or not isinstance(metadata.get('evidence_path'), str)):
+        return None
+    path = Path(metadata['evidence_path'])
+    if path.suffix != '.json':
+        return None
+    try:
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != metadata['sha256']:
+            return None
+        data = json.loads(raw)
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get('role') != role or not isinstance(data.get('errors'), list):
+        return None
+    if role == 'pagination' and set(data) == {'role', 'errors', 'evidence'}:
+        return documents, data['errors'], data['evidence']
+    if len(documents) != 1:
+        return None
+    if role == 'entrance' and set(data) == {'role', 'source_urls', 'errors', 'evidence'}:
+        return EntranceCapture(documents[0][1], data['source_urls'], data['errors'], data['evidence'])
+    if role == 'detail' and set(data) == {'role', 'errors', 'proof', 'meta'}:
+        return ProfileCapture(documents[0][1], data['proof'], data['errors'], data['meta'])
+    return None
+
+
 def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                              repair_profiles: dict[str, list[str]] | None = None) -> list[dict[str, Any]]:
     """Accept selectors only when this session's browser verified their matches.
@@ -706,12 +797,14 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
     observations = []
     profile_observations = []
     segment_observations = []
+    stage_observations = []
     clicks = []
     for index, event in enumerate(events):
         data = event.get("data") or {}
         if event.get("type") == "tool/call" and data.get("name") in (
                 "mcp__playwright__browser_verify", "mcp__playwright__browser_click",
-                "mcp__playwright__browser_verify_profile", "mcp__playwright__browser_verify_segments"):
+                "mcp__playwright__browser_verify_profile", "mcp__playwright__browser_verify_segments",
+                'mcp__playwright__browser_verify_stage'):
             try:
                 args = json.loads(data.get("arguments") or "{}")
             except (TypeError, ValueError):
@@ -740,6 +833,16 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                             samples = result.get("results") if isinstance(result.get("results"), list) else [result]
                             profile_observations.extend((args, item, index) for item in samples
                                                         if isinstance(item, dict))
+                        elif name == 'mcp__playwright__browser_verify_stage':
+                            packet = _read_stage_packet(result, args.get('role'))
+                            if packet is not None:
+                                stage_observations.extend((args, item, index) for item in packet['results'])
+                            else:
+                                # A corrupted latest capture cannot revive an older proof.
+                                requested = (args.get('urls') if args.get('role') == 'detail'
+                                             else [(args.get('branch') or {}).get('url')])
+                                stage_observations.extend((args, {'requested_url': url}, index)
+                                                          for url in requested or [])
                         else:
                             observations.append((args, result, index))
     from server.pager_evidence import pagination_termination_valid
@@ -776,7 +879,51 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                            result['pagination_termination']['source_sha256'])))
                    for key, observed in controls.items())
 
+    def stage_proof(branch, role, requested_url):
+        from server.page_types import binding_for, validate_stage_evidence
+        binding = binding_for(branch, role)
+        found = [(args, result, index) for args, result, index in stage_observations
+                 if args.get('role') == role and result.get('requested_url') == requested_url
+                 and (args.get('branch') or {}).get('url') == branch['url']]
+        if not found:
+            return None
+        args, result, _ = found[-1]
+        try:
+            used = binding_for(args['branch'], role)
+        except (ValueError, TypeError, KeyError):
+            return None
+        documents = _read_stage_originals(result)
+        if used != binding or not documents:
+            return None
+        final_url, html = documents[0]
+        actual_hash = hashlib.sha256(html.encode()).hexdigest()
+        if role != 'detail':
+            source = source_event_proof(branch, events)
+            if (source is None or source.get('source_html_sha256') != actual_hash
+                    or source.get('url') != final_url):
+                return None
+        proof = result.get('stage_evidence')
+        reconstructed = _read_stage_capture(role, result, documents)
+        if reconstructed is None:
+            return None
+        if not validate_stage_evidence(role, branch, proof, requested_url=requested_url,
+                final_url=final_url, source_html_sha256=actual_hash, source_html=html, result=reconstructed):
+            return None
+        return proof, documents, reconstructed
+
+    def stage_required(role, branch):
+        from server.page_types import requires_stage_evidence
+        try:
+            return requires_stage_evidence(role, branch)
+        except ValueError:
+            # A registered implementation without a proof contract remains
+            # unproved, including callers of this low-level evidence checker.
+            return True
+
     def explicit_child_proof(branch, matching, selector):
+        if stage_required('entrance', branch):
+            verified = stage_proof(branch, 'entrance', branch['url'])
+            return verified[2].source_urls if verified is not None else None
         if not matching:
             return None
         args, result, index = matching[-1]
@@ -801,7 +948,7 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         return urls
 
     def roster_type_proved(branch, matching):
-        from server.page_types import binding_for, ROLE_PARAMETERS
+        from server.page_types import binding_for, implementation_digest, ROLE_PARAMETERS
         binding = binding_for(branch, 'roster')
         if (binding.type_id, binding.implementation_version) in {
                 ('roster.cards', 1), ('roster.segmented', 1), ('roster.image_table', 1)}:
@@ -813,7 +960,9 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         reading = proof.get('reading') or {}
         role_proof = source_event_proof(branch, events)
         try:
-            used = binding_for({**args, 'url': branch['url']}, 'roster')
+            refs = (args.get('page_types') or {})
+            used = binding_for({**{key: value for key, value in args.items() if key != 'page_types'},
+                'url': branch['url'], 'page_types': {'roster': refs['roster']} if 'roster' in refs else {}}, 'roster')
         except (ValueError, TypeError):
             return False
         selectors = {key: branch[key] for key in ROLE_PARAMETERS['roster'] if key in branch}
@@ -826,6 +975,7 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         return (used.type_id == binding.type_id and used.implementation_version == binding.implementation_version
                 and proof.get('type_id') == binding.type_id
                 and proof.get('implementation_version') == binding.implementation_version
+                and proof.get('implementation_digest') == implementation_digest(binding, 'roster')
                 and proof.get('selectors') == selectors
                 and role_proof is not None and proof.get('source_sha256') == role_proof.get('source_html_sha256')
                 and proof.get('source_sha256') == (result.get('pagination_termination') or {}).get('source_sha256')
@@ -835,11 +985,69 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
 
     for branch in plan["branches"]:
         issues.extend(source_event_issues(branch, events))
+        typed_stages = {}
+        for role in ('entrance', 'pagination'):
+            if stage_required(role, branch):
+                typed_stages[role] = stage_proof(branch, role, branch['url'])
+                if typed_stages[role] is None:
+                    issues.append({'status': 'stage_type_evidence_unverified', 'role': role, 'url': branch['url'],
+                        'failed_condition': 'current_stage_proof_missing',
+                        'need': 'browser_verify_stage with this exact registered binding. Its actual handler '
+                                'originals, current source hash, URLs, parameters and implementation digest '
+                                'must pass the dedicated evidence contract.'})
         if not _explicit_navigation_pagination_supported(branch):
             issues.append({'status': 'plan_contract_rejected', 'url': branch['url'],
                            'failed_condition': 'explicit_navigation_pagination_not_applicable',
                            'need': 'Explicit navigation supports only pagination.single_page@1 without '
                                    'next_selector; its child set proves only the current rendered parent.'})
+            continue
+        if branch.get('kind') == 'navigation' and 'entrance' in typed_stages:
+            # A dedicated entrance capture certifies its own selection. It is
+            # not a roster-card observation and need not use that old probe.
+            verified = typed_stages['entrance']
+            if verified is None:
+                continue
+            selector = branch['child_link_selector']
+            from server.faculty_extractor import FacultyDirectoryExtractor
+            introductions = FacultyDirectoryExtractor.profile_introduction_links(
+                verified[1][0][1], verified[1][0][0], selector)
+            if introductions:
+                issues.append({'status': 'child_roster_not_verified', 'url': branch['url'],
+                    'selector': selector, **_gate_detail('navigation_links_are_profiles',
+                    {'profile_intro_link_count': len(introductions)},
+                    'Selected personal introductions require profile-role verification, '
+                    'rather than navigation to child rosters.')})
+                continue
+            urls = verified[2].source_urls
+            if (not urls or not all(_is_structure_url(url) for url in urls)
+                    or len(urls) != len(set(urls)) or branch['url'] in urls):
+                issues.append({'status': 'child_roster_not_verified', 'url': branch['url'],
+                    'selector': selector, **_gate_detail('explicit_child_set_unverified',
+                    {'observed_children': len(urls)},
+                    'An actual entrance must return unique child source URLs, without '
+                    'invalid URLs or a link back to this parent.')})
+                continue
+            if 'child_branches' in branch:
+                children = branch['child_branches']
+                declared = [child['url'] for child in children]
+                if (len(declared) != len(set(declared)) or set(declared) != set(urls)
+                        or branch['url'] in declared):
+                    issues.append({'status': 'child_roster_not_verified', 'url': branch['url'],
+                        'selector': selector, **_gate_detail('explicit_child_set_unverified',
+                        {'declared_children': len(children), 'observed_children': len(urls)},
+                        'Bind each actual entrance source URL exactly once, and verify '
+                        'each child with its own current source and selectors.')})
+                    continue
+            else:
+                child = branch.get('child_branch')
+                if not urls or not isinstance(child, dict):
+                    issues.append({'status': 'child_roster_not_verified', 'url': branch['url'],
+                        **_gate_detail('child_roster_missing', {'linked_samples': len(urls)},
+                        'The selected entrance sources require a verified child branch.')})
+                    continue
+                children = [{**child, 'url': url} for url in urls]
+            for child in children:
+                issues.extend(selector_evidence_issues({**plan, 'branches': [child]}, events, repair_profiles))
             continue
         from server.page_types import binding_for
         roster_binding = binding_for(branch, 'roster')
@@ -926,13 +1134,15 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
         if not matching:
             issues.append({"status": "selector_not_verified", "url": branch["url"], "selector": selector,
                            **_card_detail(branch, selector, observations, resolve)})
-        elif branch.get("single_page") and not completed(matching[-1][1], matching[-1][2], selector, observations):
+        elif (branch.get("single_page") and 'pagination' not in typed_stages
+              and not completed(matching[-1][1], matching[-1][2], selector, observations)):
             issues.append({"status": "single_page_pagination_unverified", "url": branch["url"], "selector": selector,
                            **_gate_detail("pagination_termination_unverified", {"pagination_total": (
                                matching[-1][1].get("pagination") or {}).get("total")},
                                "Verify a unique next_selector and its next page, or browser_verify the roster "
                                "with confirmed pagination_termination; candidate total 0 alone is insufficient.")})
-        elif branch.get("next_selector") and not any(result.get("nextDisabled") is True for _, result, _ in matching):
+        elif (branch.get("next_selector") and 'pagination' not in typed_stages
+              and not any(result.get("nextDisabled") is True for _, result, _ in matching)):
             next_urls = {resolve(result.get("nextUrl")) for _, result, _ in matching
                          if result.get("nextUrl") and resolve(result["nextUrl"]) != resolve(branch["url"])}
             changed_ajax = any(
@@ -984,6 +1194,22 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 chain.add(resolve(result["nextUrl"]))
             linked.extend(url for url in result.get("linkedSamples", result.get("profileSamples", []))
                           if _is_structure_url(url) and resolve(url) not in chain and url not in linked)
+        if stage_required('detail', branch):
+            # Use actual typed paging originals to include linked profiles on
+            # every captured page, without exporting people into scout JSON.
+            documents = typed_stages.get('pagination')
+            documents = documents[1] if documents is not None else []
+            if not documents and (source := source_event_proof(branch, events)) and source.get('original_path'):
+                documents = _read_stage_originals({'originals': [{'url': source['url'],
+                    'source_html_sha256': source['source_html_sha256'], 'evidence_path': source['original_path']}]}) or []
+            if documents and branch.get('kind') != 'navigation':
+                from server.harvest_workflow import CapturedRosterPage, reconcile_rosters
+                try:
+                    parsed = reconcile_rosters([CapturedRosterPage(url, html, branch) for url, html in documents], plan)
+                    linked = list(dict.fromkeys(candidate.url for candidate in parsed.candidates
+                        if _is_structure_url(candidate.url) and candidate.url not in {url for url, _ in documents}))
+                except (ValueError, TypeError, KeyError):
+                    linked = []
         if branch.get("kind") == "navigation":
             if matching and matching[-1][1].get("profile_intro_link_count", 0) > 0:
                 issues.append({"status": "child_roster_not_verified", "url": branch["url"],
@@ -1035,6 +1261,8 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
             # scope; a scout that sampled page 2 rather than page 1 has not
             # verified less. The harvest re-verifies every profile anyway.
             def proved(url):
+                if stage_required('detail', branch):
+                    return stage_proof(branch, 'detail', url) is not None
                 return any(
                     args.get("profile_content_selector") == branch["profile_content_selector"]
                     and args.get("profile_content_start_selector") == branch.get("profile_content_start_selector")
@@ -1047,6 +1275,18 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                     and all(isinstance(result.get(key), str) and re.fullmatch(r"[a-f0-9]{64}", result[key])
                             for key in ("html_sha256", "selected_html_sha256"))
                     for args, result, _ in profile_observations)
+            if stage_required('detail', branch):
+                for args, result, _ in stage_observations:
+                    if args.get('role') != 'detail' or (args.get('branch') or {}).get('url') != branch['url']:
+                        continue
+                    profile_url = result.get('requested_url')
+                    if profile_url not in linked or not proved(profile_url):
+                        issues.append({'status': 'stage_type_evidence_unverified', 'role': 'detail',
+                            'url': branch['url'], 'sample_urls': [profile_url] if _is_structure_url(profile_url) else [],
+                            'failed_condition': 'current_linked_profile_stage_unverified',
+                            'need': 'Each requested detail proof must own an exact linked profile URL, its '
+                                    'actual profile original and this registered binding; a roster hash or '
+                                    'another profile document cannot prove it.'})
             required = min(2, len(linked))
             pair = (branch["profile_content_selector"], branch.get("profile_content_start_selector"))
             if not linked or sum(proved(url) for url in linked) < required:

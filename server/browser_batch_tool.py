@@ -895,8 +895,9 @@ async def _capture_sources_with_state(plan, browser_context, state):
 
     async def capture_branch(context, branch):
         nonlocal restored_branches, resumed_branches, restored_roster_pages
+        from server.page_types import requires_stage_evidence, stage_evidence_for_result
         key = json.dumps(branch, sort_keys=True, separators=(",", ":"))
-        bundle = state.load_page_record("branch", branch["url"], key=key) if state and not branch.get("source_role") and not branch.get("empty_state_selector") and branch.get("kind") != "image_table" else None
+        bundle = state.load_page_record("branch", branch["url"], key=key) if state and not branch.get("source_role") and not branch.get("empty_state_selector") and branch.get("kind") != "image_table" and not requires_stage_evidence('pagination', branch) else None
         if bundle:
             # A valid HTML digest alone cannot establish a completed branch.
             # Treat incomplete/corrupt cursor metadata as a cache miss; errors
@@ -940,6 +941,12 @@ async def _capture_sources_with_state(plan, browser_context, state):
         pages, errors, evidence = await invoke_async(
             'pagination', branch, _capture_branch, context, branch, source_target=plan, **kwargs)
         evidence['executed_page_type_roles'] = ['pagination']
+        if requires_stage_evidence('pagination', branch):
+            try:
+                evidence['stage_evidence'] = await stage_evidence_for_result(
+                    'pagination', branch, (pages, errors, evidence), requested_url=branch['url'])
+            except ValueError:
+                errors.append({'url': branch['url'], 'status': 'pagination_stage_evidence_unverified'})
         if evidence.get('url') != branch['url'] or not pages and not errors:
             errors.append({'url': branch['url'], 'status': 'page_type_output_invalid',
                            'reason': 'pagination_output_scope_or_pages_missing'})

@@ -81,150 +81,130 @@ class RosterReconciliation:
 TRANSIENT_PROOF_REASONS = frozenset({"network_not_idle", "dom_unstable"})
 
 
+async def capture_profile_stage(
+    browser_context: Any, url: str, branch: dict[str, Any], *,
+    scope_pairs: set[tuple[str, str | None]] | None = None,
+    page_ready_selector: str | None = None, saved_record: dict | None = None,
+) -> Any:
+    """Legacy browser mechanism returning originals; persistence belongs to the caller."""
+    import asyncio
+    import contextlib
+    import hashlib
+    from server.page_types import ProfileCapture
+    errors = []
+    scope_pairs = scope_pairs or set()
+    scoped = bool(scope_pairs)
+    if saved_record is not None and not scoped:
+        return ProfileCapture(saved_record['html'], None, [], {
+            'final_url': saved_record.get('meta', {}).get('final_url', url), 'restored': True})
+    recurring = None  # requests that failed on the previous open of this page
+    recurring_missing = None
+    for attempt in range(3):
+        page = None
+        retryable = True
+        try:
+            page = await browser_context.new_page()
+            page_errors = []
+            if scoped:
+                from server.browser_readiness import install_request_tracking
+                install_request_tracking(page)
+                if callable(getattr(page, 'on', None)):
+                    page.on('pageerror', lambda error: page_errors.append(
+                        {'message': str(error), 'stack': getattr(error, 'stack', '')}))
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            if response is not None and response.status >= 400:
+                retryable = response.status == 429 or response.status >= 500
+                raise RuntimeError(f"HTTP {response.status}")
+            effective_ready_selector = page_ready_selector or branch.get("profile_ready_selector")
+            if effective_ready_selector:
+                await page.locator(effective_ready_selector).wait_for(state="visible", timeout=10000)
+            if scoped:
+                with contextlib.suppress(Exception):
+                    await page.wait_for_load_state("networkidle", timeout=4000)
+            html = await page.content()
+            if not html.strip():
+                raise RuntimeError("empty rendered page")
+            proof = None
+            if scoped:
+                from server.profile_structure import (resolve_equivalent_profile_selectors,
+                                                      verify_profile_container)
+                pair = (next(iter(scope_pairs)) if len(scope_pairs) == 1 else
+                        await resolve_equivalent_profile_selectors(page, scope_pairs))
+                if pair is None:
+                    errors.append({"url": url, "status": "profile_content_selector_conflict",
+                                       "selectors": [{"profile_content_selector": selector,
+                                                      "profile_content_start_selector": start}
+                                                     for selector, start in sorted(scope_pairs,
+                                                         key=lambda item: (item[0], item[1] or ""))]})
+                else:
+                    selector, start_selector = pair
+                    local_capture = {}
+                    proof = await verify_profile_container(page, selector, start_selector,
+                                                           local_capture=local_capture,
+                                                           recurring_failures=recurring,
+                                                           recurring_missing_media=recurring_missing,
+                                                           allow_empty=True)
+                    # Raw page errors remain in the local audit; structure
+                    # proof still decides whether the profile is settled.
+                    proof['page_errors'] = page_errors
+                    if len(scope_pairs) > 1:
+                        proof["equivalent_profile_content_selectors"] = sorted(
+                            selector for selector, _ in scope_pairs)
+                    # Retain exactly the local snapshot hashed by the proof. The
+                    # browser-facing JSON never includes this raw capture.
+                    html = local_capture.get('html', html)
+                    if (proof.get("confirmed") is not True
+                            and proof.get("reason") in TRANSIENT_PROOF_REASONS and attempt < 2):
+                        # Requests still in flight or a page still settling: open
+                        # the page again rather than judge it from one moment.
+                        recurring = local_capture.get("failed_requests")
+                        recurring_missing = local_capture.get('missing_media_failures')
+                        await asyncio.sleep(1.5 * (attempt + 1))
+                        continue
+                    if (proof.get("confirmed") is not True
+                            or proof.get("html_sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest()):
+                        errors.append({"url": url, "status": "profile_content_browser_unverified",
+                                           "selector": selector,
+                                           "profile_content_start_selector": start_selector,
+                                           "browser_evidence": proof})
+                        proof = None
+            return ProfileCapture(html, proof, errors, {'final_url': getattr(page, 'url', url)})
+        except Exception as exc:
+            if retryable and attempt < 2:
+                await asyncio.sleep(0.1 * (attempt + 1))
+                continue
+            errors.append({"url": url, "status": "profile_navigation_failed",
+                               "error": f"{type(exc).__name__}: {exc}", "attempts": attempt + 1})
+            return ProfileCapture(None, None, errors, {'final_url': url})
+        finally:
+            if page is not None:
+                with contextlib.suppress(Exception):
+                    await page.close()
+
+
 async def capture_profiles(
-    browser_context: Any,
-    urls: Iterable[str],
-    concurrency: int,
-    ready_selector: str | None = None,
-    *,
+    browser_context: Any, urls: Iterable[str], concurrency: int, ready_selector: str | None = None, *,
     state: Any = None,
     profile_content_selectors: dict[str, set[tuple[str, str | None]]] | None = None,
     profile_content_evidence: dict[str, dict[str, Any]] | None = None,
     profile_type_branches: dict[str, list[dict[str, Any]]] | None = None,
     profile_type_evidence: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, str | None], list[dict[str, Any]]]:
-    """Fetch candidate pages after roster reconciliation, with bounded fan-out."""
-
+    """Execute a detail mechanism and centrally retain its originals/proofs/state."""
     import asyncio
-    import contextlib
     import hashlib
     import time
-
+    from server.page_types import (ProfileCapture, binding_for, invoke_async, normalize_branch,
+                                   requires_stage_evidence, stage_evidence_for_result)
     from server.site_limits import site_slot
-
     if concurrency < 1:
-        raise ValueError("profile concurrency must be positive")
-
+        raise ValueError('profile concurrency must be positive')
     semaphore = asyncio.Semaphore(concurrency)
-    pages: dict[str, str | None] = {}
-    unresolved: list[dict[str, Any]] = []
+    pages, unresolved = {}, []
 
-    async def capture_profile(url: str, *, page_ready_selector: str | None = None) -> None:
-        scope_pairs = (profile_content_selectors or {}).get(url, set())
-        scoped = bool(scope_pairs)
-        saved_record = state.load_page_record("profile", url) if state is not None else None
-        if state is not None:
-            saved = state.load_page("profile", url)
-            if saved is not None and not scoped:
-                pages[url] = saved
-                return
-        # Per-college fan-out first, then the site-wide slot shared with every
-        # other college of the same university running in this process.
-        async with semaphore, site_slot(url):
-            recurring = None  # requests that failed on the previous open of this page
-            recurring_missing = None
-            for attempt in range(3):
-                page = None
-                retryable = True
-                try:
-                    page = await browser_context.new_page()
-                    page_errors = []
-                    if scoped:
-                        from server.browser_readiness import install_request_tracking
-                        install_request_tracking(page)
-                        if callable(getattr(page, 'on', None)):
-                            page.on('pageerror', lambda error: page_errors.append(
-                                {'message': str(error), 'stack': getattr(error, 'stack', '')}))
-                    response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    if response is not None and response.status >= 400:
-                        retryable = response.status == 429 or response.status >= 500
-                        raise RuntimeError(f"HTTP {response.status}")
-                    effective_ready_selector = page_ready_selector or ready_selector
-                    if effective_ready_selector:
-                        await page.locator(effective_ready_selector).wait_for(state="visible", timeout=10000)
-                    if scoped:
-                        with contextlib.suppress(Exception):
-                            await page.wait_for_load_state("networkidle", timeout=4000)
-                    html = await page.content()
-                    if not html.strip():
-                        raise RuntimeError("empty rendered page")
-                    proof = None
-                    if scoped:
-                        from server.profile_structure import (resolve_equivalent_profile_selectors,
-                                                              verify_profile_container)
-                        pair = (next(iter(scope_pairs)) if len(scope_pairs) == 1 else
-                                await resolve_equivalent_profile_selectors(page, scope_pairs))
-                        if pair is None:
-                            unresolved.append({"url": url, "status": "profile_content_selector_conflict",
-                                               "selectors": [{"profile_content_selector": selector,
-                                                              "profile_content_start_selector": start}
-                                                             for selector, start in sorted(scope_pairs,
-                                                                 key=lambda item: (item[0], item[1] or ""))]})
-                        else:
-                            selector, start_selector = pair
-                            local_capture = {}
-                            proof = await verify_profile_container(page, selector, start_selector,
-                                                                   local_capture=local_capture,
-                                                                   recurring_failures=recurring,
-                                                                   recurring_missing_media=recurring_missing,
-                                                                   allow_empty=True)
-                            # Raw page errors remain in the local audit; structure
-                            # proof still decides whether the profile is settled.
-                            proof['page_errors'] = page_errors
-                            if len(scope_pairs) > 1:
-                                proof["equivalent_profile_content_selectors"] = sorted(
-                                    selector for selector, _ in scope_pairs)
-                            # Retain exactly the local snapshot hashed by the proof. The
-                            # browser-facing JSON never includes this raw capture.
-                            html = local_capture.get('html', html)
-                            if (proof.get("confirmed") is not True
-                                    and proof.get("reason") in TRANSIENT_PROOF_REASONS and attempt < 2):
-                                # Requests still in flight or a page still settling: open
-                                # the page again rather than judge it from one moment.
-                                recurring = local_capture.get("failed_requests")
-                                recurring_missing = local_capture.get('missing_media_failures')
-                                await asyncio.sleep(1.5 * (attempt + 1))
-                                continue
-                            if (proof.get("confirmed") is not True
-                                    or proof.get("html_sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest()):
-                                unresolved.append({"url": url, "status": "profile_content_browser_unverified",
-                                                   "selector": selector,
-                                                   "profile_content_start_selector": start_selector,
-                                                   "browser_evidence": proof})
-                                proof = None
-                    same_capture = bool(saved_record and saved_record["html"] == html)
-                    capture_record = saved_record if same_capture else None
-                    if state is not None and not same_capture:
-                        capture_record = state.save_page("profile", url, html,
-                            meta={"final_url": getattr(page, "url", url)})
-                    if proof is not None and profile_content_evidence is not None:
-                        from server.missing_media_review import identity
-                        for item in proof.get('missing_content_images', []):
-                            item['requested_profile_url'] = url
-                            item['id'] = identity(item)
-                        profile_content_evidence[url] = {**proof,
-                            "verified_at": time.time(),
-                            "capture_origin": "checkpoint_revalidated" if same_capture else "fresh_browser_capture",
-                            "captured_at": capture_record["captured_at"] if capture_record else time.time()}
-                    pages[url] = html
-                    return
-                except Exception as exc:
-                    if retryable and attempt < 2:
-                        await asyncio.sleep(0.1 * (attempt + 1))
-                        continue
-                    pages[url] = None
-                    unresolved.append({"url": url, "status": "profile_navigation_failed",
-                                       "error": f"{type(exc).__name__}: {exc}", "attempts": attempt + 1})
-                    return
-                finally:
-                    if page is not None:
-                        with contextlib.suppress(Exception):
-                            await page.close()
-
-    async def capture(url: str) -> None:
-        from server.page_types import binding_for, invoke_async, normalize_branch
+    async def capture(url):
         branches = [normalize_branch(branch) for branch in
-                    (profile_type_branches or {}).get(url, [{"url": url}])]
+                    (profile_type_branches or {}).get(url, [{'url': url}])]
         bindings = [binding_for(branch, 'detail') for branch in branches]
         execution = {'bindings': [binding.model_dump() for binding in bindings],
                      'source_branches': [{'url': branch.get('url'), 'binding': binding.model_dump()}
@@ -233,25 +213,85 @@ async def capture_profiles(
         if profile_type_evidence is not None:
             profile_type_evidence[url] = execution
         ready_selectors = {branch.get('profile_ready_selector', ready_selector) for branch in branches}
-        # Content selector differences are reconciled against the same rendered
-        # page below; retain that snapshot even when the scopes differ. Different
-        # implementations or readiness conditions have no shared execution proof.
         implementations = {(binding.type_id, binding.implementation_version) for binding in bindings}
         if len(implementations) > 1 or len(ready_selectors) > 1:
             pages[url] = None
-            unresolved.append({"url": url, "status": "profile_page_type_conflict"})
+            unresolved.append({'url': url, 'status': 'profile_page_type_conflict'})
             return
-        await invoke_async('detail', branches[0], capture_profile, url,
-                           page_ready_selector=next(iter(ready_selectors)))
-        execution['executed_page_type_roles'].append('detail')
-        if profile_content_evidence is not None and url in profile_content_evidence:
-            profile_content_evidence[url]['detail_page_type'] = bindings[0].model_dump()
-        if url not in pages:
+        scope_pairs = (profile_content_selectors or {}).get(url, set()) or {
+            (branch['profile_content_selector'], branch.get('profile_content_start_selector'))
+            for branch in branches if branch.get('profile_content_selector')}
+        saved_record = state.load_page_record('profile', url) if state is not None else None
+        try:
+            async with semaphore, site_slot(url):
+                result = await invoke_async('detail', branches[0], capture_profile_stage,
+                    browser_context, url, branches[0], scope_pairs=scope_pairs,
+                    page_ready_selector=next(iter(ready_selectors)), saved_record=saved_record)
+            execution['executed_page_type_roles'].append('detail')
+        except ValueError:
             pages[url] = None
             unresolved.append({'url': url, 'status': 'profile_page_type_output_invalid'})
+            return
+        if not isinstance(result, ProfileCapture):
+            pages[url] = None
+            unresolved.append({'url': url, 'status': 'profile_page_type_output_invalid'})
+            return
+        unresolved.extend(result.errors)
+        html, proof = result.html, result.proof
+        if requires_stage_evidence('detail', branches[0]):
+            if any(binding != bindings[0] for binding in bindings[1:]):
+                unresolved.append({'url': url, 'status': 'profile_page_type_conflict'})
+                proof = None
+            else:
+                try:
+                    execution['stage_evidence'] = await stage_evidence_for_result(
+                        'detail', branches[0], result, requested_url=url)
+                except ValueError:
+                    unresolved.append({'url': url, 'status': 'profile_stage_evidence_unverified'})
+                    proof = None
+        if html is None or not html.strip():
+            pages[url] = None
+            if not result.errors:
+                unresolved.append({'url': url, 'status': 'profile_page_type_output_invalid'})
+            return
+        # Preserve readable originals even when the handler's structure proof fails.
+        pages[url] = html
+        same_capture = bool(saved_record and saved_record['html'] == html)
+        capture_record = saved_record if same_capture else None
+        if state is not None and not same_capture:
+            capture_record = state.save_page('profile', url, html,
+                meta={'final_url': result.meta.get('final_url', url)})
+        if proof is not None and (proof.get('confirmed') is not True
+                or proof.get('html_sha256') != hashlib.sha256(html.encode('utf-8')).hexdigest()):
+            unresolved.append({'url': url, 'status': 'profile_content_browser_unverified',
+                               'browser_evidence': proof})
+            proof = None
+        if scope_pairs and proof is None and not result.errors:
+            unresolved.append({'url': url, 'status': 'profile_content_browser_unverified'})
+        if proof is not None and profile_content_evidence is not None:
+            from server.missing_media_review import identity
+            for item in proof.get('missing_content_images', []):
+                item['requested_profile_url'] = url
+                item['id'] = identity(item)
+            profile_content_evidence[url] = {**proof, 'detail_page_type': bindings[0].model_dump(),
+                'verified_at': time.time(),
+                'capture_origin': 'checkpoint_revalidated' if same_capture else 'fresh_browser_capture',
+                'captured_at': capture_record['captured_at'] if capture_record else time.time()}
 
     await asyncio.gather(*(capture(url) for url in dict.fromkeys(urls)))
     return pages, unresolved
+
+
+async def prepare_entrance_stage(context: Any, branch: dict[str, Any], *, discover_children=None):
+    """Legacy entrance identifies leaf sources; paging always belongs to its stage."""
+    from server.page_types import EntranceCapture
+    if branch.get('kind') == 'navigation':
+        if discover_children is None:
+            from server.browser_batch_tool import _discover_children
+            discover_children = _discover_children
+        html, urls, errors, evidence = await discover_children(context, branch)
+        return EntranceCapture(html, urls, errors, evidence)
+    return EntranceCapture(None, [branch['url']], [], {'url': branch['url'], 'kind': branch.get('kind', 'roster')})
 
 
 async def capture_sources(
@@ -269,7 +309,8 @@ async def capture_sources(
     No arbitrary recursion is introduced here; the plan remains the boundary.
     """
 
-    from server.page_types import invoke_async, normalize_branch
+    from server.page_types import (EntranceCapture, invoke_async, normalize_branch,
+                                   requires_stage_evidence, stage_evidence_for_result)
 
     result = SourceCapture()
 
@@ -280,13 +321,24 @@ async def capture_sources(
                 and (branch.get('next_selector') or pagination['type_id'] != 'pagination.single_page'
                      or pagination['implementation_version'] != 1)):
             raise ValueError('explicit navigation pagination is not applicable; re-identify a supported entrance')
+        async def entrance_operation(context, branch):
+            return await prepare_entrance_stage(context, branch, discover_children=discover_children)
+        entrance = await invoke_async('entrance', branch, entrance_operation, browser_context, branch)
+        if not isinstance(entrance, EntranceCapture):
+            raise ValueError('entrance implementation must return EntranceCapture')
+        html, child_urls, errors, evidence = (entrance.html, entrance.source_urls,
+                                             list(entrance.errors), dict(entrance.evidence))
+        evidence.update(page_types=branch['page_types'], executed_page_type_roles=['entrance'])
+        if requires_stage_evidence('entrance', branch):
+            try:
+                evidence['stage_evidence'] = await stage_evidence_for_result(
+                    'entrance', branch, entrance, requested_url=branch['url'])
+            except ValueError:
+                errors.append({'url': branch['url'], 'status': 'entrance_stage_evidence_unverified'})
         if branch.get("kind") == "navigation":
-            html, child_urls, errors, evidence = await invoke_async(
-                'entrance', branch, discover_children, browser_context, branch)
             if evidence.get('url') != branch['url'] or (not html and not errors):
                 errors.append({'url': branch['url'], 'status': 'page_type_output_invalid',
                                'reason': 'entrance_output_scope_or_capture_missing'})
-            evidence = {**evidence, 'page_types': branch['page_types'], 'executed_page_type_roles': ['entrance']}
             if html is not None:
                 result.navigation_pages.append((branch["url"], html))
             result.unresolved.extend({**item, "branch_url": parent_url or branch["url"]} for item in errors)
@@ -299,6 +351,12 @@ async def capture_sources(
                 evidence["profile_intro_link_count"] = len(introductions)
                 return evidence
             discovered = list(dict.fromkeys(child_urls))
+            bounded_children = discovered
+            if branch.get('max_children') is not None and len(discovered) > branch['max_children']:
+                result.unresolved.append({'url': branch['url'], 'branch_url': parent_url or branch['url'],
+                                          'status': 'child_limit_reached', 'discovered': len(discovered),
+                                          'limit': branch['max_children']})
+                bounded_children = discovered[:branch['max_children']]
             if 'child_branches' in branch:
                 by_url: dict[str, list[dict]] = {}
                 for child in branch['child_branches']:
@@ -308,7 +366,7 @@ async def capture_sources(
                         result.unresolved.append({"url": url, "branch_url": parent_url or branch['url'],
                             "status": "child_roster_not_verified", "reason":
                             "child_binding_duplicate" if len(children) != 1 else "child_binding_not_discovered"})
-                for child_url in discovered:
+                for child_url in bounded_children:
                     bindings = by_url.get(child_url, [])
                     if len(bindings) != 1:
                         if not bindings:
@@ -318,7 +376,7 @@ async def capture_sources(
                     child_evidence = await capture_one(bindings[0], parent_url or branch['url'])
                     evidence.setdefault('child_visits', []).append(child_evidence)
             else:
-                for child_url in discovered:
+                for child_url in bounded_children:
                     child_branch = {**branch["child_branch"], "url": child_url}
                     if "profile_content_selector" in branch and "profile_content_selector" not in child_branch:
                         child_branch["profile_content_selector"] = branch["profile_content_selector"]
@@ -328,13 +386,19 @@ async def capture_sources(
                     evidence.setdefault('child_visits', []).append(child_evidence)
             return evidence
 
-        pages, errors, evidence = await invoke_async(
-            'entrance', branch, capture_branch, browser_context, branch)
-        if evidence.get('url') != branch['url'] or (not pages and not errors):
+        if evidence.get('url') != branch['url'] or child_urls != [branch['url']]:
             errors.append({'url': branch['url'], 'status': 'page_type_output_invalid',
-                           'reason': 'entrance_output_scope_or_capture_missing'})
-        evidence = {**evidence, 'kind': branch.get('kind', 'roster'), 'page_types': branch['page_types'],
-                    'executed_page_type_roles': ['entrance', *evidence.get('executed_page_type_roles', [])]}
+                           'reason': 'entrance_source_scope_mismatch'})
+        if errors:
+            result.unresolved.extend({**item, 'branch_url': parent_url or branch['url']} for item in errors)
+            return evidence
+        pages, errors, pagination_evidence = await capture_branch(browser_context, branch)
+        if pagination_evidence.get('url') != branch['url'] or (not pages and not errors):
+            errors.append({'url': branch['url'], 'status': 'page_type_output_invalid',
+                           'reason': 'pagination_output_scope_or_capture_missing'})
+        evidence = {**pagination_evidence, 'entrance_evidence': evidence,
+                    'kind': branch.get('kind', 'roster'), 'page_types': branch['page_types'],
+                    'executed_page_type_roles': ['entrance', *pagination_evidence.get('executed_page_type_roles', [])]}
         result.roster_pages.extend(
             CapturedRosterPage(url, page_html, branch, evidence.get("empty_roster"),
                                evidence.get("table_images", {}).get(url), evidence.get('source_roles', {}).get(url))

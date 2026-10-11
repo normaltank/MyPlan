@@ -24,7 +24,12 @@ class HarvestState:
             raise ValueError("max_age_seconds must be finite and positive")
         canonical = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
         self.plan_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        self.directory = Path(directory).resolve() / "page-state" / self.plan_digest
+        from server.page_types import selected_implementation_digest
+        self.implementation_digest = selected_implementation_digest(plan, only_nonlegacy=True)
+        partition = self.plan_digest
+        if self.implementation_digest:
+            partition += '-' + self.implementation_digest
+        self.directory = Path(directory).resolve() / "page-state" / partition
         self.html_directory = self.directory / "html"
         self.html_directory.mkdir(parents=True, exist_ok=True)
         self.db_path = self.directory / "pages.sqlite3"
