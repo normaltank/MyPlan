@@ -13,6 +13,7 @@ browser_navigate 已返回页面摘要（标题、标题行、常见正文容器
 工具即时检查格式、目标与本轮浏览器证据。accepted:false 时按 issues 的字段路径和错误码修正；accepted:true 后立即结束，回复“计划已提交”，无需再次抄写 JSON。
 提交参数示例（示例 URL 必须替换为本轮实际核实的 URL）：
 {{"plan":{{"school":"{school}","college":"{college}","branches":[{{"url":"https://example.edu/faculty/","source_role":"faculty_roster","source_container_selector":"main .faculty-list","role_evidence_selector":"main h1","source_context_selector":"header .college-name"}}]}}}}
+计划被拒后，按具体 failed_condition 补足缺少的证据。重复打开同页、保存新副本、取得同样的验证回执不会自动算进展；新的相关导航范围、有效结构配置或原件选区事实才允许重新尝试。工具返回 recon_gate_stalled 时保留当前未知范围并结束本阶段，不能再用无关 JS、截图或目录查询重置计数；复杂学院仍可继续核实新的分支。
 
 本工单：
 目标学校：{school}

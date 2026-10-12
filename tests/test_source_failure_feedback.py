@@ -44,6 +44,62 @@ def test_unknown_purpose_is_distinct_from_unreadable_or_wrong_institution():
     assert 'not_faculty_roster' not in issue['failed_conditions']
 
 
+def test_disposition_rejection_preserves_the_actual_missing_source_conditions():
+    from server.recon_contract import disposition_event_issues
+    item = {**{key: BRANCH[key] for key in SOURCE_FIELDS}, 'url': URL,
+            'reason': 'not_faculty_roster', 'source_role': 'organizational_membership'}
+    args = {key: item[key] for key in SOURCE_FIELDS}
+    value = {**proof(), **args, 'confirmed': False, 'witness_visible': False}
+    history = events(value, unit=None)
+    history[0]['data']['arguments'] = json.dumps(args)
+    issue, = disposition_event_issues({'source_dispositions': [item]}, history)
+    assert issue['status'] == 'source_disposition_unverified'
+    assert issue['failed_condition'] == 'source_witness_not_visible'
+    assert issue['closest_observation']['witness_visible'] is False
+    assert issue['reason'] == 'not_faculty_roster' and issue['need']
+
+
+def test_unknown_purpose_cannot_be_excluded_and_the_feedback_names_that_condition():
+    from server.recon_contract import disposition_event_issues
+    item = {**{key: BRANCH[key] for key in SOURCE_FIELDS}, 'url': URL,
+            'reason': 'not_faculty_roster', 'source_role': 'organizational_membership'}
+    args = {key: item[key] for key in SOURCE_FIELDS}
+    value = {**proof('人员展示'), **args, 'role_supported': True, 'confirmed': True}
+    history = events(value, unit=None)
+    history[0]['data']['arguments'] = json.dumps(args)
+    issue, = disposition_event_issues({'source_dispositions': [item]}, history)
+    assert issue['failed_condition'] == 'non_faculty_purpose_unverified'
+    assert issue['closest_observation']['non_faculty_purpose'] is False
+    assert 'unknown' in issue['need']
+
+
+def test_unreadable_disposition_needs_an_actual_access_failure():
+    from server.recon_contract import disposition_event_issues
+    history = events(proof())
+    history[0]['data'].update(name='mcp__playwright__browser_navigate', arguments=json.dumps({'url': URL}))
+    block = history[1]['data']['message']['content'][0]
+    block['content'][0]['text'] = json.dumps({'url': URL, 'status': 200, 'source_html_sha256': 'a' * 64})
+    item = {'url': URL, 'reason': 'source_unreadable'}
+    issue, = disposition_event_issues({'source_dispositions': [item]}, history)
+    assert issue['failed_condition'] == 'access_failure_not_observed'
+    assert issue['closest_observation']['status'] == 200
+
+
+def test_relationship_disposition_reports_role_binding_instead_of_a_proven_purpose():
+    from server.recon_contract import disposition_event_issues
+    item = {**{key: BRANCH[key] for key in SOURCE_FIELDS}, 'url': URL,
+            'reason': 'source_relationship_unverified', 'source_role': 'organizational_membership'}
+    args = {key: item[key] for key in SOURCE_FIELDS}
+    value = {**proof('学院领导'), **args, 'role_supported': True,
+             'confirmed': True, 'non_faculty_purpose': True}
+    history = events(value, unit=None)
+    history[0]['data']['arguments'] = json.dumps(args)
+    issue, = disposition_event_issues({'source_dispositions': [item]}, history)
+    assert issue['failed_condition'] == 'unknown_source_role_binding_missing'
+    assert issue['closest_observation']['non_faculty_purpose'] is True
+    assert 'source_role=unverified_people_source' in issue['need']
+
+
 def test_latest_exact_failed_call_retires_prior_success_and_explains_all_failures():
     good = proof()
     bad = {**good, 'confirmed': False, 'college_bound': False, 'witness_visible': False,

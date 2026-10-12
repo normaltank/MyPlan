@@ -56,7 +56,7 @@ async def test_rejection_names_the_branch_the_failed_condition_and_the_missing_p
 
 
 @pytest.mark.asyncio
-async def test_identical_resubmission_is_not_judged_again_and_the_second_ends_the_session(tmp_path):
+async def test_identical_rejected_state_returns_the_same_feedback_and_the_second_ends_the_session(tmp_path):
     scout = BrowserScout(None, tmp_path, "branch", TARGET)
     first = body(await scout.call("submit_plan", {"plan": BRANCH}))
     again = body(await scout.call("submit_plan", {"plan": BRANCH}))
@@ -68,6 +68,85 @@ async def test_identical_resubmission_is_not_judged_again_and_the_second_ends_th
     assert fresh["submission"] == 2 and "unchanged_resubmission" not in fresh
     assert body(await scout.call("submit_plan", {"plan": BRANCH}))["unchanged_resubmission"] == 2
     assert body(await scout.call("submit_plan", {"plan": BRANCH}))["stop"] == "recon_gate_stalled"
+
+
+@pytest.mark.asyncio
+async def test_reopening_and_repeating_identical_proofs_does_not_reset_the_gate(tmp_path):
+    scout = BrowserScout(None, tmp_path, "branch", TARGET)
+    scout.events.extend(roster(PROFILES[:1]))
+    first = body(await scout.call('submit_plan', {'plan': BRANCH}))
+    for i in range(2):
+        duplicate = roster(PROFILES[:1])
+        duplicate[0]['data']['callId'] = f'repeat-{i}'
+        block = duplicate[1]['data']['message']['content'][0]
+        block['toolCallId'] = f'repeat-{i}'
+        payload = json.loads(block['content'][0]['text'])
+        payload['original_path'] = str(tmp_path / f'new-copy-{i}.html')
+        block['content'][0]['text'] = json.dumps(payload)
+        scout.events.extend(duplicate)
+        result = body(await scout.call('submit_plan', {'plan': BRANCH}))
+        assert result.get('unchanged_resubmission') == first['submission']
+    assert result['stop'] == 'recon_gate_stalled'
+
+
+@pytest.mark.asyncio
+async def test_new_navigation_ranges_allow_complex_discovery_to_continue(tmp_path):
+    scout = BrowserScout(None, tmp_path, 'branch', TARGET)
+    first = body(await scout.call('submit_plan', {'plan': BRANCH}))
+    for i in range(5):
+        scout.events.extend(event('browser_navigation', {'selector': 'nav', 'offset': i},
+            {'url': URL, 'items': [{'url': f'{URL}/branch-{i}'}], 'nextOffset': i + 1}, f'nav-{i}'))
+        reply = body(await scout.call('submit_plan', {'plan': BRANCH}))
+        assert 'unchanged_resubmission' not in reply and 'stop' not in reply
+        assert reply['submission'] > first['submission']
+        repeat = body(await scout.call('submit_plan', {'plan': BRANCH}))
+        assert 'stop' not in repeat
+
+
+@pytest.mark.asyncio
+async def test_arbitrary_js_results_do_not_make_a_rejected_plan_new(tmp_path):
+    scout = BrowserScout(None, tmp_path, 'branch', TARGET)
+    await scout.call('submit_plan', {'plan': BRANCH})
+    for i in range(2):
+        scout.events.extend(event('browser_evaluate', {'function': '() => Date.now()'},
+            {'clock': i}, f'evaluate-{i}'))
+        reply = body(await scout.call('submit_plan', {'plan': BRANCH}))
+    assert reply['stop'] == 'recon_gate_stalled'
+
+
+@pytest.mark.asyncio
+async def test_changed_effective_params_and_relevant_scope_allow_resubmission(tmp_path):
+    scout = BrowserScout(None, tmp_path, 'branch', TARGET)
+    for i, selector in enumerate(['.cards>li', '.other>li', '.other>li']):
+        scout.events.extend(event('browser_verify', {'card_selector': selector},
+            {'url': URL, 'cardCount': 1, 'selected_scope_sha256': str(i) * 64,
+             'profileSamples': PROFILES[:1], 'pagination': {'total': 0}}, f'proof-{i}'))
+        reply = body(await scout.call('submit_plan', {'plan': BRANCH}))
+        assert 'unchanged_resubmission' not in reply and 'stop' not in reply
+
+
+@pytest.mark.asyncio
+async def test_unrelated_document_clock_does_not_reset_a_bound_scope(tmp_path):
+    scout = BrowserScout(None, tmp_path, 'branch', TARGET)
+    for i in range(3):
+        scout.events.extend(event('browser_verify', {'card_selector': '.cards>li'},
+            {'url': URL, 'cardCount': 1, 'selected_scope_sha256': 'a' * 64,
+             'source_html_sha256': str(i) * 64,
+             'profileSamples': PROFILES[:1], 'pagination': {'total': 0}}, f'clock-{i}'))
+        reply = body(await scout.call('submit_plan', {'plan': BRANCH}))
+    assert reply.get('stop') == 'recon_gate_stalled'
+
+
+@pytest.mark.asyncio
+async def test_empty_previous_navigation_receipts_do_not_reset_the_gate(tmp_path):
+    scout = BrowserScout(None, tmp_path, 'branch', TARGET)
+    for i, failures in enumerate([None, [], []]):
+        scout.events.extend(event('browser_verify', {'card_selector': '.cards>li'},
+            {'url': URL, 'cardCount': 1, 'selected_scope_sha256': 'a' * 64,
+             'source_request_evidence': {'previous_navigation_failures': failures},
+             'profileSamples': PROFILES[:1], 'pagination': {'total': 0}}, f'empty-{i}'))
+        reply = body(await scout.call('submit_plan', {'plan': BRANCH}))
+    assert reply['stop'] == 'recon_gate_stalled'
 
 
 def test_profile_failure_is_page_only_when_too_few_linked_pages_can_still_pass():

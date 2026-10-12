@@ -170,9 +170,8 @@ class BrowserScout:
         self._image_reads: dict[str, dict] = {}
         self._observed_forward_selectors: dict[tuple[str, str], set[str]] = {}
         self._unproved_navigation_actions: set[tuple[str, str, str]] = set()
-        # Rejected submissions by everything the gate reads: plan, evidence, DOM state.
-        self._rejections: dict[tuple, tuple[int, list[dict]]] = {}
-        self._unchanged_resubmissions = 0
+        # Rejected plans by meaningful observations and actual failed conditions.
+        self._rejections: dict[tuple, tuple[int, list[dict], int]] = {}
         from server.empty_roster import install_empty_roster_tracking
         install_empty_roster_tracking(page)
 
@@ -263,21 +262,24 @@ class BrowserScout:
             if self._dom_modified:
                 return {**self.text_result({"accepted": False, "issues": [
                     {"path": "$", "status": "browser_dom_modified"}]}), "isError": True}
-            # The gate is a function of the plan and this session's evidence, so an
-            # identical resubmission with no new browser call cannot pass.
-            key = (plan_digest(plan), len(self.events))
+            from server.recon_progress import observation_fingerprint
+            issues = validate_submission(plan, self.phase, self.target, self.events)
+            if not issues:
+                self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
+                return self.text_result({"accepted": True, "digest": plan_digest(plan)})
+            key = (plan_digest(plan), observation_fingerprint(self.events, issues))
             if key in self._rejections:
-                self._unchanged_resubmissions += 1
-                number, issues = self._rejections[key]
+                number, _, repetitions = self._rejections[key]
+                repetitions += 1
+                self._rejections[key] = (number, issues, repetitions)
                 reply = {"accepted": False, "unchanged_resubmission": number, "issues": issues,
-                         "retry": "Same plan and no new browser evidence since this submission was rejected. "
+                         "retry": "Same plan, observations and failed conditions as an earlier rejected submission. "
                                   "Collect the proof each issue's need names before submitting again."}
-                if self._unchanged_resubmissions >= UNCHANGED_RESUBMISSIONS_STOP:
+                if repetitions >= UNCHANGED_RESUBMISSIONS_STOP:
                     reply["stop"] = "recon_gate_stalled"
                 return {**self.text_result(reply), "isError": True}
-            issues = validate_submission(plan, self.phase, self.target, self.events)
             if issues:
-                self._rejections[key] = (len(self._rejections) + 1, issues)
+                self._rejections[key] = (len(self._rejections) + 1, issues, 0)
                 reply = {"accepted": False, "submission": len(self._rejections), "issues": issues,
                          "retry": "Each issue names its url, failed_condition, closest observation and the "
                                   "proof it still needs: collect that proof in the browser, then resubmit."}
@@ -285,8 +287,6 @@ class BrowserScout:
                     # Every failure is a page fact seen on two opens; no plan passes it.
                     reply["stop"] = "recon_page_unverifiable"
                 return {**self.text_result(reply), "isError": True}
-            self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
-            return self.text_result({"accepted": True, "digest": plan_digest(plan)})
         cid = str(len(self.events))
         source_url = self.page.url if name == 'browser_verify_source' else None
         call_data = {'callId': cid, 'name': 'mcp__playwright__' + name,

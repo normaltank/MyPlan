@@ -186,7 +186,7 @@ def navigation_observations(events: list[dict]) -> dict[str, dict]:
 
 
 def disposition_event_issues(plan: dict, events: list[dict]) -> list[dict]:
-    from server.source_qualification import source_event_proof
+    from server.source_qualification import source_event_issues, source_event_proof
     visits = navigation_observations(events)
     issues = []
     for item in plan.get('source_dispositions', []):
@@ -206,7 +206,37 @@ def disposition_event_issues(plan: dict, events: list[dict]) -> list[dict]:
                 valid = bool(re.fullmatch(r'[0-9a-f]{64}', str(visit.get('source_html_sha256', '')))
                              and not visit.get('error'))
         if not valid:
-            issues.append({'url': url, 'status': 'source_disposition_unverified'})
+            detail = {}
+            if reason in {'not_faculty_roster', 'source_relationship_unverified'}:
+                if proof is None:
+                    detail = source_event_issues(item, events)[0]
+                else:
+                    detail = {
+                        'failed_condition': ('non_faculty_purpose_unverified' if reason == 'not_faculty_roster'
+                                             else 'unknown_source_role_binding_missing'),
+                        'closest_observation': {key: proof[key] for key in (
+                            'url', 'confirmed', 'non_faculty_purpose', 'college_bound',
+                            'witness_visible', 'role_supported', 'source_html_sha256',
+                            'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256',
+                            'original_path', 'evidence_path') if key in proof},
+                        'need': ('source_relationship_unverified requires source_role=unverified_people_source '
+                                 'with its exact current browser proof. ' if reason == 'source_relationship_unverified'
+                                 else 'not_faculty_roster needs an affirmative current non-faculty purpose. ') +
+                                'Unknown purpose is still unknown; retain the original and missing conditions '
+                                'with source_relationship_unverified and a verified unverified_people_source '
+                                'witness, or obtain the missing purpose/affiliation proof. No teacher is admitted.'}
+            else:
+                detail = {
+                    'failed_condition': ('source_not_opened' if not visit else
+                        'access_failure_not_observed' if reason == 'source_unreadable' else
+                        'source_navigation_failed' if visit.get('error') else 'source_snapshot_binding_missing'),
+                    'closest_observation': {key: visit[key] for key in (
+                        'url', 'requested_url', 'final_url', 'status', 'error', 'source_html_sha256',
+                        'original_path') if key in visit},
+                    'need': 'Open this source in the browser and retain its actual access result and original. '
+                            'source_unreadable requires an observed error or HTTP failure; an unresolved readable '
+                            'source requires its captured original. Preserve the unknown scope.'}
+            issues.append({**detail, 'url': url, 'reason': reason, 'status': 'source_disposition_unverified'})
     return issues
 
 

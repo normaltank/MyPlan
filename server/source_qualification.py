@@ -658,6 +658,7 @@ def source_event_issues(branch: dict, events: list[dict]) -> list[dict]:
                 'units_within_scope', 'college_bound', 'title_bound', 'current_link_bound', 'role_supported',
                 'witness_visible', 'dom_stable', 'network_idle', 'confirmed', 'reason', 'source_context_issue',
                 'source_scope_issue', 'pagination_relationship_issue', 'faculty_group_path', 'source_html_sha256',
+                'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256',
                 'original_path', 'evidence_path') if key in proof})
     return [issue]
 
