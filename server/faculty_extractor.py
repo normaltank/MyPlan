@@ -1175,6 +1175,7 @@ class FacultyHarvestPipeline:
         verified_profile_urls: Optional[Set[str]] = None,
         title_field_evidence: Optional[Dict[Tuple[str, str], Tuple[TitleField, ...]]] = None,
         defer_homepage_projection: bool = False,
+        unverified_profile_urls: Optional[Set[str]] = None,
     ) -> Dict:
         import datetime
         if not date_str:
@@ -1206,6 +1207,9 @@ class FacultyHarvestPipeline:
         if base_url:
             no_profile_pages.add(base_url)
         for cand in candidates:
+            if cand.url in (unverified_profile_urls or ()):
+                fetch_results.append((cand, None, 'scope_unverified'))
+                continue
             if not cand.url or cand.url in no_profile_pages: # profile-less faculty
                 fetch_results.append((cand, None, "no_profile"))
                 continue
@@ -1322,6 +1326,8 @@ class FacultyHarvestPipeline:
             if status.startswith("fetch_failed"):
                 unresolved.append({"姓名": cand.name, "主页": cand.url, "status": status})
                 continue
+            if status == 'scope_unverified':
+                unresolved.append({'姓名': cand.name, '主页': cand.url, 'status': 'profile_content_not_verified'})
             issues_before = len(unresolved)
 
             email = ""

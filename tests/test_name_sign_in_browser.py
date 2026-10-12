@@ -95,9 +95,9 @@ def test_two_colleagues_share_work_review_download_and_named_stats(tmp_path, mon
                 assert colleague.url == base + f'/review/task/{a_id}'
                 alice.locator('#reviewBtn').click()
                 alice.locator('textarea').fill('人工核对后的文字')
-                alice.locator('.card button').click()
-                alice.wait_for_function("document.querySelector('.card .status').textContent.length > 0")
-                assert '已保存复核决定' in alice.locator('.card .status').inner_text()
+                assert alice.get_by_role('button', name='确认无师资', exact=True).is_visible()
+                alice.get_by_role('button', name='确认这行文字', exact=True).click()
+                alice.get_by_text('已保存复核决定', exact=True).wait_for()
                 alice.locator('#retry-review').click()
                 alice.get_by_text('已重新入队').wait_for()
                 assert queue.get_task(a_id).status == 'queued'
