@@ -686,6 +686,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                     unresolved.append({'url': page.url, 'status': 'source_role_evidence_unverified',
                                        'reason': 'source_verification_failed'})
                 evidence.setdefault('source_roles', {})[page.url] = source_proof
+                evidence.setdefault('related_source_originals', []).extend(captured_source.get('related_sources', []))
                 html = captured_source.get('html') or html
             if branch.get("kind") == "image_table":
                 from server.image_table_browser import verify_table_images

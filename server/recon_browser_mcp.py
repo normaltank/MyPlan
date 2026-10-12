@@ -88,7 +88,9 @@ TOOLS = [
          {"urls": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 8}}, ("urls",)),
     tool("browser_structure", "Read repeated DOM subtree containers and counts; inspect their returned CSS paths.", RANGE),
     tool('browser_verify_source', 'Capture the complete current source scope, actual page purpose title/current navigation and target-college context. '
-         'A role enum alone does not prove faculty membership. Unknown/organizational sources remain auxiliary observations.',
+         'A role enum alone does not prove faculty membership. A faculty-group continuation may require one native canonical-root '
+         'read and visible reciprocal roster pager links. Large full_source_result packets are complete local hashed evidence, '
+         'automatically checked by submission; never narrow a source just to shorten its proof. Unknown/organizational sources remain auxiliary observations.',
          {'source_role': {'type': 'string', 'enum': ['faculty_roster', 'organizational_membership', 'unverified_people_source']},
           'source_container_selector': STRING, 'role_evidence_selector': STRING, 'source_context_selector': STRING,
           'unit_selector': STRING},
@@ -285,19 +287,37 @@ class BrowserScout:
                 return {**self.text_result(reply), "isError": True}
             self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
             return self.text_result({"accepted": True, "digest": plan_digest(plan)})
+        cid = str(len(self.events))
+        source_url = self.page.url if name == 'browser_verify_source' else None
+        call_data = {'callId': cid, 'name': 'mcp__playwright__' + name,
+                     'arguments': json.dumps(arguments)}
+        if source_url is not None:
+            call_data['source_url'] = source_url
+        self.events.append({'type': 'tool/call', 'data': call_data})
         try:
             reply = await self._browser_call(name, arguments)
         except Exception as exc:
-            if name != 'browser_navigate':
+            if name == 'browser_verify_source':
+                from server.source_qualification import SOURCE_EVIDENCE_VERSION, SOURCE_FIELDS, digest
+                failed = {'url': self.page.url, 'source_call_url': source_url,
+                    'source_evidence_version': SOURCE_EVIDENCE_VERSION,
+                    **{key: arguments.get(key) for key in SOURCE_FIELDS},
+                    'unit_selector': arguments.get('unit_selector'),
+                    'status': 'browser_source_verification_failed', 'error_type': type(exc).__name__}
+                import contextlib
+                with contextlib.suppress(Exception):
+                    original = await self.page.content()
+                    failed['source_html_sha256'] = digest(original)
+                    failed['original_path'] = str(self.save('source-error.html', original.encode('utf8')))
+                failed['evidence_path'] = str(self.save('source-error.json', json.dumps(failed, ensure_ascii=False)))
+                reply = {**self.text_result(failed), 'isError': True}
+            elif name != 'browser_navigate':
                 raise
-            reply = {**self.text_result({'requested_url': arguments['url'],
-                                         'error': type(exc).__name__}), 'isError': True}
-        cid = str(len(self.events))
-        self.events.extend([
-            {"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
-                                            "arguments": json.dumps(arguments)}},
-            {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": cid, **reply}]}}},
-        ])
+            else:
+                reply = {**self.text_result({'requested_url': arguments['url'],
+                                             'error': type(exc).__name__}), 'isError': True}
+        self.events.append({'type': 'tool/result', 'data': {
+            'message': {'content': [{'toolCallId': cid, **reply}]}}})
         return reply
 
     async def _people(self) -> dict | None:
@@ -534,13 +554,35 @@ class BrowserScout:
                 await self.snapshot()
         elif name == 'browser_verify_source':
             from server.source_qualification import verify_source
+            source_call_url = self.page.url
             captured = {}
             value = await verify_source(self.page, arguments, self.target or {}, local_capture=captured)
+            value['source_call_url'] = source_call_url
             if captured.get('html'):
                 value['original_path'] = str(self.save('source.html', captured['html'].encode('utf-8')))
+            for related in captured.get('related_sources', []):
+                related_path = str(self.save('source-parent.html', related['html'].encode('utf-8')))
+                relation = value.get('pagination_relationship') or {}
+                if related['url'] == relation.get('root_url'):
+                    relation['root_original_path'] = related_path
+                value.setdefault('related_source_originals', []).append({
+                    'url': related['url'], 'original_path': related_path})
             witness_path = self.save('source-witness.json', json.dumps(value, ensure_ascii=False))
             value['evidence_path'] = str(witness_path)
             await self.snapshot()
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf8')
+            if len(encoded) > MAX_INLINE_BYTES:
+                complete_path = self.save('source-result.json', encoded)
+                preview = {key: value[key] for key in (
+                    'url', 'source_call_url', 'source_evidence_version', 'source_role',
+                    'source_container_selector', 'role_evidence_selector', 'source_context_selector',
+                    'unit_selector', 'units_within_scope', 'scope_count', 'role_count', 'context_count',
+                    'confirmed', 'role_supported', 'college_bound', 'witness_visible', 'dom_stable',
+                    'network_idle', 'reason', 'faculty_group_path', 'pagination_relationship_issue',
+                    'source_html_sha256', 'original_path', 'evidence_path') if key in value}
+                preview['full_source_result'] = {'sha256': hashlib.sha256(encoded).hexdigest(),
+                                                'evidence_path': str(complete_path)}
+                return self.text_result(preview)
         elif name == "browser_verify":
             from server.page_types import binding_for, normalize_branch, ROLE_PARAMETERS
             # This tool proves the roster mechanism, not the applicability of

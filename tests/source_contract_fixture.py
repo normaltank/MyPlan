@@ -46,7 +46,7 @@ def source_events(branch, target=None, cid='fixture-source'):
     args = {key: branch[key] for key in SOURCE_FIELDS}
     if source_unit_selector(branch):
         args['unit_selector'] = source_unit_selector(branch)
-    return [{'type': 'tool/call', 'data': {'callId': cid, 'name': 'mcp__playwright__browser_verify_source', 'arguments': json.dumps(args)}},
+    return [{'type': 'tool/call', 'data': {'callId': cid, 'source_url': branch['url'], 'name': 'mcp__playwright__browser_verify_source', 'arguments': json.dumps(args)}},
             {'type': 'tool/result', 'data': {'message': {'content': [{'toolCallId': cid, 'content': [{'type': 'text', 'text': json.dumps(proof(branch, target))}]}]}}}]
 
 

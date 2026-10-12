@@ -399,6 +399,8 @@ async def capture_sources(
         evidence = {**pagination_evidence, 'entrance_evidence': evidence,
                     'kind': branch.get('kind', 'roster'), 'page_types': branch['page_types'],
                     'executed_page_type_roles': ['entrance', *pagination_evidence.get('executed_page_type_roles', [])]}
+        for related in evidence.pop('related_source_originals', []):
+            result.navigation_pages.append((related['url'], related['html']))
         result.roster_pages.extend(
             CapturedRosterPage(url, page_html, branch, evidence.get("empty_roster"),
                                evidence.get("table_images", {}).get(url), evidence.get('source_roles', {}).get(url))
