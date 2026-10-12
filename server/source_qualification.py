@@ -57,6 +57,39 @@ def faculty_purpose(text: str, target: dict) -> bool:
     return bool(_FACULTY_PURPOSE.fullmatch(_purpose_label(text, target)))
 
 
+def _faculty_rank_path(heading, title: str, url: str, target: dict) -> bool:
+    """A visible current-position path can bind a rank child to its faculty parent."""
+    from server.titles import TITLE_KEYWORDS
+
+    # A general menu or an unrelated sidebar cannot supply this relationship.
+    # The selected witness must identify itself as the current-position path.
+    if not re.search(r'当前位置\s*[:：]', heading.get_text(' ', strip=True)):
+        return False
+    links = heading.select('a[href]')
+    if len(links) < 2:
+        return False
+    parent, current = links[-2:]
+    for node in (parent, current):
+        destination = urlsplit(urljoin(url, node['href']))
+        if (destination.scheme not in {'http', 'https'} or destination.username
+                or destination.hostname != urlsplit(url).hostname):
+            return False
+    if urljoin(url, current['href']) != url:
+        return False
+    label = current.get_text(' ', strip=True)
+    return (faculty_purpose(parent.get_text(' ', strip=True), target)
+            and label in TITLE_KEYWORDS
+            and _purpose_label(title, target) == label)
+
+
+def _document_branding(title: str, target: dict) -> dict[str, bool]:
+    """Exact institution signature segments in the current browser document title."""
+    segments = [part.strip() for part in re.split(r'[-—_|]', title)]
+    return {field: bool(str(target.get(field) or '').strip()
+                        and str(target[field]).strip() in segments)
+            for field in ('school', 'college')}
+
+
 def organizational_purpose(text: str, scope, target: dict) -> bool:
     """Recognize the source's organization type, not its members' occupations."""
     label = _purpose_label(text, target)
@@ -191,7 +224,10 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     result['non_institutional_context_count'] = sum(not _institution_context(context) for context in contexts)
     result['source_context_issue'] = ('source_context_overlaps_content' if not separate_context else
                                       'source_context_not_institutional' if not institutional_context else None)
-    college_bound = bool(college and college in branding['college'] and school and school in branding['school']
+    document_branding = _document_branding(title, target)
+    result['document_title_branding'] = document_branding
+    college_bound = bool(college and (college in branding['college'] or document_branding['college'])
+                         and school and (school in branding['school'] or document_branding['school'])
                          and separate_context and institutional_context)
     result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
     # A positive, source-bound organizational purpose can retire an old roster
@@ -206,7 +242,8 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
              or any(organizational_purpose(text, scope, target) for text in own_links)))
     if branch['source_role'] == 'faculty_roster':
         purpose = bool((title_bound and faculty_purpose(title, target))
-                       or any(faculty_purpose(text, target) for text in own_links))
+                       or any(faculty_purpose(text, target) for text in own_links)
+                       or _faculty_rank_path(heading, title, url, target))
         result['role_supported'] = bool(purpose and college_bound and units_within)
         if not result['role_supported']:
             result['reason'] = 'faculty_relationship_unverified'
@@ -321,10 +358,23 @@ def owned_profile_relationship(html: str | None, url: str, name: str, target: di
 async def verify_source(page, branch: dict, target: dict, *, local_capture: dict | None = None) -> dict:
     """Current browser proof shares the existing visibility/network/DOM contract."""
     from server.profile_structure import _FACTS, verify_profile_container
+    from server.browser_readiness import install_request_tracking
+    tracker = install_request_tracking(page)
+    key = (page.url, branch['source_container_selector'])
+    previous = getattr(page, '_faculty_source_read', None)
+    recurring = None
+    if (previous and previous['key'] == key and tracker.document_response is not None
+            and previous['navigation_response'] is not tracker.document_response):
+        recurring = previous['failed_requests']
     captured = {}
-    scope = await verify_profile_container(page, branch['source_container_selector'], local_capture=captured)
+    scope = await verify_profile_container(page, branch['source_container_selector'], local_capture=captured,
+                                           recurring_failures=recurring)
+    page._faculty_source_read = {'key': key, 'navigation_response': tracker.document_response,
+                                'failed_requests': captured.get('failed_requests', [])}
+    read_activity = tracker.activity - tracker.image_activity
     html = captured.get('html') or await page.content()
     value = witness(html, page.url, branch, target)
+    first_witness = value.copy()
     visible = True
     rendered_context = ''
     for key in ('role_evidence_selector', 'source_context_selector'):
@@ -344,21 +394,63 @@ async def verify_source(page, branch: dict, target: dict, *, local_capture: dict
                 rendered_context += ' ' + ' '.join(await node.locator('img').evaluate_all(
                     "nodes => nodes.filter(n => n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden')"
                     ".map(n => n.alt || n.title || '')"))
+    document_branding = _document_branding(await page.title(), target)
     rendered_affiliation = all(str(target.get(field) or '').strip()
-                               and str(target[field]).strip() in rendered_context for field in ('school', 'college'))
-    value['rendered_context_sha256'] = digest(rendered_context)
+                               and (str(target[field]).strip() in rendered_context or document_branding[field])
+                               for field in ('school', 'college'))
+    # Capture final HTML and all computed witness visibility in one browser
+    # task. A theme stylesheet outside the selected nodes can still hide them.
+    selectors = [branch[key] for key in ('source_container_selector', 'role_evidence_selector',
+                                        'source_context_selector')]
+    from server.profile_content import TRIVIAL_HIDDEN_CHARS
+    from server.word_toc import live_decorations
+    snapshot = await page.evaluate('args => { const facts = (' + _FACTS + ''');
+        const rows=args.selectors.map((selector,role)=>[...document.querySelectorAll(selector)].map((_,index)=>
+          facts({selector,index,start:null,trivialChars:role===0?args.trivialChars:0,
+            wordToc:role===0?args.wordToc:[],allowEmpty:false})));
+        const doctype=document.doctype?new XMLSerializer().serializeToString(document.doctype):'';
+        return {url:location.href,html:doctype+document.documentElement.outerHTML,rows}; }''',
+        {'selectors': selectors, 'trivialChars': TRIVIAL_HIDDEN_CHARS,
+         'wordToc': live_decorations(html, selectors[0])})
+    final_html = snapshot['html']
+    final_value = witness(final_html, snapshot['url'], branch, target)
+    # Compare the complete semantic witness, including non_faculty_purpose and
+    # any future decision dependencies; the unrelated original SHA may differ.
+    stable = scope.get('dom_stable') is True and all(first_witness.get(key) == final_value.get(key)
+        for key in set(first_witness) | set(final_value) if key != 'source_html_sha256')
+    final_visible = all((len(rows) == 1 if index < 2 else bool(rows)) and all(
+        facts['container_visible'] and not facts['hidden_content_count'] and not facts['active_animation_count']
+        for facts in rows) for index, rows in enumerate(snapshot['rows']))
+    visible = visible and final_visible
+    network_idle = (scope.get('network_idle') is True
+                    and read_activity == tracker.activity - tracker.image_activity)
+    value = {**final_value, 'rendered_context_sha256': digest(rendered_context)}
     if branch['source_role'] == 'faculty_roster' and not rendered_affiliation:
         value.update(role_supported=False, college_bound=False, reason='source_context_not_visible')
     if not rendered_affiliation:
         value['non_faculty_purpose'] = False
-    # Proof must bind the page after all witness visibility reads as well.
-    stable = scope.get('dom_stable') is True and digest(await page.content()) == value['source_html_sha256']
-    value.update(dom_stable=stable, network_idle=scope.get('network_idle') is True,
-                 witness_visible=visible, confirmed=bool(scope.get('confirmed') and stable and visible
+    value.update(source_html_sha256=digest(final_html), dom_stable=stable, network_idle=network_idle,
+                 witness_visible=visible, confirmed=bool(scope.get('confirmed') and stable and visible and network_idle
                                                        and value['role_supported']))
+    value['final_witness_facts_sha256'] = digest(json.dumps(snapshot['rows'], sort_keys=True))
+    value['source_request_evidence'] = {'current_failures': list(tracker.failed_requests),
+        'previous_navigation_failures': recurring, 'server_rendered_content': scope.get('server_rendered_content'),
+        'scope_blocking_failed_requests': scope.get('blocking_failed_request_count'),
+        'scope_blocking_pending_requests': scope.get('blocking_pending_request_count'),
+        'scope_network_idle': scope.get('network_idle'), 'final_network_idle': network_idle,
+        'final_non_image_activity_delta': tracker.activity - tracker.image_activity - read_activity,
+        'final_pending_requests': [(getattr(request, 'url', ''), getattr(request, 'resource_type', ''))
+                                   for request in tracker.pending],
+        'main_document_url': getattr(tracker.document_response, 'url', None),
+        'main_document_status': getattr(tracker.document_response, 'status', None)}
+    if not scope.get('confirmed'):
+        value['source_scope_issue'] = scope.get('reason') or scope.get('scope_issue')
+        value['source_scope_blocking_requests'] = scope.get('blocking_requests', [])
+    elif not network_idle:
+        value['source_scope_issue'] = 'network_activity_changed'
     value['proof_sha256'] = digest(json.dumps(value, sort_keys=True, ensure_ascii=False))
     if local_capture is not None:
-        local_capture.update(html=html)
+        local_capture.update(html=final_html)
     return value
 
 

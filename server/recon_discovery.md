@@ -8,6 +8,7 @@ browser_navigate 已返回页面摘要（标题、标题行、常见正文容器
 未找到名录、页面失败或零候选都不等于学院无师资；“无师资学院”需要人工确认，不能由本阶段自行结案。
 补缺反馈中的 known_urls 是此前已经观察的来源，逐项重新检查。每个URL必须进入当前branches或source_dispositions，不得无依据省略；重定向应实际打开验证。已确证组织用途的来源可退出活跃采集分支，但不能宣称组织成员都不是教师。
 每个相关人员来源先用 browser_verify_source 证明：source_role 为 faculty_roster、organizational_membership 或 unverified_people_source；source_container_selector 指完整实际正文/名录容器，role_evidence_selector 指实际主标题或指向当前页的导航位置，source_context_selector 指独立于正文的学院归属上下文。用途主标题与完整容器须唯一可见；source_context_selector可用逗号组合本页实际学校品牌和学院页头/导航/页脚区域，逐区域可见、DOM稳定、请求结束并共同绑定当前URL/HTML。不得用教师履历提到的学校或正文整页代替机构branding。faculty_roster 还须标题/当前页导航中的正向师资关系及目标学院上下文；同页侧栏“师资”链接或学校域名本身不够。栏目用途不明或只有组织/委员会成员关系时保留来源并选择辅助/未知角色，不删人、不声称学院无师资。兼职外聘正式师资来源仍可通过同一证明。
+上下文优先选择能提供所需品牌的最小可见区域；页脚已经有学校学院名称时无需再加入含隐藏菜单或未加载图片的整个页头。当前文档标题中的精确机构署名由工具独立核验，模型不抄写或补造署名。“当前位置：师资队伍 → 教授/副教授”等职称分类须选择包含完整路径的真实区域，仅“教授”字样不够。source_scope_issue 与 source_scope_blocking_requests 表示正文范围或访问仍未证明；可重新打开同一官方页并再核验一次，工具仅在新导航也实见相同永久失败且正文已证明稳定时使用既有复读规则。来源或归属仍不能确认时保留为 unverified_people_source 或相应 source_dispositions，结束本阶段，不为同一未解条件不断更换 CSS 和重复调用。
 使用 submit_plan 提交 JSON：顶层 school、college、branches，可选source_dispositions，可保留旧source_kind作兼容形态元数据，它不证明师资资格。branches 每项包含 url 和上述四个来源结构字段，必须与成功 browser_verify_source 参数逐字一致。不得附加 name、label、说明、确认布尔值、正文引用、SHA或教师数据；证据由浏览器工具保存。
 工具即时检查格式、目标与本轮浏览器证据。accepted:false 时按 issues 的字段路径和错误码修正；accepted:true 后立即结束，回复“计划已提交”，无需再次抄写 JSON。
 提交参数示例（示例 URL 必须替换为本轮实际核实的 URL）：
