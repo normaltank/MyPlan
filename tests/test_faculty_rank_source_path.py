@@ -19,6 +19,34 @@ def test_real_rank_category_uses_its_current_faculty_parent():
     assert proof['role_supported']
 
 
+def test_real_teaching_unit_under_current_fulltime_faculty_path():
+    url = 'https://www.fjsmu.edu.cn/smxyszb/mkszyjbyljys/list.htm'
+    html = (Path(__file__).parent / 'fixtures/source_rank_path/sanming_teaching_unit.html').read_text(encoding='utf8')
+    branch = {**BRANCH, 'url': url, 'source_container_selector': '#wp_news_w6',
+              'role_evidence_selector': 'li.col_path', 'source_context_selector': 'div.foot.clearfix'}
+    assert witness(html, url, branch, TARGET)['role_supported']
+    # The same teaching-unit name under institutional organization is not a faculty proof.
+    assert not witness(html.replace('>专任教师<', '>组织机构<'), url, branch, TARGET)['role_supported']
+
+
+@pytest.mark.parametrize('label,parent,href,accepted', [
+    ('思想政治教育系', '专任教师', '/group', True),
+    ('基础理论教研室', '教师名单', '/group', True),
+    ('基础理论教研室', '组织机构', '/group', False),
+    ('基础理论教研室', '学院新闻', '/group', False),
+    ('基础理论教研室活动', '专任教师', '/group', False),
+    ('教授讲座', '师资队伍', '/group', False),
+    ('行政人员', '师资队伍', '/group', False),
+    ('思想政治教育系', '专任教师', '/other-group', False),
+])
+def test_faculty_unit_path_requires_current_group_and_immediate_faculty_parent(label, parent, href, accepted):
+    url = 'https://example.edu/group'
+    html = (f'<title>{label}</title><footer id="footer">三明学院马克思主义学院</footer>'
+        f'<ul class="col_metas"><span>当前位置：</span><a href="/faculty">{parent}</a>'
+        f'<a href="{href}">{label}</a></ul><ul class="wp_article_list"><li>官方人员</li></ul>')
+    assert witness(html, url, {**BRANCH, 'url': url}, TARGET)['role_supported'] is accepted
+
+
 @pytest.mark.parametrize('path', [
     '<span>当前位置：</span><a href="/faculty">师资队伍</a><a href="/news">新闻</a><a href="/ranks">教授</a>',
     '<a href="/faculty">师资队伍</a><a href="/ranks">教授</a>',

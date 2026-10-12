@@ -1522,6 +1522,8 @@ def _run_harness_blocking(prompt: str, session_id: str, cfg: dict[str, Any]) -> 
 
 
 def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str, ...]) -> Any:
+    # Caller cancellation and a sibling's budget stop have different outcomes.
+    cfg = {**cfg, 'branch_stop_event': threading.Event()}
     target = cfg["target"]
     events = []
     phases = []
@@ -1550,7 +1552,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
 
     def run(phase: str, url: str, suffix: str) -> tuple[dict, list, dict]:
         remaining = deadline - time.monotonic()
-        if cfg.get("cancel_event") is not None and cfg["cancel_event"].is_set():
+        if ((cfg.get("cancel_event") is not None and cfg["cancel_event"].is_set())
+                or cfg['branch_stop_event'].is_set()):
             error = ReconCancelled("侦察已被停止")
             error.phase, error.phase_session_id = phase, f"{session_id}-{suffix}"
             error.diagnostics = {"model_calls": 0, "token_usage": dict.fromkeys(
@@ -1684,7 +1687,14 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                 if (representative and representative.get("kind", "roster") == "roster"
                         and not representative.get("initial_click_selector")
                         and not representative.get("empty_state_selector")):
-                    branch = {**representative, "url": url}
+                    from server.source_qualification import SOURCE_FIELDS
+                    current = next(claim for claim in discovery['branches'] if claim['url'] == url)
+                    branch = {**representative, "url": url,
+                              **{key: current[key] for key in SOURCE_FIELDS}}
+                    if current.get('source_kind') is not None:
+                        branch['source_kind'] = current['source_kind']
+                    else:
+                        branch.pop('source_kind', None)
                     proof = verify_template(branch, target, evidence_root / f"template-{index + 1}",
                                             max(0.01, min(120, deadline - time.monotonic())), fingerprints[url])
                 if proof and proof.get("valid"):
@@ -1729,10 +1739,15 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                     events.extend(getattr(error, "phase_events", []))
                     if getattr(error, "phase_metric", None):
                         phases.append(error.phase_metric)
+                    elif isinstance(error, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled)):
+                        phases.append({'phase': getattr(error, 'phase', 'branch'), 'url': url,
+                            'session_id': getattr(error, 'phase_session_id', None),
+                            'stop_reason': ('recon_budget_exceeded' if isinstance(error, ReconBudgetExceeded)
+                                            else 'recon_phase_limit' if isinstance(error, ReconPhaseLimitExceeded)
+                                            else 'recon_cancelled'), **error.diagnostics})
                     errors.append(error)
                     if isinstance(error, (ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled)):
-                        if cfg.get("cancel_event") is not None:
-                            cfg["cancel_event"].set()
+                        cfg['branch_stop_event'].set()
             if parallel and len(jobs) > 1:
                 with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix=session_id) as pool:
                     pending = {pool.submit(verify, *job): job for job in jobs}
@@ -1763,6 +1778,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             # wait for the repair round instead of each repeating that scout.
             batch([(index, url, accepted[leader]) for index, url, leader in followers if leader in accepted])
         plan["branches"] = [accepted[index] for index in sorted(accepted)]
+        partial_metrics = None
+        stop_reason = None
         if errors:
             fatal = next((error for error in errors if isinstance(error, (
                 ReconBudgetExceeded, ReconPhaseLimitExceeded, ReconCancelled))), None)
@@ -1785,13 +1802,48 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                     "budget_total": (cfg["budget"].snapshot() if cfg.get("budget")
                                      else partials[-1]["budget_total"])}
                 error.aggregated = True
-            raise error
+                partial_metrics = error.diagnostics
+            # A failed sibling does not invalidate a branch that passed all
+            # schema, source, mechanism and actual-browser proof gates. Keep
+            # every failed/unstarted source pending and run the proved subset.
+            # Explicit cancellation and hygiene failures still abort the run.
+            can_capture_subset = bool(accepted) and not any(isinstance(failure, PlanHygieneError)
+                for failure in errors) and not (cfg.get('cancel_event') and cfg['cancel_event'].is_set()) and (
+                not any(isinstance(failure, ReconCancelled)
+                for failure in errors) or any(isinstance(failure, (ReconBudgetExceeded, ReconPhaseLimitExceeded))
+                                             for failure in errors))
+            if can_capture_subset:
+                from server.recon_contract import disposition_event_issues, navigation_observations
+                visits = navigation_observations(events)
+                pending_sources = []
+                for index, url in enumerate(urls):
+                    if index in accepted:
+                        continue
+                    visit = visits.get(url, {})
+                    unreadable = bool(visit.get('error') or (
+                        type(visit.get('status')) is int and visit['status'] >= 400))
+                    pending_sources.append({'url': url, 'reason': (
+                        'source_unreadable' if unreadable else 'source_structure_unresolved')})
+                plan['source_dispositions'] = [*plan.get('source_dispositions', []), *pending_sources]
+                # Pending means there is retained actual observation, never
+                # an invented reason to omit an unvisited page.
+                if disposition_event_issues(plan, events):
+                    raise error
+                if fatal:
+                    stop_reason = ('recon_budget_exceeded' if isinstance(fatal, ReconBudgetExceeded)
+                                   else 'recon_phase_limit')
+                phases.append({'phase': 'branch_completion', 'partial': True,
+                    'verified_branch_count': len(accepted), 'pending_source_count': len(pending_sources)})
+            else:
+                raise error
         if omitted := _required_source_issues(plan, required_urls, events):
             error = ReconPlanError('最终计划遗漏给定或先前来源')
             error.safe_feedback = {'previous_plan': plan, 'issues': omitted}
             raise error
         return SimpleNamespace(final_response=json.dumps(plan, ensure_ascii=False), finish_reason="completed",
                                 events=events, phase_metrics=phases,
+                                partial_metrics=partial_metrics,
+                                stop_reason=stop_reason,
                                 discovery_session_id=discovery_session_id,
                                 discovery_checkpoint=discovery_checkpoint)
     except ReconError as exc:
@@ -1880,6 +1932,7 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
     phase_limit = int(cfg.get("phase_call_limit") or 0)
     phase_usage = ReconBudget()  # this session only; the budget above spans the college
     cancel_event = cfg.get("cancel_event")
+    branch_stop_event = cfg.get('branch_stop_event')
     seen_events: list[dict[str, Any]] = []
     submit_calls: set = set()
     with DeepSeekHarness(
@@ -1915,7 +1968,8 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
                                 f"（显式设置上限 {phase_limit}），已停止；复杂正常网站也可能需要更多步骤")
                 # A completed request can arrive after a sibling stops.
                 # Count its actual usage before honoring cancellation.
-                if cancel_event is not None and cancel_event.is_set():
+                if ((cancel_event is not None and cancel_event.is_set())
+                        or (branch_stop_event is not None and branch_stop_event.is_set())):
                     raise ReconCancelled("侦察已被调用方停止（超时）")
             run_kwargs["on_notification"] = on_notification
             return harness.run(prompt, **run_kwargs)
@@ -2140,7 +2194,11 @@ async def reconnoiter(
         finish_reason=finish,
         session_id=sid,
         event_count=len(getattr(result, "events", []) or []),
-        diagnostics={**run_metrics(events), **({"cost": budget.delta(budget_before)["cost"]} if budget else {}),
+        diagnostics={**run_metrics(events), **{key: value for key, value in
+                     (getattr(result, 'partial_metrics', None) or {}).items()
+                     if key in {'model_calls', 'token_usage', 'budget_total'}},
+                     **({"cost": budget.delta(budget_before)["cost"]} if budget else {}),
+                     **({'stop_reason': result.stop_reason} if getattr(result, 'stop_reason', None) else {}),
                      "phases": getattr(result, "phase_metrics", []),
                      "discovery_pages": discovery_evidence(
                          getattr(result, "discovery_session_id", sid).removesuffix("-discover"))},

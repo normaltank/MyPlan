@@ -57,8 +57,8 @@ def faculty_purpose(text: str, target: dict) -> bool:
     return bool(_FACULTY_PURPOSE.fullmatch(_purpose_label(text, target)))
 
 
-def _faculty_rank_path(heading, title: str, url: str, target: dict) -> bool:
-    """A visible current-position path can bind a rank child to its faculty parent."""
+def _faculty_group_path(heading, title: str, url: str, target: dict) -> bool:
+    """Bind a current rank or teaching-unit group to its immediate faculty parent."""
     from server.titles import TITLE_KEYWORDS
 
     # A general menu or an unrelated sidebar cannot supply this relationship.
@@ -77,8 +77,10 @@ def _faculty_rank_path(heading, title: str, url: str, target: dict) -> bool:
     if urljoin(url, current['href']) != url:
         return False
     label = current.get_text(' ', strip=True)
+    group = (label in TITLE_KEYWORDS or bool(re.fullmatch(
+        r'[\u4e00-\u9fffA-Za-z·（）()]+(?:系|教研室|教学部)', label)))
     return (faculty_purpose(parent.get_text(' ', strip=True), target)
-            and label in TITLE_KEYWORDS
+            and group
             and _purpose_label(title, target) == label)
 
 
@@ -243,7 +245,7 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     if branch['source_role'] == 'faculty_roster':
         purpose = bool((title_bound and faculty_purpose(title, target))
                        or any(faculty_purpose(text, target) for text in own_links)
-                       or _faculty_rank_path(heading, title, url, target))
+                       or _faculty_group_path(heading, title, url, target))
         result['role_supported'] = bool(purpose and college_bound and units_within)
         if not result['role_supported']:
             result['reason'] = 'faculty_relationship_unverified'

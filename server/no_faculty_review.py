@@ -1,10 +1,9 @@
-"""人工判定“本学院没有专任教师”的两个复核入口（badr 2026-10-09）。
+"""学院官方师资范围的人工确认入口。
 
 判定本身在 ``agent_queue.mark_no_faculty``：按 0 人完成，记下判定人和原状态。
-这里只决定在哪里让人判，以后服务器只把复核链接推给工作人员，所以入口都在复核页里：
+这里只组织复核页中的操作；结论由实际核实官网的人提交：
 
-- 学院复核页：侦察没拿到计划就结束的学院（没找到名录），页面给出官网和失败原因；
-  这种学院没有采集材料，以前没有复核页。
+- 已结束的学院任务均有师资范围复核入口，已有字段/来源材料时继续保留那些复核操作。
 - 大学交付复核页：每个已结束的学院列出状态、人数和前几位姓名。学院按“完成”收尾但采错了人
   （集美继续教育学院采到的是行政办公室），程序发现不了，只有人在交付前看名单时能发现。
 """
@@ -16,6 +15,8 @@ import json
 from server.faculty_identity import field_value
 
 NAME_PREVIEW = 8
+VERDICT_GUIDANCE = ('请核对官网正式列入本学院的全部师资，包括兼职、外聘。'
+                   '访问失败、自动零结果或没有单独师资栏目，不能单独证明无师资。')
 
 
 def can_judge(status: str, stats: dict | None) -> bool:
@@ -28,8 +29,8 @@ def script(csrf_token: str) -> str:
     data = json.dumps({"csrf": csrf_token}, ensure_ascii=False).replace("<", "\\u003c")
     return ("<script>const noFaculty=" + data + ";"
             "document.querySelectorAll('button.no-faculty').forEach(button=>button.onclick=async()=>{"
-            "if(!confirm('确认「'+button.dataset.college+'」官网没有专任教师名录？\\n"
-            "判定后按 0 人完成，之前采到的人不进大学表。'))return;"
+            "if(!confirm('已核实「'+button.dataset.college+'」全部官方师资范围（含兼职、外聘），确认无师资？\\n"
+            "访问失败或没找到栏目不等于无师资。判定后按 0 人人工结案，之前采到的人不进大学表。'))return;"
             "const status=button.closest('.no-faculty-row').querySelector('.status');button.disabled=true;"
             "try{const response=await fetch('/api/task/'+encodeURIComponent(button.dataset.task)+'/no-faculty',"
             "{method:'POST',headers:{'X-CSRF-Token':noFaculty.csrf}});"
@@ -42,7 +43,7 @@ def script(csrf_token: str) -> str:
 
 def _button(task_id: str, college: str) -> str:
     return ('<button type="button" class="secondary no-faculty" data-task="' + escape(task_id, quote=True)
-            + '" data-college="' + escape(college, quote=True) + '">本学院没有专任教师</button>')
+            + '" data-college="' + escape(college, quote=True) + '">确认无师资</button>')
 
 
 def _judged(stats: dict) -> str:
@@ -60,13 +61,20 @@ def render_college_page(task, *, csrf_token: str, return_url: str = "/") -> str:
             "<title>学院复核 · 高校师资采集平台</title><style>" + _base_css() + _REVIEW_CSS + "</style>"
             '<p class="back"><a href="' + escape(return_url, quote=True) + '">← 返回采集平台</a></p>'
             "<h1>" + escape(task.school) + " · " + escape(task.college) + "</h1>"
-            '<p class="intro">侦察没有找到这个学院的师资名录，所以没有采到老师。请打开官网看一下。'
-            "官网确实没有专任教师名录（没有师资栏目，或只有行政机构）时，判为无师资；"
-            "官网有名录的话不要判，交给维护人员处理。</p>"
+            '<p class="intro">' + VERDICT_GUIDANCE + '</p>'
             '<section class="card no-faculty-row"><h2>官网</h2><ul>' + (links or "<li>（没有入口网址）</li>")
             + '</ul><p class="meta">侦察结果：' + escape(task.error or "（无）") + "</p>" + action
             + '<p class="status" role="status">' + _judged(task.stats) + "</p></section>"
             + script(csrf_token) + "</html>")
+
+
+def render_action_section(task, *, csrf_token: str) -> str:
+    """Keep the college verdict available beside field/source review materials."""
+    if not can_judge(task.status, task.stats):
+        return ''
+    return ('<section class="card no-faculty-row"><h2>学院师资范围确认</h2><p>' + VERDICT_GUIDANCE
+            + '</p><div class="actions">' + _button(task.task_id, task.college)
+            + '</div><p class="status" role="status"></p></section>' + script(csrf_token))
 
 
 def colleges_section(tasks: list[dict]) -> str:
@@ -83,5 +91,5 @@ def colleges_section(tasks: list[dict]) -> str:
         rows.append('<div class="no-faculty-row observation"><p><strong>' + escape(task["college"])
                     + "</strong></p><p class=\"meta\">" + escape(summary) + "</p>" + action
                     + '<p class="status" role="status">' + _judged(stats) + "</p></div>")
-    return ('<h2>各学院</h2><p>名单不是本学院专任教师（比如只采到行政办公室），或学院官网没有师资栏目时，'
-            "判为无师资，再重新发布大学版本。</p>" + '<section class="card">' + "".join(rows) + "</section>")
+    return ('<h2>各学院</h2><p>' + VERDICT_GUIDANCE + '</p>'
+            + '<section class="card">' + "".join(rows) + "</section>")
