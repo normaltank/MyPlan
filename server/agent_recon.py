@@ -53,6 +53,13 @@ class ReconCancelled(ReconError):
     """The caller stopped waiting (task timeout); end the Harness session now."""
 
 
+class _ReconSubmissionComplete(Exception):
+    """Unwind this phase's SDK run after a digest-bound scout submission."""
+
+    def __init__(self, plan: dict[str, Any]):
+        self.plan = plan
+
+
 class ReconBudget:
     """Count actual SDK usage across every phase and repair of one college.
 
@@ -1614,6 +1621,9 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
         metric = {"phase": phase, "session_id": sid, "effort": phase_cfg.get("effort"),
                        "evidence_root": str(recon_evidence_root() / sid),
                        **run_metrics(current)}
+        if getattr(result, 'completion_reason', None) == 'accepted_submission':
+            metric.update(completion_reason=result.completion_reason,
+                          usage_unknown=result.usage_unknown)
         if getattr(result, "finish_reason", None) != "completed":
             error = ReconError("阶段侦察未正常完成")
             error.phase_events, error.phase_metric = current, metric
@@ -1952,6 +1962,7 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
         try:
             run_kwargs: dict[str, Any] = {"session_id": session_id}
             def on_notification(notification: Any) -> None:
+                accepted_plan = None
                 if (notification.method == "session.event"
                         and notification.payload.get("sessionId") == session_id):
                     event = notification.payload.get("event")
@@ -1966,13 +1977,29 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
                             raise ReconPhaseLimitExceeded(
                                 f"{_PHASE_NAMES.get(cfg.get('phase'), '侦察')}阶段已用 {phase_usage.calls} 次模型请求仍未完成"
                                 f"（显式设置上限 {phase_limit}），已停止；复杂正常网站也可能需要更多步骤")
+                        if (cfg.get('require_submission') and event.get('type') == 'tool/result'
+                                and any(block.get('toolCallId') in submit_calls for block in
+                                        ((event.get('data') or {}).get('message') or {}).get('content', []))):
+                            from server.recon_contract import submitted_plan
+                            accepted_plan = submitted_plan(seen_events)
                 # A completed request can arrive after a sibling stops.
                 # Count its actual usage before honoring cancellation.
                 if ((cancel_event is not None and cancel_event.is_set())
                         or (branch_stop_event is not None and branch_stop_event.is_set())):
                     raise ReconCancelled("侦察已被调用方停止（超时）")
+                if accepted_plan is not None:
+                    raise _ReconSubmissionComplete(accepted_plan)
             run_kwargs["on_notification"] = on_notification
             return harness.run(prompt, **run_kwargs)
+        except _ReconSubmissionComplete as completed:
+            # The context manager closes this phase's runtime. A later request
+            # may already be in flight; retain received usage without claiming
+            # that the interrupted session's full bill is known.
+            if budget is not None:
+                budget.mark_usage_unknown()
+            return SimpleNamespace(final_response=json.dumps(completed.plan, ensure_ascii=False),
+                                   finish_reason='completed', events=seen_events.copy(),
+                                   completion_reason='accepted_submission', usage_unknown=True)
         except ReconGateStopped as exc:
             # The stopping reply came after every model request of this session,
             # all of which the budget above already counted.
