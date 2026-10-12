@@ -23,9 +23,11 @@ MAX_INLINE_BYTES = 8000
 HERE = Path(__file__).resolve().parent
 
 
-def tool(name: str, description: str, properties: dict, required: tuple = ()) -> dict:
-    return {"name": name, "description": description, "inputSchema": {
-        "type": "object", "properties": properties, "required": list(required), "additionalProperties": False}}
+def tool(name: str, description: str, properties: dict, required: tuple = (), *, definitions: dict | None = None) -> dict:
+    schema = {"type": "object", "properties": properties, "required": list(required), "additionalProperties": False}
+    if definitions:
+        schema['$defs'] = definitions
+    return {"name": name, "description": description, "inputSchema": schema}
 
 
 STRING = {"type": "string"}
@@ -50,7 +52,30 @@ NAV_RANGE = {"selector": STRING, "offset": {"type": "integer", "minimum": 0},
              "limit": {"type": "integer", "minimum": 1, "maximum": 64},
              "query": {"type": "string", "description": "Keywords separated by | or spaces; keep only links "
                        "whose label or URL contains one of them."}}
+from server.page_types import PageTypeBindings  # noqa: E402
+from server.recon_contract import Branch as StageBranch  # noqa: E402
+_PAGE_TYPES_SCHEMA = PageTypeBindings.model_json_schema()
+_PAGE_TYPES_DEFINITIONS = _PAGE_TYPES_SCHEMA.pop('$defs', {})
+_STAGE_BRANCH_SCHEMA = StageBranch.model_json_schema()
+_STAGE_BRANCH_DEFINITIONS = _STAGE_BRANCH_SCHEMA.pop('$defs', {})
 TOOLS = [
+    tool('page_type_catalog', 'Read the trusted Python page-type registry before selecting a mechanism. '
+         'Returns registered role/ID/version, structure-only params schema and input/output/failure/applicability '
+         'contracts. Follow nextOffset until covered, or filter role/type_id. No website or model access. '
+         'Use browser evidence to establish applicability; a catalog entry does not qualify a source or prove '
+         'coverage. If no registered mechanism applies, reject it for reviewed Python implementation maintenance.',
+         {'role': {'type': 'string', 'enum': ['entrance', 'roster', 'pagination', 'detail']},
+          'type_id': STRING, 'offset': {'type': 'integer', 'minimum': 0},
+          'limit': {'type': 'integer', 'minimum': 1, 'maximum': 4}}),
+    tool('browser_verify_stage', 'Run the selected registered entrance, pagination or detail handler and its '
+         'dedicated structure-only proof contract. Choose the binding from page_type_catalog first. '
+         'Supply the exact source-qualified branch and type parameters; for detail, urls are exact profile '
+         'URLs linked by verified roster cards. Each profile keeps its own captured document and proof. '
+         'A legacy proof or another type/version/parameter/URL/document cannot authorize this binding.',
+         {'role': {'type': 'string', 'enum': ['entrance', 'pagination', 'detail']},
+          'branch': _STAGE_BRANCH_SCHEMA,
+          'urls': {'type': 'array', 'items': STRING, 'minItems': 1, 'maxItems': PROFILE_MAX_URLS}},
+         ('role', 'branch'), definitions=_STAGE_BRANCH_DEFINITIONS),
     tool("browser_navigate", "Open official URL in the real browser. Returns a page summary (title, headings, common "
          "content containers with counts, and page text lines not yet shown in this session) plus navigation links "
          "not yet returned in this session.",
@@ -71,9 +96,17 @@ TOOLS = [
     tool("browser_verify", "Verify actual card and next-control selectors; returns counts, shapes, sample URLs and "
          "pagination_termination. Guessed current-page navigation links may be natively activated to prove a "
          "same-URL document navigation with an unchanged roster. pagination.total counts candidates; "
-         "single_page requires confirmed termination.",
+         "single_page requires confirmed termination. For explicit heterogeneous child_branches, set "
+         "include_child_urls true on the parent's child_link_selector to prove the full selected URL set. "
+         "For a registered roster mechanism, provide page_types.roster and its exact structural parameters; "
+         "its trusted parser proves token disposition counts instead of assuming one person per cell.",
          {"card_selector": STRING, "next_selector": STRING,
-          "empty_state_selector": STRING, "roster_container_selector": STRING}, ("card_selector",)),
+          "kind": {'type': 'string', 'enum': ['roster', 'navigation', 'segmented', 'image_table']},
+          "page_types": _PAGE_TYPES_SCHEMA,
+          "container_selector": STRING, "record_start_selector": STRING,
+          "include_child_urls": {"type": "boolean"},
+          "empty_state_selector": STRING, "roster_container_selector": STRING}, ("card_selector",),
+          definitions=_PAGE_TYPES_DEFINITIONS),
     tool("browser_verify_segments", "Verify a flat multi-person article: the unique body container and the element "
          "starting each person's record. Returns segment counts, shapes and pagination_termination only.",
          {"container_selector": STRING, "record_start_selector": STRING},
@@ -102,6 +135,7 @@ def phase_tools(phase: str) -> list[dict]:
     from server.recon_contract import submission_schema
     submit = tool("submit_plan", "Submit this phase's structure-only plan. Schema and current-session browser "
                   "evidence are checked immediately. Fix reported paths/codes and retry; stop after accepted:true. "
+                  "Query page_type_catalog to choose registered mechanisms and inspect their applicability. "
                   "CSS selectors intentionally cannot contain Chinese. Never include teacher fields.",
                   {"plan": submission_schema(phase)}, ("plan",))
     definitions = submit["inputSchema"]["properties"]["plan"].pop("$defs", None)
@@ -112,7 +146,7 @@ def phase_tools(phase: str) -> list[dict]:
                    "browser_read_image", 'browser_verify_source'}
     elif phase == "branch":
         allowed = {"browser_navigate", "browser_structure", "browser_verify", "browser_verify_segments",
-                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot", "browser_read_image", 'browser_verify_source'}
+                   "browser_verify_profile", "browser_click", "browser_evaluate", "browser_screenshot", "browser_read_image", 'browser_verify_source', 'page_type_catalog', 'browser_verify_stage'}
     else:
         return [*TOOLS, submit]
     return [*[entry for entry in TOOLS if entry["name"] in allowed], submit]
@@ -347,12 +381,96 @@ class BrowserScout:
         return value
 
     async def _browser_call(self, name: str, arguments: dict) -> dict:
+        if name == 'page_type_catalog':
+            from server.page_types import catalog
+            entries = [item for item in catalog() if (
+                not arguments.get('role') or item['role'] == arguments['role']) and (
+                not arguments.get('type_id') or item['type_id'] == arguments['type_id'])]
+            offset, limit = arguments.get('offset', 0), arguments.get('limit', 2)
+            if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 4:
+                raise ValueError('catalog requires a nonnegative offset and limit 1..4')
+            end = min(offset + limit, len(entries))
+            return self.text_result({'items': entries[offset:end], 'offset': offset, 'end': end,
+                'total': len(entries), 'nextOffset': end if end < len(entries) else None})
         if self._dom_modified and name in {
-            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_read_image", 'browser_verify_source'
+            "browser_verify", "browser_verify_segments", "browser_verify_profile", "browser_click", "browser_read_image", 'browser_verify_source', 'browser_verify_stage'
         }:
             return {**self.text_result({"status": "browser_dom_modified",
                                        "retry": "Reload the official URL before collecting new verification evidence."}),
                     "isError": True}
+        if name == 'browser_verify_stage':
+            from server.agent_recon import _is_structure_url, validate_model_plan
+            from server.page_types import normalize_branch, run_stage_probe
+            from server.harvest_workflow import prepare_entrance_stage, capture_profile_stage
+            from server.browser_batch_tool import _capture_branch
+            branch = normalize_branch(arguments['branch'])
+            validate_model_plan({'school': (self.target or {}).get('school', ''),
+                'college': (self.target or {}).get('college', ''), 'branches': [branch]},
+                school=(self.target or {}).get('school', ''), college=(self.target or {}).get('college', ''))
+            role = arguments['role']
+            if role not in {'entrance', 'pagination', 'detail'}:
+                raise ValueError('unsupported stage role')
+            urls = arguments.get('urls')
+            if role == 'detail':
+                if (not isinstance(urls, list) or not 1 <= len(urls) <= PROFILE_MAX_URLS
+                        or not all(_is_structure_url(url) for url in urls) or len(urls) != len(set(urls))):
+                    raise ValueError('detail requires exact unique profile URLs')
+            elif urls is not None:
+                raise ValueError('profile URLs apply only to detail')
+            if hasattr(self.page, 'raw_page'):
+                from server.browser_context import IsolatedBrowserContext
+                context = IsolatedBrowserContext(self.page._context, polite=self.page.polite)
+            else:
+                context = self.page.context
+            results = []
+            for requested_url in urls if role == 'detail' else [branch['url']]:
+                capture, proof = {}, None
+                try:
+                    if role == 'entrance':
+                        proof = await run_stage_probe(role, branch, prepare_entrance_stage, context, branch,
+                                                      requested_url=requested_url, local_capture=capture)
+                    elif role == 'pagination':
+                        proof = await run_stage_probe(role, branch, _capture_branch, context, branch,
+                            source_target=self.target or {}, requested_url=requested_url, local_capture=capture)
+                    else:
+                        proof = await run_stage_probe(role, branch, capture_profile_stage, context, requested_url, branch,
+                            scope_pairs={(branch['profile_content_selector'], branch.get('profile_content_start_selector'))},
+                            page_ready_selector=branch.get('profile_ready_selector'),
+                            requested_url=requested_url, local_capture=capture)
+                except ValueError:
+                    pass  # Keep the actual failed capture; never echo people from an exception.
+                result = capture.get('result')
+                if role == 'pagination':
+                    documents = result[0] if isinstance(result, tuple) and len(result) == 3 else []
+                else:
+                    html = getattr(result, 'html', None)
+                    meta = getattr(result, 'meta' if role == 'detail' else 'evidence', {})
+                    final_url = meta.get('final_url') or meta.get('url') or requested_url
+                    documents = [(final_url, html)] if isinstance(html, str) and html else []
+                originals = [{'url': url, 'source_html_sha256': hashlib.sha256(html.encode()).hexdigest(),
+                    'evidence_path': str(self.save(f'stage-{role}-source.html', html.encode()))}
+                             for url, html in documents]
+                metadata = None
+                if result is not None:
+                    if role == 'pagination':
+                        data = {'role': role, 'errors': result[1], 'evidence': result[2]}
+                    elif role == 'entrance':
+                        data = {'role': role, 'source_urls': result.source_urls,
+                                'errors': result.errors, 'evidence': result.evidence}
+                    else:
+                        data = {'role': role, 'errors': result.errors, 'proof': result.proof, 'meta': result.meta}
+                    raw_metadata = json.dumps(data, ensure_ascii=False, allow_nan=False).encode()
+                    metadata = {'sha256': hashlib.sha256(raw_metadata).hexdigest(),
+                                'evidence_path': str(self.save(f'stage-{role}-capture.json', raw_metadata))}
+                results.append({'requested_url': requested_url, 'originals': originals, 'capture_metadata': metadata,
+                    'stage_evidence': proof, **({'status': 'stage_capture_unverified'} if proof is None else {})})
+            packet = {'role': role, 'results': results}
+            encoded = json.dumps(packet, ensure_ascii=False, allow_nan=False).encode()
+            if len(encoded) > MAX_INLINE_BYTES:
+                packet = {'role': role, 'full_stage_result': {
+                    'sha256': hashlib.sha256(encoded).hexdigest(),
+                    'evidence_path': str(self.save(f'stage-{role}-result.json', encoded))}}
+            return self.text_result(packet)
         if name == "browser_navigate":
             url = arguments["url"]
             if not url.startswith(("http://", "https://")):
@@ -424,6 +542,32 @@ class BrowserScout:
             value['evidence_path'] = str(witness_path)
             await self.snapshot()
         elif name == "browser_verify":
+            from server.page_types import binding_for, normalize_branch, ROLE_PARAMETERS
+            # This tool proves the roster mechanism, not the applicability of
+            # unrelated stage bindings whose structural fields it does not take.
+            refs = PageTypeBindings.model_validate(arguments.get('page_types') or {}).model_dump(exclude_none=True)
+            proof_branch = normalize_branch({**{key: value for key, value in arguments.items()
+                if key not in {'include_child_urls', 'page_types'}}, 'url': self.page.url,
+                'page_types': {'roster': refs['roster']} if 'roster' in refs else {}})
+            from server.agent_recon import check_plan_hygiene
+            check_plan_hygiene({'branches': [proof_branch]},
+                               school=(self.target or {}).get('school', ''),
+                               college=(self.target or {}).get('college', ''))
+            roster_binding = binding_for(proof_branch, 'roster')
+            legacy_roster = (roster_binding.type_id, roster_binding.implementation_version) in {
+                ('roster.cards', 1), ('roster.segmented', 1), ('roster.image_table', 1)}
+            specialized_type = {'image_table': 'roster.image_table', 'segmented': 'roster.segmented'}.get(
+                proof_branch.get('kind'))
+            if proof_branch.get('empty_state_selector') or proof_branch.get('roster_container_selector'):
+                specialized_type = 'roster.cards'
+            if specialized_type and (roster_binding.type_id, roster_binding.implementation_version) != (specialized_type, 1):
+                return {**self.text_result({'status': 'specialized_roster_version_not_applicable',
+                    'retry': 'Dedicated image/segment/empty browser proof supports only its exact legacy '
+                             'roster type at version 1; a new version requires a reviewed proof mechanism.'}),
+                    'isError': True}
+            # Binding parameters are the actual selectors, not merely metadata.
+            arguments = {**arguments, **{key: value for key, value in proof_branch.items()
+                                        if key in set().union(*ROLE_PARAMETERS.values())}}
             value = await self.page.evaluate("args => __facultyRecon.check(...args)",
                                             [arguments["card_selector"], arguments.get("next_selector")])
             forward_key = (self.page.url, arguments['card_selector'])
@@ -479,8 +623,8 @@ class BrowserScout:
                 introductions = FacultyDirectoryExtractor.profile_introduction_links(
                     html, self.page.url, arguments["card_selector"])
                 value["profile_intro_link_count"] = len(introductions)
-                mismatch = roster_card_reading(html, self.page.url, arguments["card_selector"])
-                if mismatch:
+                mismatch = roster_card_reading(html, self.page.url, arguments["card_selector"], branch=proof_branch)
+                if mismatch and (roster_binding.type_id, roster_binding.implementation_version) == ('roster.cards', 1):
                     value["card_mismatch"] = mismatch
             value["cardDigest"] = hashlib.sha256(json.dumps(cards).encode("utf-8")).hexdigest()
             value["pagination"] = without_nonpagination_controls(await self.page.content(), self.page.url, arguments["card_selector"],
@@ -499,6 +643,20 @@ class BrowserScout:
             from server.browser_batch_tool import single_page_evidence
             from server.pager_evidence import proof_valid
             html = await self.page.content()
+            if not legacy_roster:
+                # Bind the reading to the exact final original, including rank
+                # headings outside the selected name cells.
+                from server.harvest_workflow import roster_card_reading
+                reading = roster_card_reading(html, self.page.url, arguments['card_selector'], branch=proof_branch)
+                value['roster_type_evidence'] = {
+                    'type_id': roster_binding.type_id,
+                    'implementation_version': roster_binding.implementation_version,
+                    'selectors': {key: proof_branch[key] for key in ROLE_PARAMETERS['roster'] if key in proof_branch},
+                    'source_sha256': hashlib.sha256(html.encode('utf-8')).hexdigest(),
+                    'reading': reading,
+                }
+                from server.page_types import implementation_digest
+                value['roster_type_evidence']['implementation_digest'] = implementation_digest(roster_binding, 'roster')
             ignored = [p['control_selector'] for p in terminal if proof_valid(p, html, arguments['card_selector'])]
             for item in forward_observations:
                 item['terminal'] = without_terminal_pagers(html, {
@@ -511,6 +669,29 @@ class BrowserScout:
             value['pagination_termination'] = single_page_evidence(html, self.page.url, arguments['card_selector'], ignored)
             value['pagination_termination']['observed_forward_controls'] = forward_observations
             value['pagination_termination']['evidence_path'] = str(self.save('pagination-source.html', html.encode('utf-8')))
+            if arguments.get('include_child_urls') is True:
+                # Match the actual navigation reader: selected nodes must carry
+                # their own href. Samples cannot stand for an unbounded URL set.
+                from bs4 import BeautifulSoup
+                from urllib.parse import urljoin
+                from server.agent_recon import _is_structure_url
+                selected = BeautifulSoup(html, 'html.parser').select(arguments['card_selector'])
+                child_urls, invalid = [], 0
+                for node in selected:
+                    href = node.get('href')
+                    child_url = urljoin(self.page.url, href) if isinstance(href, str) and href.strip() else None
+                    if not _is_structure_url(child_url):
+                        invalid += 1
+                    elif child_url not in child_urls:
+                        child_urls.append(child_url)
+                value['child_urls'] = child_urls
+                value['child_url_evidence'] = {
+                    'url': self.page.url, 'selector': arguments['card_selector'],
+                    'source_sha256': hashlib.sha256(html.encode('utf-8')).hexdigest(),
+                    'discovery_scope': 'current_rendered_navigation_links',
+                    'complete': bool(selected) and invalid == 0,
+                    'invalid_links': invalid, 'selected_count': len(selected),
+                }
             if value['pagination'].get('total', 0) > 0 or any(
                     item['count'] != 0 and item['disabled'] is not True and not item['terminal']
                     and not nonpagination_evidence_valid(item, self.page.url, arguments['card_selector'],
@@ -643,8 +824,14 @@ async def serve(*, phase: str | None = None, session: str | None = None, target:
         browser = await pw.chromium.launch(headless=True)
         try:
             context = await new_browser_context(browser)
-            phase = phase or os.environ.get("FACULTY_RECON_PHASE", "full")
+            configured_phase = phase or os.environ.get("FACULTY_RECON_PHASE")
+            phase = configured_phase or 'full'
             tools = phase_tools(phase)
+            if not configured_phase:
+                # Preserve the standalone MCP protocol's original tool surface.
+                # Production runtime patches explicitly select branch/full and
+                # retain the registry catalog for mechanism selection.
+                tools = [entry for entry in tools if entry['name'] not in {'page_type_catalog', 'browser_verify_stage'}]
             session = session or os.environ.get("FACULTY_RECON_SESSION", "standalone")
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session):
                 session = hashlib.sha256(session.encode()).hexdigest()

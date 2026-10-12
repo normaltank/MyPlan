@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, TypeAdapter, model_validator
 from server.source_qualification import SourceRole
+from server.page_types import PageTypeBindings, normalize_branch
 
 Selector = Annotated[str, Field(min_length=1, pattern=r"^[^\u4e00-\u9fff]+$")]
 Url = Annotated[str, Field(min_length=1, pattern=r"^https?://")]
@@ -27,6 +28,7 @@ class SourceFields(StrictObject):
 
 
 class RosterFields(SourceFields):
+    page_types: PageTypeBindings | None = None
     source_kind: Source | None = None
     card_selector: Selector | None = None
     single_page: bool | None = Field(default=None, description=(
@@ -39,6 +41,13 @@ class RosterFields(SourceFields):
     roster_container_selector: Selector | None = None
     profile_content_selector: Selector | None = None
     profile_content_start_selector: Selector | None = None
+    profile_ready_selector: Selector | None = None
+
+    @model_validator(mode='after')
+    def valid_page_types(self):
+        if self.page_types is not None:
+            normalize_branch(self.model_dump(exclude_none=True))
+        return self
 
 
 class Branch(RosterFields):
@@ -46,9 +55,20 @@ class Branch(RosterFields):
     kind: Literal["roster", "navigation", "segmented", "image_table"] | None = None
     child_link_selector: Selector | None = None
     child_branch: RosterFields | None = None
+    child_branches: Annotated[list['Branch'], Field(min_length=1)] | None = None
     max_children: Count | None = None
     container_selector: Selector | None = None
     record_start_selector: Selector | None = None
+
+    @model_validator(mode='after')
+    def valid_children(self):
+        if self.child_branches is not None:
+            if self.kind != 'navigation' or self.child_branch is not None:
+                raise ValueError('explicit children require navigation without child_branch')
+            urls = [child.url for child in self.child_branches]
+            if len(urls) != len(set(urls)):
+                raise ValueError('duplicate explicit child URL')
+        return self
 
 
 class DiscoveredBranch(SourceFields):

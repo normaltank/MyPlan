@@ -23,11 +23,14 @@ def digest(value) -> str:
 
 
 def contract() -> str:
+    from server.page_types import registered_implementation_manifest
     root = Path(__file__).parent
-    return digest({name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in
+    sources = {name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in
                    ('source_review.py', 'source_qualification.py', 'harvest_eligibility.py',
                     'faculty_extractor.py', 'detail_mecc.py', 'harvest_workflow.py', 'segmented_roster.py',
-                    'pdf_roster.py', 'image_table_roster.py', 'profile_content.py', 'profile_structure.py')})
+                    'pdf_roster.py', 'image_table_roster.py', 'profile_content.py', 'profile_structure.py',
+                    'page_types.py', 'page_type_rank_grid.py')}
+    return digest({'sources': sources, 'registered_implementations': registered_implementation_manifest()})
 
 
 def item_id(item: dict) -> str:

@@ -1,6 +1,6 @@
 # MyPlan 模块索引
 
-本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务按 [AGENTS.md](AGENTS.md) 分工，采集维护状态与证据见对应工单和 PR，全链路审查 agent 的专项状态见 [五项计划](docs/improvement-plan.md)。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
+本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务按 [AGENTS.md](AGENTS.md) 分工。当前清理优先级、根因分类与后续验证统一见 [维护计划](docs/improvement-plan.md)，具体工作证据见对应工单与 PR。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
 
 ## 按调用链定位
 
@@ -9,6 +9,8 @@
 | 输入与网页 | `server/app.py`、`server/intake.py`、`server/templates/` | 三／四列输入、批次、结果和复核交互 |
 | 队列与 worker | `server/agent_queue.py`、`server/agent_worker.py` | 租约、状态、失败分类、补缺、完成与恢复 |
 | 入口发现与计划 | `server/agent_recon.py`、`server/recon_browser_mcp.py` | 浏览器观察、结构计划、Schema、缓存及阶段反馈 |
+| 页面机制与类型合同 | `server/page_types.py`、`server/page_stage_types.py`、`server/page_type_rank_grid.py`、`server/recon_contract.py` | 四角色可信注册、结构绑定、实际处理器／证明与版本摘要；详见 [类型库现状](docs/architecture/type-library.md)，有界能力不等于所有学院支持 |
+| 观察与计划复用 | `server/site_type_registry.py`、`server/recon_plan_cache.py`、`server/recon_templates.py` | SQLite 观察／失败登记、同学院计划版本、同次侦察模板；它们不是执行脚本数据库 |
 | 浏览器采集与覆盖 | `server/browser_batch_tool.py`、`server/harvest_workflow.py`、`server/harvest_coverage.py` | 名录分支、分页、断点、原件与审计 |
 | 人员、字段与身份 | `server/faculty_extractor.py`、`server/faculty_identity.py`、`server/titles.py`、`Opus/` | 人员范围、职称、邮箱、简介及合并证据 |
 | 来源资格 | `server/source_qualification.py`、`server/source_review.py`、`server/harvest_eligibility.py`、`server/recon_contract.py` | 页面用途、学校与学院归属、师资范围 |
