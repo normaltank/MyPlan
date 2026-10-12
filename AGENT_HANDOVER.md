@@ -1,6 +1,6 @@
 # MyPlan 模块索引
 
-本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务按 [AGENTS.md](AGENTS.md) 分工。当前清理优先级、根因分类与后续验证统一见 [维护计划](docs/improvement-plan.md)，具体工作证据见对应工单与 PR。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
+本文件帮助定位代码，不保存逐次提交日志。先读 [CONTEXT.md](CONTEXT.md) 理解契约；任务按 [AGENTS.md](AGENTS.md) 分工。类型库维护流程与根因分类见 [类型库说明](docs/architecture/type-library.md#类型库维护流程)，清理专项范围与后续验证见 [维护计划](docs/improvement-plan.md)，具体工作证据见对应工单与 PR。当前分支、开放 PR、合并状态及 CI 直接查 GitHub，不从旧交接文字推断。
 
 ## 按调用链定位
 
