@@ -24,7 +24,7 @@ SOURCE_FIELDS = frozenset({'source_role', 'source_container_selector', 'role_evi
 _FACULTY_PURPOSE = re.compile(
     r'(?:师资(?:队伍|名录|力量|介绍|简介)|教师(?:名单|名录|队伍|介绍|简介|风采)|'
     r'教职工(?:名单|名录|队伍)|教授博士介绍|导师(?:名单|名录|介绍|信息|队伍|风采)|'
-    r'(?:博士生|硕士生)导师|教学(?:队伍|名师)|'
+    r'(?:博士生|硕士生|研究生)导师|教学(?:队伍|名师)|'
     r'(?:专任|兼职|外聘|客座)教师|客座教授|faculty(?:\s+members)?|academic\s+staff)', re.I)
 _ORGANIZATIONAL_PURPOSE = re.compile(
     r'(?:党(?:委|总支|支部)(?:成员|委员|组成|领导)?|'

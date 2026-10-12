@@ -292,6 +292,8 @@ async def test_missing_image_biography_asset_blocks_delivery(tmp_path):
 @pytest.mark.asyncio
 async def test_image_only_profile_without_usable_ocr_blocks_delivery(tmp_path, monkeypatch):
     import server.image_biography as media
+    import server.profile_structure as structure
+    from server.source_qualification import digest
 
     base = "https://faculty.example.edu"
     url = f"{base}/p/1.htm"
@@ -302,6 +304,17 @@ async def test_image_only_profile_without_usable_ocr_blocks_delivery(tmp_path, m
         "page_count": 1, "pages_ocrd": 1, "text": "", "pages": [
             {"page": 1, "text": "", "lines": [], "source": "local_ocr"}],
         "image_size": [400, 600]})
+    # This component test stipulates a proved body and exercises unreadable
+    # OCR. FakePage has no computed DOM; real scope rejection is tested with
+    # Chromium in test_failed_profile_scope_capture.py.
+    async def verified_body(page, selector, start_selector=None, *, local_capture=None, **_kwargs):
+        html = await page.content()
+        if local_capture is not None:
+            local_capture['html'] = html
+        return {'confirmed': True, 'html_sha256': digest(html),
+                'profile_content_selector': selector,
+                'profile_content_start_selector': start_selector}
+    monkeypatch.setattr(structure, 'verify_profile_container', verified_body)
     plan = {"school": "样本大学", "college": "样本学院", "branches": [
         {"url": f"{base}/roster", "single_page": True, "card_selector": "main li",
          "profile_content_selector": "article"}]}
