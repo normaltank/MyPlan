@@ -2,6 +2,10 @@
 
 本文记录 worker 与采集执行层的现有接口，用于理解和维护调用链，不是可调用技能或开发任务分配。DS 的入口发现、给定链接与分支结构指令由 [agent_recon.py](../../../server/agent_recon.py) 加载对应 `recon_*.md`；DS 只使用运行时按阶段开放的工具，不因本文列有 CLI、队列或同步接口而获得这些职责。下文描述当前工具和门禁；业务允许的部分交付、四列入口映射等目标，不能仅因写进文档就视为已经实现。原始页面、完整简介和复核证据保存在本地，不要求结构侦察输出教师字段。
 
+现行类型库定义与实际复用边界见 [类型库架构](../../../docs/architecture/type-library.md)，维护顺序和根因分类见 [维护计划](../../../docs/improvement-plan.md)。本轮文档对齐不执行任何下列命令。JSON 仅说明现有结构字段；占位示例不含浏览器证明，不能直接提交。所有分支与导航子分支均须携带 `recon_contract` 要求的四个来源结构字段并取得当前来源证据。
+
+当前代码候选可在 `page_types` 分别选择 entrance、roster、pagination、detail 的精确 ID／implementation_version 与结构 params；省略时解析为旧兼容机制。分支侦察先读 page_type_catalog 的适用与参数合同，再取得实际名单或阶段证明。新类型的结构、DTO、原件和摘要合同集中见类型库架构；下面的旧示例继续表示兼容模式，不覆盖所有已注册机制，也不保证所有页面适用。
+
 ## 浏览器批量工具：名录、分页、个人主页
 
 **触发**：已确认一个或多个本学院官方师资名录 URL，已核实每个分支的结构与分页。第四列给定链接仍须与学院其他师资入口核对；官网明确列为师资的兼职、外聘等分支不能因用工类别被遗漏。
@@ -16,8 +20,8 @@ CLI 使用新的 Playwright 浏览器上下文重新访问 URL；解析模块处
   "college": "样本学院",
   "source_kind": "university_faculty_roster",
   "branches": [
-    {"url": "https://faculty.example.edu/roster", "next_selector": "main .pagination .next", "card_selector": "main .faculty-card", "profile_content_selector": "article .body"},
-    {"url": "https://faculty.example.edu/other", "single_page": true, "card_selector": "main .faculty-card", "profile_content_selector": "article .body"}
+    {"url": "https://faculty.example.edu/roster", "source_role": "faculty_roster", "source_container_selector": "main .faculty-list", "role_evidence_selector": "main h1", "source_context_selector": "header .college-name", "next_selector": "main .pagination .next", "card_selector": "main .faculty-list .faculty-card", "profile_content_selector": "article .body"},
+    {"url": "https://faculty.example.edu/other", "source_role": "faculty_roster", "source_container_selector": "main .faculty-list", "role_evidence_selector": "main h1", "source_context_selector": "header .college-name", "single_page": true, "card_selector": "main .faculty-list .faculty-card", "profile_content_selector": "article .body"}
   ]
 }
 ```
@@ -34,12 +38,20 @@ CLI 使用新的 Playwright 浏览器上下文重新访问 URL；解析模块处
 {
   "url": "https://faculty.example.edu/departments",
   "kind": "navigation",
+  "source_role": "faculty_roster",
+  "source_container_selector": "main .departments",
+  "role_evidence_selector": "main h1",
+  "source_context_selector": "header .college-name",
   "child_link_selector": "main .departments a.roster",
-  "child_branch": {"single_page": true, "card_selector": "main .faculty-card"}
+  "child_branch": {"source_role": "faculty_roster", "source_container_selector": "main .faculty-list", "role_evidence_selector": "main h1", "source_context_selector": "header .college-name", "single_page": true, "card_selector": "main .faculty-list .faculty-card"}
 }
 ```
 
 导航页产生子分支，不直接作为教师记录；先证明链接通往多人名录，再核实子名录的卡片和分页。个人主页链接不能当作导航子名录。不同结构不能未经验证就共用一套选择器。
+
+异构子名单使用与 child_branch 互斥的完整 child_branches，每项有实际 URL、自身来源和结构绑定，逐项证明，不能只验证两个样例。旧入口以 browser_verify 的 include_child_urls 核对完整集合；新入口以 browser_verify_stage 的实际 source_urls 核对。遗漏、多配、重复或父导航分页未证明保持未解决；新 scoped_links 仅发现当前 DOM 可见同站子入口，不等于遍历全站。
+
+roster.rank_grid 是独立职称分组名单解析器；提交对应 container_selector、record_start_selector、card_selector 与精确绑定给 browser_verify，取得同类型版本的真实读取证据，不能借旧 cards 证明。多人单元、未知 token、同名多位置与人工待核规则见类型库架构。
 
 若个人页由 JavaScript 延迟渲染，可在计划顶层声明经核实的 `profile_ready_selector`。缺少身份依据的详情不能当作正常空邮箱页交付。
 
@@ -60,6 +72,8 @@ python -m server.browser_batch_tool --plan <计划文件.json> --output-dir serv
 
 ```json
 {"url": "https://faculty.example.edu/teachers/article.htm", "kind": "segmented",
+ "source_role": "faculty_roster", "source_container_selector": "div.v_news_content",
+ "role_evidence_selector": "main h1", "source_context_selector": "header .college-name",
  "container_selector": "div.v_news_content", "record_start_selector": "div.v_news_content img",
  "single_page": true}
 ```
@@ -68,7 +82,7 @@ python -m server.browser_batch_tool --plan <计划文件.json> --output-dir serv
 
 ## 个人页正文范围
 
-**触发**：名录实际链接到个人页。用 `browser_verify_profile` 核实最多两个不同实际样例，只有一个时验证该样例。`profile_content_selector` 须覆盖完整正文，保留履历、联系方式与学术内容；不能只选方便提取的一段。
+**触发**：名录实际链接到个人页。旧 detail.profile 用 `browser_verify_profile` 核实最多两个不同实际样例，只有一个时验证该样例；新 detail.article_region 用 `browser_verify_stage(role="detail")` 实际执行所选处理器，传真实个人 URL 并保存各自原件。`profile_content_selector` 须覆盖完整正文，保留履历、联系方式与学术内容；不能只选方便提取的一段。
 
 正文没有独立包装节点时，可配合 `profile_content_start_selector`；它须是唯一正文根的唯一直接子边界。解析保留边界之后直到容器结束的全部 DOM，不按词语或长度裁剪。例如已实际核实结构分隔线后，才声明 `profile_content_selector: ".content"` 与 `profile_content_start_selector: ".content > hr"`。
 
@@ -91,6 +105,8 @@ python -m server.browser_poster_tool --url <官方图片名录页> --output-dir 
 
 ```json
 {"url": "https://faculty.example.edu/teachers/table.htm", "kind": "image_table",
+ "source_role": "faculty_roster", "source_container_selector": "main .roster-table",
+ "role_evidence_selector": "main h1", "source_context_selector": "header .college-name",
  "card_selector": "main .roster-table img", "single_page": true}
 ```
 

@@ -1,6 +1,6 @@
 # MyPlan 运行与排障
 
-本文件保存现有操作入口，不维护逐次开发日志或某台机器的“最新部署状态”。目标与术语见 [CONTEXT.md](../CONTEXT.md)，按 [AGENTS.md](../AGENTS.md) 的任务分工选择操作。操作前核对实际任务范围、运行版本和现有工单，仓库更新不代表进程已加载。
+本文件保存现有操作入口，不维护逐次开发日志或某台机器的“最新部署状态”。目标与术语见 [CONTEXT.md](../CONTEXT.md)，采集调用链见 [采集流程](architecture/college-harvest-workflow.md)。当前优先级和根因分类统一见 [维护计划](improvement-plan.md)，按 [AGENTS.md](../AGENTS.md) 与用户实际任务选择操作；本轮文档整理不执行下面的启动、采集或重试命令。操作前核对范围、运行版本和现有工单，仓库更新不代表进程已加载。
 
 ## 1. 核对运行环境
 
@@ -64,7 +64,7 @@
 
 失效图片的具体条件见 [对应证据记录](implementation/2026-10-10-missing-profile-image-review.md)，原件封存和携带见 [review-evidence-metadata](implementation/2026-10-10-review-evidence-metadata.md)。记录中的历史通过范围不自动证明当前完整闭环。
 
-现有无师资界面仍有“专任教师”的旧文案，与 CONTEXT 不一致；跨学院同人、多学院导出、旧版本有效性和可信部分交付也在当前修复清单中。已存在的“处理审计项后重跑”并不覆盖通用补入口、补遗漏人员的目标流程。
+现有无师资界面仍有“专任教师”的旧文案，与 CONTEXT 不一致，依据为 [no_faculty_review.py](../server/no_faculty_review.py) 与 `agent_queue.mark_no_faculty`。跨学院同人、多学院导出、旧版本有效性和可信部分交付的旧发现见 [原基线审查](audits/2026-10-11-chain-contract-review.md)，不据该记录声称当前已全部复现或已修复。当前先清理维护改动，具体修复另行安排。现有来源复核可对特定来源请求重新侦察，但不能据此宣称通用补入口、补遗漏人员和字段修改闭环已实现。
 
 ## 5. Worker、资源与运行参数
 
@@ -103,13 +103,14 @@ worker 启动自检核对算法依赖、OCR、PyMuPDF、Harness、API Key 与 Ch
 | PDF／图片属于谁 | 核对页码、位置、原件摘要及本人范围；见 [PDF 范围记录](implementation/2026-10-10-pdf-owner-resume-sections.md) |
 | 长简介看似被截断 | 核对工作簿“完整简介”支持表及 [biography_workbook.py](../server/biography_workbook.py)，再查原始正文范围 |
 | 修复后旧任务仍失败 | 核对实际进程版本、证据绑定、缓存条件与缺失资源；区分保存页回放和实网重采 |
+| 类型不匹配或阶段证明失效 | 核对四角色的精确 ID／版本／effective params、目录适用条件、实际 handler 原件及实现摘要；按 [类型库合同](architecture/type-library.md) 区分分派错误、结构缺口和证据漂移，不能改 observed／confirmed 标志放行 |
 
 字段核对和人数交叉核对会写入审计，但差额可能来自口径、行政名单或历史介绍。检查 `field_check`／`cross_check` 和相关材料，不能从它们直接推出全院真值，也不能忽略未进入输出的人员。
 
-页面类型观察可在隔离库登记：
+下面是现有结构观察登记工具的操作说明，不是类型批准、处理器分派或本轮执行指令。它的审计导入器目前只接受 PDF 职称分组姓名网格；[类型库现状](architecture/type-library.md) 说明能力边界。经明确安排后，可在隔离观察库登记：
 
 ```sh
-python -m server.site_type_registry --audit <审计.json> --db <隔离类型库.sqlite3>
+python -m server.site_type_registry --audit <审计.json> --db <隔离观察库.sqlite3>
 ```
 
 它检查对应原件与摘要、记录观察，不修改工单、不批准采集方案。旧审计未识别的类型应先用当前解析器回放，不能补造观察字段。
@@ -127,7 +128,7 @@ python -m server.spot_check --help
 
 回放需要实际的 `plan.json`、`result.json` 和采集原件。它按大学／学院默认挑最新捕获，主要比较就绪状态和计数；未保存的请求、同学院其他历史版本与人员／字段差异须另外核对。因此保护历史成功能力要使用明确案例版本清单和人工核验差分，不能只接受回放报告“ready 数量增加”。
 
-输出抽检只能检查已输出记录，不能发现整条漏人或遗漏分支。全链路审查 agent 的随机探索、整批保存、人工真值与冻结后未见验证按其 [五项计划](improvement-plan.md) 执行；日常采集维护按当前问题运行相关回归并保存证据。
+输出抽检只能检查已输出记录，不能发现整条漏人或遗漏分支。随机探索、整批保存、人工真值与冻结后未见验证的方法见 [维护计划](improvement-plan.md)，仅在相应任务明确安排后执行。后续修复按根因分类运行相关回归并保存证据，不以追着新失败无限追加代码代替判断。
 
 认领、续租、执行与交付由 worker 组织；DS 侦察按已分配目标返回经核验的结构计划。开发维护 agent 在用户已授权的排障或采集范围内使用现有运维入口，不调用工作流角色技能来接管任务。已认领工单需要当前租约；`auto_dispatcher.py` 仅用于只读统计。浏览器批次 CLI 参数以 `--help` 和现有工具契约为准。
 
