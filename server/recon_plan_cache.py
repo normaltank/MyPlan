@@ -19,7 +19,8 @@ def _contract() -> str:
     digest = hashlib.sha256(b"faculty-plan-cache-v3-source-relationship")
     for name in ("recon_discovery.md", "recon_instructions.md", "recon_provided_links.md", "recon_dom_probe.js",
                  'recon_contract.py', 'recon_progress.py', 'source_qualification.py', 'source_navigation.py',
-                 'page_types.py', 'page_type_rank_grid.py', 'pager_evidence.py', 'browser_readiness.py'):
+                 'page_types.py', 'page_type_rank_grid.py', 'pager_evidence.py', 'browser_readiness.py',
+                 'agent_recon.py'):
         digest.update((HERE / name).read_bytes())
     override = HERE if HERE.resolve() != Path(__file__).resolve().parent else None
     digest.update(json.dumps(registered_implementation_manifest(root=override), sort_keys=True,

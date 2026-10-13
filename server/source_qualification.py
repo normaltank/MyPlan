@@ -316,6 +316,20 @@ def captured_source_evidence(html: str, url: str, branch: dict, target: dict,
                           branch.get('source_kind') or target.get('source_kind') or '')
 
 
+def capture_preserves_source(html: str, url: str, branch: dict, target: dict,
+                             previous: dict, current: dict | None) -> bool:
+    """A fresh browser proof binds its own original and the same qualified scope.
+
+    Callers still require the latest dedicated source observation; unrelated
+    page chrome may change, but a failed current capture cannot reuse it.
+    """
+    keys = ('source_evidence_version', 'url', *SOURCE_FIELDS, 'unit_selector', 'units_within_scope',
+            'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256')
+    return (isinstance(previous, dict) and previous.get('confirmed') is True
+            and isinstance(current, dict) and all(current.get(key) == previous.get(key) for key in keys)
+            and captured_source_evidence(html, url, branch, target, current).status == 'verified')
+
+
 def owned_profile_relationship(html: str | None, url: str, name: str, target: dict,
                                scope_evidence: dict | None, *, unique_owner: bool) -> SourceEvidence | None:
     """Independent current affiliation from an actually proved own profile.

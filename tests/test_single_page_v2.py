@@ -82,7 +82,8 @@ def test_stage_digest_binds_terminal_and_capture_dependencies(tmp_path):
 
 @pytest.mark.browser
 @pytest.mark.asyncio
-async def test_pending_banner_passes_actual_stage_submit_harvest_and_cache(tmp_path):
+@pytest.mark.parametrize('changing_chrome', [False, True])
+async def test_pending_banner_passes_actual_stage_submit_harvest_and_cache(tmp_path, changing_chrome):
     import asyncio
     from playwright.async_api import async_playwright
     from server.browser_batch_tool import run_plan
@@ -90,10 +91,12 @@ async def test_pending_banner_passes_actual_stage_submit_harvest_and_cache(tmp_p
     from server.recon_plan_cache import validate_cached_plan
     release = asyncio.Event()
     people = {'a': '张伟', 'b': '李明'}
+    roster_reads = 0
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         context = await browser.new_context()
         async def serve(route):
+            nonlocal roster_reads
             if route.request.url.endswith('/pending.png'):
                 await release.wait()
                 await route.fulfill(body='', content_type='image/png')
@@ -103,7 +106,10 @@ async def test_pending_banner_passes_actual_stage_submit_harvest_and_cache(tmp_p
                     '<p>工作单位：样本大学样本学院</p><p>教学研究和完整任职履历。</p></article>',
                     content_type='text/html; charset=utf-8')
             else:
-                await route.fulfill(body=PAGE, content_type='text/html; charset=utf-8')
+                roster_reads += 1
+                chrome = f'<div class="visit-count">{roster_reads}</div>' if changing_chrome else ''
+                await route.fulfill(body=PAGE + chrome,
+                                    content_type='text/html; charset=utf-8')
         await context.route('**/*', serve)
         try:
             await context.add_init_script(Path('server/recon_dom_probe.js').read_text(encoding='utf-8'))
@@ -125,6 +131,45 @@ async def test_pending_banner_passes_actual_stage_submit_harvest_and_cache(tmp_p
             accepted = json.loads((await scout.call('submit_plan', {'plan': BRANCH}))['content'][0]['text'])
             assert accepted['accepted'], accepted
             plan = {'school': '样本大学', 'college': '样本学院', 'branches': [copy.deepcopy(BRANCH)]}
+            from server.agent_recon import selector_evidence_issues
+            packet = json.loads(stage['content'][0]['text'])
+            reference = packet['results'][0]['capture_metadata']
+            original_metadata = json.loads(Path(reference['evidence_path']).read_bytes())
+            # Even a rehashed packet cannot substitute an unqualified or different scope.
+            changes = [None, [], 'remove', {'confirmed': False}, {'unit_selector': '#other'},
+                       {'selected_scope_sha256': '0' * 64}, {'role_scope_sha256': '0' * 64},
+                       {'context_scope_sha256': '0' * 64}, {'source_html_sha256': '0' * 64}]
+            for index, change in enumerate(changes):
+                metadata = copy.deepcopy(original_metadata)
+                if change == 'remove':
+                    metadata['evidence'].pop('source_roles')
+                elif isinstance(change, dict):
+                    metadata['evidence']['source_roles'][URL].update(change)
+                else:
+                    metadata['evidence']['source_roles'] = change
+                raw = json.dumps(metadata, ensure_ascii=False).encode('utf-8')
+                path = tmp_path / f'changed-stage-{index}.json'
+                path.write_bytes(raw)
+                altered_packet = copy.deepcopy(packet)
+                altered_packet['results'][0]['capture_metadata'] = {
+                    'sha256': hashlib.sha256(raw).hexdigest(), 'evidence_path': str(path)}
+                events = copy.deepcopy(scout.events)
+                events[-1]['data']['message']['content'][0]['content'][0]['text'] = json.dumps(altered_packet)
+                assert any(issue['status'] == 'stage_type_evidence_unverified'
+                    for issue in selector_evidence_issues(plan, events)), change
+            call = next(copy.deepcopy(event) for event in reversed(scout.events)
+                if event['type'] == 'tool/call' and event['data']['name'].endswith('browser_verify_stage'))
+            call['data']['callId'] = 'latest-stage'
+            failed = {'type': 'tool/result', 'data': {'message': {'content': [{
+                'toolCallId': 'latest-stage', 'isError': True, 'content': [{'type': 'text', 'text': 'Error: failed'}]}]}}}
+            for suffix in ([call], [call, failed]):
+                assert any(issue['status'] == 'stage_type_evidence_unverified'
+                    for issue in selector_evidence_issues(plan, [*scout.events, *suffix]))
+            unrelated = copy.deepcopy(call)
+            args = json.loads(unrelated['data']['arguments'])
+            args['branch']['url'] += '?other'
+            unrelated['data']['arguments'] = json.dumps(args)
+            assert not selector_evidence_issues(plan, [*scout.events, unrelated, failed])
             result = await run_plan(plan, context, tmp_path / 'capture', task_id='scoped-pager')
             assert result['delivery_ready'], result['unresolved']
             assert result['total'] == 2

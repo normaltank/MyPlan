@@ -1,6 +1,9 @@
 """Single rendered WebPlus roster with scoped, current-browser terminal proof."""
 from __future__ import annotations
 
+import hashlib
+import json
+
 from bs4 import BeautifulSoup
 
 from server.pager_evidence import proof_valid, scope_digest, scoped_terminal_pagers
@@ -20,10 +23,14 @@ async def capture(fallback, context, branch, *, source_target=None, on_page=None
 
 def probe(context, result):
     pages, errors, evidence = result
+    roles = evidence.get('source_roles')
+    source = roles.get(context.final_url) if isinstance(roles, dict) else None
     return {'mechanism': evidence.get('mechanism'), 'error_count': len(errors),
             'page_count': len(pages), 'end': evidence.get('end'),
             'pagination_termination': evidence.get('pagination_termination'),
-            'terminal_pagers': evidence.get('terminal_pagers')}
+            'terminal_pagers': evidence.get('terminal_pagers'),
+            'source_proof_sha256': hashlib.sha256(json.dumps(source, sort_keys=True,
+                allow_nan=False).encode()).hexdigest() if isinstance(source, dict) else None}
 
 
 def valid(context, result, payload):
@@ -38,7 +45,11 @@ def valid(context, result, payload):
         roots, cards = soup.select(widget), soup.select(selector)
         pagers = soup.select(terminal['pager_selector'])
         host = pagers[0].find_parent(id=lambda value: value and value.startswith('wp_paging_')) if len(pagers) == 1 else None
+        source_roles = result[2].get('source_roles') if result is not None else None
+        source = source_roles.get(context.final_url) if isinstance(source_roles, dict) else None
         accepted = (payload['mechanism'] == 'scoped_webplus_single_page'
+            and isinstance(source, dict) and source.get('confirmed') is True
+            and source.get('source_html_sha256') == context.source_html_sha256
             and type(payload['error_count']) is int and payload['error_count'] == 0
             and type(payload['page_count']) is int and payload['page_count'] == 1
             and payload['end'] == 'single_page_no_pagination_control_seen'
@@ -57,8 +68,7 @@ def valid(context, result, payload):
                 for sample in (first, clicked, stable))
             and payload['pagination_termination'] == single_page_evidence(html, context.final_url,
                 selector, [terminal['control_selector']]))
-        if result is not None:
-            accepted = accepted and probe(context, result) == payload
+        accepted = accepted and probe(context, result) == payload
         return bool(accepted)
     except (KeyError, TypeError, ValueError, AttributeError):
         return False
@@ -78,4 +88,5 @@ def register():
         'whose every DOM occurrence lies outside both widgets can be ignored. Other structures use @1.',
         probe, valid, 'actual terminal click + source/pager/widget hashes + three request-scope samples',
         source_dependencies=('server/pager_evidence.py', 'server/browser_readiness.py',
-                             'server/browser_batch_tool.py')))
+                             'server/browser_batch_tool.py', 'server/agent_recon.py',
+                             'server/source_qualification.py')))
