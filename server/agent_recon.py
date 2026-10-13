@@ -540,7 +540,18 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
         if owner:
             issue["branch_url"] = owner
         issues.append(issue)
-    return {"previous_plan": plan, "issues": issues}
+    return {"previous_plan": plan, "issues": issues, "captured_issues": list(issues),
+            "phase_rejections": []}
+
+
+def _unique_repair_entries(*groups) -> list[dict]:
+    """Keep distinct controlled diagnostics without making provenance a retry key."""
+    entries = {}
+    for group in groups:
+        for item in group if isinstance(group, list) else []:
+            if isinstance(item, dict):
+                entries[json.dumps(item, sort_keys=True, ensure_ascii=False)] = item
+    return list(entries.values())
 
 
 def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
@@ -552,10 +563,15 @@ def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
     """
     previous = previous or {}
     merged = {**previous, **incoming}
-    issues = {}
-    for item in [*previous.get('issues', []), *incoming.get('issues', [])]:
-        issues[json.dumps(item, sort_keys=True, ensure_ascii=False)] = item
-    merged['issues'] = list(issues.values())
+    merged['issues'] = _unique_repair_entries(previous.get('issues'), incoming.get('issues'))
+    history = _unique_repair_entries(previous.get('phase_rejection_history'),
+        previous.get('phase_rejections'), incoming.get('phase_rejection_history'), incoming.get('phase_rejections'))
+    if history:
+        # A retired refusal must never become legacy URL feedback after its
+        # active snapshot is replaced. Keep its origin for suppression only.
+        merged['phase_rejection_history'] = history
+    if 'captured_issues' in previous or 'captured_issues' in incoming:
+        merged['captured_issues'] = _unique_repair_entries(previous.get('captured_issues'), incoming.get('captured_issues'))
     if 'known_urls' in previous or 'known_urls' in incoming:
         merged['known_urls'] = list(dict.fromkeys(url for url in [
             *previous.get('known_urls', []), *incoming.get('known_urls', [])] if _is_structure_url(url)))
@@ -645,7 +661,7 @@ def _phase_repair_issues(feedback: dict, phase: str, url: str, branch_urls=()) -
         if origin_phase is not None:
             selected.update(phase=origin_phase, target_url=target_url)
         sid = context.get('session_id')
-        if isinstance(sid, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,160}', sid):
+        if isinstance(sid, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,160}(?:-discover|-branch-[0-9]+)?', sid):
             selected['session_id'] = sid
         children = item.get('gate_issues')
         if isinstance(children, list):
@@ -665,6 +681,12 @@ def _phase_repair_issues(feedback: dict, phase: str, url: str, branch_urls=()) -
     contexts = feedback.get('phase_rejections')
     routed = []
     contextual_issues = set()
+    for record in _unique_repair_entries(feedback.get('phase_rejection_history')):
+        contextual_issues.update(json.dumps(item, sort_keys=True, ensure_ascii=False)
+            for item in _unique_repair_entries(record.get('issues')))
+    for item in _unique_repair_entries(feedback.get('captured_issues')):
+        if value := project(item, {}):
+            routed.append(value)
     for record in contexts if isinstance(contexts, list) else []:
         if not isinstance(record, dict):
             continue
@@ -684,7 +706,7 @@ def _phase_repair_issues(feedback: dict, phase: str, url: str, branch_urls=()) -
             continue
         if value := project(item, {}):
             routed.append(value)
-    return list({json.dumps(item, sort_keys=True, ensure_ascii=False): item for item in routed}.values())
+    return _unique_repair_entries(routed)
 
 
 def _profile_issue_branch(plan: dict[str, Any], issue: dict[str, Any]) -> str | None:

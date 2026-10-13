@@ -117,6 +117,104 @@ def test_no_controlled_rejection_leaves_no_feedback_reason(monkeypatch, feedback
     assert 'plan_contract_rejected' not in ''.join(prompts.values())
 
 
+def test_cross_round_discovery_refusal_does_not_become_legacy_branch_feedback(monkeypatch):
+    issue = {'status': 'source_role_evidence_unverified', 'url': FIRST,
+             'failed_condition': 'current_source_unit_binding_missing'}
+    old = {'issues': [issue], 'phase_rejections': [agent_recon._phase_rejection(
+        'discovery', 'old-discover', TARGET['url'], [issue])]}
+    incoming = {'issues': [{'status': 'plan_contract_rejected'}], 'phase_rejections': []}
+    merged = agent_recon.merge_repair_feedback(old, incoming)
+    prompts = capture_prompts(monkeypatch, merged)
+    assert 'current_source_unit_binding_missing' not in ''.join(prompts.values())
+    # Historical diagnostics/classification remain recorded, with their origin.
+    assert issue in merged['issues']
+    assert merged['phase_rejection_history'][0]['session_id'] == 'old-discover'
+
+
+def test_retired_phase_provenance_survives_multiple_empty_retry_snapshots(monkeypatch):
+    issue = {'status': 'source_role_evidence_unverified', 'url': FIRST,
+             'failed_condition': 'current_source_unit_binding_missing'}
+    feedback = {'issues': [issue], 'phase_rejections': [agent_recon._phase_rejection(
+        'discovery', 'old-discover', TARGET['url'], [issue])]}
+    incoming = {'issues': [{'status': 'plan_contract_rejected'}], 'phase_rejections': []}
+    for _ in range(3):
+        feedback = agent_recon.merge_repair_feedback(feedback, incoming)
+    prompts = capture_prompts(monkeypatch, feedback, discovery=False)
+    assert 'current_source_unit_binding_missing' not in ''.join(prompts.values())
+
+
+def test_captured_counterexample_identical_to_a_retired_phase_issue_remains_applicable(monkeypatch):
+    issue = {'status': 'source_role_evidence_unverified', 'url': FIRST}
+    old = {'issues': [issue], 'phase_rejections': [agent_recon._phase_rejection(
+        'discovery', 'old-discover', TARGET['url'], [issue])]}
+    claim = {'source_role': 'faculty_roster', 'source_container_selector': 'main',
+             'role_evidence_selector': 'h1', 'source_context_selector': 'header'}
+    plan = {'school': TARGET['school'], 'college': TARGET['college'],
+            'branches': [{'url': FIRST, **claim, 'card_selector': 'main li', 'single_page': True}]}
+    captured = agent_recon.build_repair_feedback(plan, {'unresolved': [issue]})
+    feedback = agent_recon.merge_repair_feedback(old, captured)
+    feedback = agent_recon.merge_repair_feedback(feedback, {
+        'issues': [{'status': 'plan_contract_rejected'}], 'phase_rejections': []})
+    prompts = capture_prompts(monkeypatch, feedback, discovery=False)
+    payload = json.loads(prompts['1'].rsplit('\n本阶段结构反馈：', 1)[1])
+    assert issue in payload['issues']
+    assert 'old-discover' not in prompts['1']
+    assert 'source_role_evidence_unverified' not in prompts['2']
+
+
+@pytest.mark.parametrize('phase,suffix,target,key', [
+    ('discovery', '-discover', TARGET['url'], 'discovery'),
+    ('branch', '-branch-1', FIRST, '1'),
+])
+def test_derived_phase_session_keeps_a_legal_160_character_root(monkeypatch, phase, suffix, target, key):
+    sid = 'r' * 160 + suffix
+    feedback = {'phase_rejections': [agent_recon._phase_rejection(phase, sid, target,
+        [{'status': 'plan_contract_rejected', 'gate_issues': [SCHEMA]}])]}
+    prompts = capture_prompts(monkeypatch, feedback)
+    assert sid in prompts[key]
+
+
+@pytest.mark.asyncio
+async def test_accepted_discovery_then_unsubmitted_branch_does_not_revive_prior_phase_error(tmp_path, monkeypatch):
+    from source_contract_fixture import CLAIM, source_events
+    from test_recon_submission_completion import config, install_harness, submission_events
+    plan = {'school': TARGET['school'], 'college': TARGET['college'],
+            'branches': [{'url': url, **CLAIM} for url in (FIRST, SECOND)]}
+    attempt = {'number': 1}
+    def events(phase):
+        if phase != 'discovery':
+            return []
+        # Source truth is stipulated here; post-submission validation and the
+        # retry/phase consumers themselves run unchanged.
+        sources = [event for index, branch in enumerate(plan['branches'])
+                   for event in source_events(branch, TARGET, 'source-' + str(index))]
+        navigation = []
+        for index, branch in enumerate(plan['branches']):
+            cid = 'navigate-' + str(index)
+            navigation.extend([
+                {'type': 'tool/call', 'data': {'callId': cid, 'name': 'mcp__playwright__browser_navigate',
+                    'arguments': json.dumps({'url': branch['url']})}},
+                {'type': 'tool/result', 'data': {'message': {'content': [{'toolCallId': cid,
+                    'content': [{'type': 'text', 'text': json.dumps({'url': branch['url'], 'status': 200})}]}]}}}])
+        return navigation + ([] if attempt['number'] == 1 else sources) + submission_events(plan)
+    install_harness(monkeypatch, events)
+    with pytest.raises(agent_recon.ReconPlanError) as first:
+        await agent_recon.reconnoiter(**TARGET, session_id='first', config=config(tmp_path), timeout_seconds=30)
+    old = first.value.safe_feedback
+    assert old['phase_rejections'][0]['phase'] == 'discovery'
+    assert any(issue['status'] == 'source_role_evidence_unverified' for issue in old['issues'])
+    attempt['number'] = 2
+    with pytest.raises(agent_recon.ReconPlanError) as second:
+        await agent_recon.reconnoiter(**TARGET, session_id='second', config=config(tmp_path),
+                                    feedback=old, timeout_seconds=30)
+    assert hasattr(second.value, 'discovery_checkpoint'), json.dumps(second.value.safe_feedback)
+    assert second.value.discovery_checkpoint['plan'] == plan
+    assert second.value.safe_feedback['phase_rejections'] == []
+    merged = agent_recon.merge_repair_feedback(old, second.value.safe_feedback)
+    prompts = capture_prompts(monkeypatch, merged, discovery=False)
+    assert all('本阶段结构反馈：' not in prompt for prompt in prompts.values())
+
+
 def test_nonretryable_page_envelope_is_not_reclassified_by_prompt_routing(monkeypatch):
     from server.recovery_policy import classify_issues
     feedback = {'issues': [{'status': 'recon_page_unverifiable', 'phase': 'branch',
