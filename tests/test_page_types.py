@@ -112,7 +112,8 @@ def test_unproved_role_extensions_register_but_are_not_production_selectable_or_
         registry, role, legacy_id, new_version):
     original = types.resolve_type(ref(legacy_id), role)
     type_id = legacy_id if new_version else role + '.not_proved'
-    version = 2 if new_version else 1
+    version = (max(version for existing_id, version in types._REGISTRY if existing_id == type_id) + 1
+               if new_version else 1)
     types.register_type(replace(original, type_id=type_id, implementation_version=version))
     branch = {'page_types': {role: ref(type_id, version=version)}}
     assert types.binding_for(branch, role).implementation_version == version

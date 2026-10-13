@@ -343,8 +343,9 @@ def test_other_production_roles_reject_registered_unproved_new_version(monkeypat
     assert not validate_submission(value, 'branch', target, events)
     original = page_types.resolve_type(binding(type_id), role)
     monkeypatch.setattr(page_types, '_REGISTRY', dict(page_types._REGISTRY))
-    page_types.register_type(replace(original, implementation_version=2))
-    value['page_types'][role] = {**binding(type_id), 'implementation_version': 2}
+    version = max(version for existing_id, version in page_types._REGISTRY if existing_id == type_id) + 1
+    page_types.register_type(replace(original, implementation_version=version))
+    value['page_types'][role] = {**binding(type_id), 'implementation_version': version}
     assert validate_submission(value, 'branch', target, events)
 
 

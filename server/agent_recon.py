@@ -808,6 +808,7 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
     profile_observations = []
     segment_observations = []
     stage_observations = []
+    stage_positions = {}
     clicks = []
     for index, event in enumerate(events):
         data = event.get("data") or {}
@@ -819,7 +820,19 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                 args = json.loads(data.get("arguments") or "{}")
             except (TypeError, ValueError):
                 continue
+            if not isinstance(args, dict):
+                continue
             calls[data.get("callId")] = (data["name"], args)
+            if data['name'] == 'mcp__playwright__browser_verify_stage':
+                requested = (args.get('urls') if args.get('role') == 'detail'
+                             else [(args.get('branch') or {}).get('url')])
+                positions = {}
+                for url in requested if isinstance(requested, list) else []:
+                    if isinstance(url, str) and url:
+                        positions[url] = len(stage_observations)
+                        # Pending, failed and malformed latest calls retire old evidence.
+                        stage_observations.append((args, {'requested_url': url}, index))
+                stage_positions[data.get('callId')] = positions
         elif event.get("type") == "tool/result":
             for block in (data.get("message") or {}).get("content", []):
                 call = calls.get(block.get("toolCallId"))
@@ -846,13 +859,11 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
                         elif name == 'mcp__playwright__browser_verify_stage':
                             packet = _read_stage_packet(result, args.get('role'))
                             if packet is not None:
-                                stage_observations.extend((args, item, index) for item in packet['results'])
-                            else:
-                                # A corrupted latest capture cannot revive an older proof.
-                                requested = (args.get('urls') if args.get('role') == 'detail'
-                                             else [(args.get('branch') or {}).get('url')])
-                                stage_observations.extend((args, {'requested_url': url}, index)
-                                                          for url in requested or [])
+                                positions = stage_positions.get(block.get('toolCallId'), {})
+                                for item in packet['results']:
+                                    position = positions.get(item.get('requested_url'))
+                                    if position is not None:
+                                        stage_observations[position] = (args, item, stage_observations[position][2])
                         else:
                             observations.append((args, result, index))
     from server.pager_evidence import pagination_termination_valid
@@ -907,15 +918,27 @@ def selector_evidence_issues(plan: dict[str, Any], events: list[dict[str, Any]],
             return None
         final_url, html = documents[0]
         actual_hash = hashlib.sha256(html.encode()).hexdigest()
-        if role != 'detail':
-            source = source_event_proof(branch, events)
-            if (source is None or source.get('source_html_sha256') != actual_hash
-                    or source.get('url') != final_url):
-                return None
-        proof = result.get('stage_evidence')
         reconstructed = _read_stage_capture(role, result, documents)
         if reconstructed is None:
             return None
+        if role != 'detail':
+            source = source_event_proof(branch, events)
+            if source is None or source.get('url') != final_url:
+                return None
+            if role == 'pagination' and 'source_roles' in reconstructed[2]:
+                # Pagination opens its own document and verifies its source there.
+                # Retain the latest dedicated qualification, while binding the
+                # stage to that new original; unrelated page chrome may differ.
+                from server.source_qualification import capture_preserves_source
+                source_roles = reconstructed[2].get('source_roles')
+                if not isinstance(source_roles, dict):
+                    return None
+                fresh = source_roles.get(final_url)
+                if not capture_preserves_source(html, final_url, branch, plan, source, fresh):
+                    return None
+            elif source.get('source_html_sha256') != actual_hash:
+                return None
+        proof = result.get('stage_evidence')
         if not validate_stage_evidence(role, branch, proof, requested_url=requested_url,
                 final_url=final_url, source_html_sha256=actual_hash, source_html=html, result=reconstructed):
             return None

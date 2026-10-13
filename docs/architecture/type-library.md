@@ -33,11 +33,12 @@
 
 ## 当前可信机制与适用边界
 
-| 类型（均为 @1） | 机制／限制 |
+| 类型／实现版本 | 机制／限制 |
 | --- | --- |
 | entrance.direct、entrance.navigation | 旧直接来源准备、旧导航链接发现，沿用对应浏览器证明 |
 | roster.cards、roster.segmented、roster.image_table | 旧卡片／媒体读取、分段平铺、图片表格；segmented、image_table 与严格空态须各自精确 legacy roster@1 |
 | pagination.single_page、pagination.next_control | 旧单页或 next 控件；single_page 仍需真实终止证明 |
+| [pagination.single_page@2](../../server/page_single_page_v2.py) | 普通 DOM 名单与 WebPlus 原生分页共享 widget ID，页码／总数一致的单页；实际点击前进控件并保存三次请求范围及名单／分页／widget 摘要。只允许明确绑定到两个范围之外的待加载 img；范围内图片、未知请求、脚本异常、文档或名单变化均不通过。必须用 browser_verify_stage 实际执行并绑定当前版本；不会升级旧计划，不支持图片表格、分段、空态或 initial_click_selector |
 | detail.profile | 旧个人页读取与正文范围证明 |
 | [roster.rank_grid](../../server/page_type_rank_grid.py) | 按明确职称组、唯一标题起点和名单单元独立解析，单元可多人；每人链接按自身 anchor 归属。未知职称／token／结构及同页同名同主页多位置保留未解决，不调用旧 cards parser 代替 |
 | [entrance.scoped_links](../../server/page_stage_types.py) | 当前已加载 navigation DOM 中选定容器的可见同站 descendant anchors；保留完整来源集合，需无未证明父分页，不是任意动态栏目遍历 |
@@ -45,6 +46,8 @@
 | detail.article_region | 唯一语义 article 正文区域及其可见、稳定、完整范围证明；不覆盖任意布局或 PDF 本人解析 |
 
 三项新 DOM 机制的实现、probe、validator 在 page_stage_types；rank-grid 是独立名单解析器。它们通过注册分派接公共链，不在核心 invoke 按新 ID 添分支。其他 PDF／图片能力继续由现有媒体模块处理，不能写成已全部转换为独立角色类型。
+
+表内未标版本的既有定义仍为 @1。single_page@2 是同一终态机制的范围修复，保留 @1 的全页请求判定；实现和证据依赖变化使相关缓存契约失效并重新核验。修复案例与真实运行边界见 [三明分页维护记录](../audits/2026-10-13-sanming-pager-scope.md)。
 
 ## 选择、实际证明与版本失效
 
@@ -54,7 +57,7 @@
 
 阶段证明绑定 role、type_id、implementation_version、effective params、requested_url、final_url、实际 source_html_sha256、implementation_digest 与机制 payload。详情用自身原件，分页保留全部页；不能借名录哈希证明个人正文。超 inline 大小的完整结果以本地文件 SHA manifest 读取校验，缺原件／metadata／完整包或篡改失败关闭。模型只提交结构计划，不手写 confirmed、SHA、stage_evidence 或教师字段。
 
-实现摘要由实际注册 implementation／probe／validator／适用条件／参数模型源码 SHA 与确定性代码字段指纹组成，不用随执行 intern 状态变化的 marshal 编码。registered_implementation_manifest 支持契约缓存与 [source_review](../../server/source_review.py) 决定绑定；selected_implementation_digest 递归选择计划定义，[HarvestState](../../server/harvest_state.py) 为非 legacy 选择隔离恢复 namespace。源码漂移使旧证明／相关复用失效，不是手填相同版本号即可继续用。
+实现摘要由实际注册 implementation／probe／validator／适用条件／参数模型源码 SHA、注册时声明的 source_dependencies 和确定性代码字段指纹组成，不用随执行 intern 状态变化的 marshal 编码。依赖声明仅来自可信 Python 注册，限制为现有 server 源码，不接受模型／计划路径；缺文件失败关闭。single_page@2 明确绑定分页证明、请求跟踪和采集消费者的公共依赖，依赖改变同时失效阶段证明与恢复空间。registered_implementation_manifest 支持契约缓存与 [source_review](../../server/source_review.py) 决定绑定；selected_implementation_digest 递归选择计划定义，[HarvestState](../../server/harvest_state.py) 为非 legacy 选择隔离恢复 namespace。源码漂移使旧证明／相关复用失效，不是手填相同版本号即可继续用。
 
 ## 维护根因分类
 

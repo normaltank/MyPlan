@@ -277,10 +277,11 @@ def test_new_version_cannot_inherit_legacy_evidence_exemption(monkeypatch, type_
 async def test_run_plan_rejects_unproven_role_version_before_browser_access(monkeypatch, tmp_path, role, type_id):
     monkeypatch.setattr(types, '_REGISTRY', dict(types._REGISTRY))
     definition = types._REGISTRY[(type_id, 1)]
-    types.register_type(replace(definition, implementation_version=2))
+    version = max(version for existing_id, version in types._REGISTRY if existing_id == type_id) + 1
+    types.register_type(replace(definition, implementation_version=version))
     case = deepcopy(next(case for case in CASES if case['id'] == 'ordinary_full_biography'))
     case['plan']['branches'][0]['page_types'] = {role: {
-        'type_id': type_id, 'implementation_version': 2, 'params': {}}}
+        'type_id': type_id, 'implementation_version': version, 'params': {}}}
     class Browser:
         async def new_page(self):
             pytest.fail('unsupported version must be rejected before opening a browser page')

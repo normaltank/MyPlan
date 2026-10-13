@@ -7,6 +7,7 @@
 page_types 是允许的结构字段，各角色绑定包含 type_id、implementation_version、params；params 只填该目录合同允许且实际核验的 CSS／控制值，不含教师数据。绑定形状示例（实际 ID、版本与参数须以目录及本轮工具核验为准）：
 {{"page_types":{{"roster":{{"type_id":"roster.cards","implementation_version":1,"params":{{}}}}}}}}
 省略某角色使用其兼容的旧类型绑定；旧计划仍可使用下面的原有字段和验证流程。参数可由绑定投影到对应结构字段，同一字段两处给值时必须完全一致。改变类型、版本、参数、URL或选择器后重新核验，不能借用另一机制的旧证明。
+如果已观察到 WebPlus 名单与原生分页控件按同一 widget ID 绑定、总数和当前页显示只有一页，可查目录选择 pagination.single_page 的实现版本 2。先按原流程核验来源和卡片，再用 browser_verify_stage(role="pagination", branch=完整分支) 实际执行该版本；只有阶段证明通过才可提交。此版本的阶段终态代替下面旧版 browser_verify 的分页终态要求；browser_verify 仍负责名单读取证明。名单外图片等待加载时旧版可能不能证明终态，不反复重开同一页面或猜 next_selector；名单或分页范围内请求、未知请求和实际推进仍须保持未解决。其他结构按目录合同选型，不把所有单页计划自动升级。
 
 按顺序执行：
 1. 用 browser_navigate 打开本入口，直接复用返回的重复子树候选。

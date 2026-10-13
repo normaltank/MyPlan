@@ -128,7 +128,45 @@ async def _controller_evidence(page: Any, facts: dict, html: str, tracker: Any) 
     return None
 
 
-async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
+_PENDING_SCOPE = r'''args => {
+  const cards=[...document.querySelectorAll(args.roster_selector)];
+  const pagers=[...document.querySelectorAll(args.pager_selector)];
+  if(!cards.length || pagers.length!==1) return null;
+  const pager=pagers[0], host=pager.closest('[id^="wp_paging_"]');
+  const root=host && document.getElementById('wp_news_'+host.id.slice('wp_paging_'.length));
+  if(!root || !cards.every(c=>root.contains(c))) return null;
+  const places=args.requests.map(request=>{
+    if(request.kind!=='image') return 'blocking';
+    const images=[...document.images].filter(i=>i.currentSrc===request.url || i.src===request.url);
+    return images.length && images.every(i=>!root.contains(i) && !pager.contains(i))
+      ? 'outside' : 'blocking';
+  });
+  return {source_widget_selector:'#'+CSS.escape(root.id), places};
+}'''
+
+
+async def _pending_scope(page, facts, tracker):
+    """Only DOM-bound images outside both widgets can remain in flight."""
+    pending = set(tracker.pending)
+    requests = [{'url': getattr(r, 'url', ''), 'kind': getattr(r, 'resource_type', '')}
+                for r in pending]
+    scope = await page.evaluate(_PENDING_SCOPE, {**facts, 'requests': requests})
+    if (pending != tracker.pending or not isinstance(scope, dict)
+            or len(scope.get('places', [])) != len(requests)):
+        return None
+    return {'roster_selector': facts['roster_selector'], 'pager_selector': facts['pager_selector'],
+            'source_widget_selector': scope['source_widget_selector'],
+            'ignored_pending_images': [r['url'] for r, place in zip(requests, scope['places'])
+                                       if place == 'outside'],
+            'blocking_pending_request_count': scope['places'].count('blocking')}
+
+
+async def scoped_terminal_pagers(page: Any, card_selector: str) -> list[dict]:
+    """The single_page@2 terminal mechanism; @1 retains global request readiness."""
+    return await terminal_pagers(page, card_selector, _scope_pending=True)
+
+
+async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False) -> list[dict]:
     """Only current-browser evidence, never selector guesses or stale counters."""
     if not card_selector or not callable(getattr(page, 'evaluate', None)):
         return []
@@ -142,8 +180,17 @@ async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
     tracker = install_request_tracking(page)
     before = facts[0]
     proof = {**before, 'confirmed': False}
-    if not tracker.available or not tracker.navigation_observed or tracker.pending:
+    async def pending_evidence():
+        if not _scope_pending:
+            return {} if not tracker.pending else None
+        scope = await _pending_scope(page, before, tracker)
+        return scope if scope and scope['blocking_pending_request_count'] == 0 else None
+
+    initial_scope = await pending_evidence()
+    if not tracker.available or not tracker.navigation_observed or initial_scope is None:
         return [{**proof, 'reason': 'network_not_idle'}]
+    if _scope_pending:
+        proof['request_scope_evidence'] = {'samples': [initial_scope]}
     html = await page.content()
     failures = tracker.failures
     failure_set = list(tracker.failed_requests)
@@ -160,21 +207,32 @@ async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
             return [{**proof, 'reason': 'page_load_failed'}]
         if (tracker.failures != failures or tracker.failed_requests != failure_set
                 or tracker.document_response is not document
-                or tracker.pending or tracker.script_errors or tracker.activity != initial_activity):
+                or await pending_evidence() is None or tracker.script_errors or tracker.activity != initial_activity):
             return [{**proof, 'reason': 'controller_requests_changed'}]
         proof['controller_evidence'] = controller
-    digests = (scope_digest(html, card_selector), scope_digest(html, before['pager_selector']))
+    def selected_digest(source):
+        selectors = [card_selector, before['pager_selector']]
+        if _scope_pending:
+            selectors.append(initial_scope['source_widget_selector'])
+        return tuple(scope_digest(source, selector) for selector in selectors)
+    digests = selected_digest(html)
     popups = []
     def opened(_popup):
         popups.append(True)
     page.on('popup', opened)
     try:
         await page.locator(before['control_selector']).click(timeout=1500)
-        await page.wait_for_load_state('networkidle', timeout=3000)
+        if not _scope_pending:
+            await page.wait_for_load_state('networkidle', timeout=3000)
         await asyncio.sleep(0.3)
         after = await page.evaluate(FACTS, card_selector)
         final_html = await page.content()
-        current = (scope_digest(final_html, card_selector), scope_digest(final_html, before['pager_selector']))
+        current = selected_digest(final_html)
+        if _scope_pending:
+            clicked_scope = await pending_evidence()
+            if clicked_scope is None or clicked_scope['source_widget_selector'] != initial_scope['source_widget_selector']:
+                return [{**proof, 'reason': 'network_not_idle'}]
+            proof['request_scope_evidence']['samples'].append(clicked_scope)
         if (popups or page.url != before['url'] or after != facts or current != digests
                 or tracker.document_response is not document):
             return [{**proof, 'reason': 'pager_state_changed'}]
@@ -182,13 +240,18 @@ async def terminal_pagers(page: Any, card_selector: str) -> list[dict]:
         await asyncio.sleep(0.3)
         stable_facts = await page.evaluate(FACTS, card_selector)
         stable_html = await page.content()
-        stable = (scope_digest(stable_html, card_selector), scope_digest(stable_html, before['pager_selector']))
-        if (popups or page.url != before['url'] or tracker.script_errors or tracker.pending
+        stable = selected_digest(stable_html)
+        final_scope = await pending_evidence()
+        if _scope_pending:
+            if final_scope is not None:
+                proof['request_scope_evidence']['samples'].append(final_scope)
+        if (popups or page.url != before['url'] or tracker.script_errors or final_scope is None
                 or tracker.failures != failures or tracker.activity != activity
                 or tracker.failed_requests != failure_set or tracker.document_response is not document
                 or stable != current or stable_facts != facts):
             return [{**proof, 'reason': 'pager_not_stable'}]
-        return [{**proof, 'confirmed': True, 'source_sha256': current[0], 'pager_sha256': current[1]}]
+        return [{**proof, 'confirmed': True, 'source_sha256': current[0], 'pager_sha256': current[1],
+                 **({'source_widget_sha256': current[2]} if _scope_pending else {})}]
     except Exception:
         return [{**proof, 'reason': 'pager_click_unverified'}]
     finally:

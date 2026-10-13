@@ -605,7 +605,8 @@ def _restorable_prefix(branch: dict, pages: list[dict]) -> bool:
 
 
 async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
-                          resume_pages=None, source_target=None) -> tuple[list[tuple[str, str]], list[dict], dict]:
+                          resume_pages=None, source_target=None,
+                          terminal_verifier=None) -> tuple[list[tuple[str, str]], list[dict], dict]:
     page = await context.new_page()
     from server.browser_readiness import install_request_tracking
     tracker = install_request_tracking(page)
@@ -707,7 +708,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
             evidence["visited_pages"] = page_number
             if branch.get("single_page"):
                 from server.pager_evidence import terminal_pagers, proof_valid
-                proofs = await terminal_pagers(page, _unit_selector(branch))
+                proofs = await (terminal_verifier or terminal_pagers)(page, _unit_selector(branch))
                 if any(p.get('reason') == 'pager_state_changed' for p in proofs):
                     unresolved.append({'url': url, 'status': 'single_page_pagination_unverified'})
                     evidence['end'] = 'single_page_pagination_unverified'
