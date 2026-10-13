@@ -33,3 +33,11 @@ accepted 原件保存规范对象；事件消费恢复同一规范对象并核�
 辅助只读事实包位于本地项目 `.planning/collection-failure-repair-20261013/repair4-tool-facts/`：10 个 SDK 会话、630 个输入 SHA 前后未变，20 个交付文件已本地逐个核对；delivery-manifest.json SHA256 `c118fc417ade29f8c0c5a1380c23e5abd55b8cb959435d609b427323bda4b666`。本维护工作树 `.planning/2026-10-12-autonomous-type-library/encoded-submission-replay/` 保存候选回放与方法。
 
 当前任务仍 failed／0 数据／完整性未验证。发布、对应版本 CI、实际模型重新采集、分支加载失败及部分交付闭环仍需分别验证；不得以测试或传输回放宣称整院采集成功。未扩大侦察预算，也未覆盖旧运行。
+
+## 后续：最终失败报告保留真实拒绝
+
+传输修复 PR #92 的 head `972ada84100e56e4e728e7fe1b33c00624e9107f` 已通过 PR CI，并合入 main `400267890cd02340417092430f3dc27af1001b9f`；[主线 CI](https://github.com/normaltank/MyPlan/actions/runs/38371594714) 三项最终成功。以下是另一个独立修复，不能算入 PR #92 已发布内容。
+
+实际失败链还有一处审计丢失：`reconnoiter` 原来只给非 `ReconPlanError` 附加最后真实门禁拒绝，阶段无接受计划时因此只留下泛 `plan_contract_rejected`。修复使该类错误也保存受控拒绝；仅在安全反馈缺失或只含精确泛占位时补充具体条件。已有页面／访问失败和其他具体反馈保持原分类，不复制异常文本，也不改变预算、门禁或任务状态。
+
+新增四项隔离回归覆盖有拒绝、无拒绝、具体访问事实及实际 `reconnoiter → AgentWorker → recon-attempts.json` 保存链。后者同时核对未知用量标志和异常文本不泄露；SDK 被替换，不发模型请求。组合阶段／补缺／局部捕获／门禁停止回归共 44 项通过（21.66 秒），ruff／diff 检查通过；Spec 与 Standards 均无未关闭意见。本项仍须对应版本 CI 与发布；尚未开始新付费重采。

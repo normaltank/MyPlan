@@ -2192,9 +2192,17 @@ async def reconnoiter(
             if getattr(error, "usage_unknown", False):
                 budget.mark_usage_unknown()
             error.diagnostics = {**getattr(error, "diagnostics", {}), **budget.delta(budget_before)}
-        if not isinstance(error, ReconPlanError) and (rejected := last_gate_rejections(cfg)):
-            # A session that ran out of time or budget still says what the gate last refused.
+        if rejected := last_gate_rejections(cfg):
+            # Ending without an accepted plan must not erase the actual refusal.
             error.diagnostics = {**getattr(error, "diagnostics", {}), "last_gate_rejections": rejected}
+            if isinstance(error, ReconPlanError):
+                feedback = dict(getattr(error, 'safe_feedback', {}))
+                existing = [item for item in feedback.get('issues', [])
+                            if item != {'status': 'plan_contract_rejected'}]
+                if not existing:
+                    actual = [issue for entry in rejected for issue in entry['issues']]
+                    feedback['issues'] = [{'status': 'plan_contract_rejected', 'gate_issues': actual}]
+                    error.safe_feedback = feedback
         raise
     except Exception as exc:  # dsh / SDK 层异常
         raise ReconError(f"dsh 调用失败：{type(exc).__name__}: {exc}") from exc
