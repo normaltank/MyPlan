@@ -46,14 +46,16 @@ def test_implementation_version_change_cannot_restore_previous_page_checkpoint(t
     assert first.load_page('roster', plan['branches'][0]['url']) is not None
 
 
-def test_plan_cache_contract_includes_executable_registry_source(tmp_path, monkeypatch):
+@pytest.mark.parametrize('dependency', ['page_types.py', 'source_navigation.py', 'recon_progress.py'])
+def test_plan_cache_contract_includes_executable_registry_source(tmp_path, monkeypatch, dependency):
     from server import recon_plan_cache
     from server.page_types import registered_implementation_manifest
     source = recon_plan_cache.HERE
     replica = tmp_path / 'server'
     replica.mkdir()
     for name in ('recon_discovery.md', 'recon_instructions.md', 'recon_provided_links.md',
-                 'recon_dom_probe.js', 'recon_contract.py', 'source_qualification.py', 'page_types.py',
+                 'recon_dom_probe.js', 'recon_contract.py', 'recon_progress.py', 'source_qualification.py',
+                 'source_navigation.py', 'page_types.py',
                  'page_type_rank_grid.py'):
         (replica / name).write_bytes((source / name).read_bytes())
     for name in registered_implementation_manifest():
@@ -64,7 +66,7 @@ def test_plan_cache_contract_includes_executable_registry_source(tmp_path, monke
         destination.write_bytes(original.read_bytes())
     monkeypatch.setattr(recon_plan_cache, 'HERE', replica)
     before = recon_plan_cache._contract()
-    with (replica / 'page_types.py').open('a') as stream:
+    with (replica / dependency).open('a') as stream:
         stream.write('\n# isolated registry revision\n')
     assert recon_plan_cache._contract() != before
 
