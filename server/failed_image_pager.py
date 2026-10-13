@@ -46,7 +46,7 @@ _REFERENCES = r'''args => {
     contains_scope:node.contains(root)||node.contains(pager)});
   const absolute=(value,base)=>{try{return new URL(value,base).href;}catch{return null;}};
   const refs=new Map(args.failures.map(f=>[f[0],[]])), sheets=[], seen=new Set();
-  let reason=null, count=0;
+  let reason=null, count=0, referenceNodes=0;
   const candidates=value=>{const parts=value.split(','), result=[];
     for(const part of parts){const words=part.trim().split(/\s+/);
       if(!words[0] || words.length>2 || (parts.length>1&&words.length!==2)
@@ -55,6 +55,7 @@ _REFERENCES = r'''args => {
     } return result;
   };
   const inspect=(style,selector,nodes,base,location)=>{
+    if(reason==='reference_limit') return;
     for(const property of style){
       const value=style.getPropertyValue(property);
       if(!/url\s*\(/i.test(value)) continue;
@@ -76,6 +77,8 @@ _REFERENCES = r'''args => {
           try{candidates=[...document.querySelectorAll(structural)];}
           catch{reason='unsupported_image_selector';continue;}
         }
+        if(referenceNodes+candidates.length>128){reason='reference_limit';return;}
+        referenceNodes+=candidates.length;
         const places=candidates.map(place);
         refs.get(url).push({kind:'css',selector,structural_selector:structural,property,
           location,places});
@@ -102,6 +105,7 @@ _REFERENCES = r'''args => {
           const urls=[...rule.style.cssText.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)];
           if(urls.some(m=>refs.has(absolute(m[2],stylesheet.href||location.href)))) reason='unsupported_image_rule';
         }
+        if(reason==='reference_limit') return;
         if(rule.styleSheet) sheet(rule.styleSheet);
         else if(rule.cssRules) walk(rule.cssRules,depth+1);
       }
@@ -119,7 +123,8 @@ _REFERENCES = r'''args => {
         for(const url of candidates(node.getAttribute('srcset'))) attributes.push(['srcset',url]);
       if(tag==='VIDEO'&&node.getAttribute('poster')) attributes.push(['poster',absolute(node.getAttribute('poster'),location.href)]);
       for(const [attribute,url] of attributes) if(refs.has(url))
-        refs.get(url).push({kind:'dom',tag:tag.toLowerCase(),attribute,places:[place(node)]});
+        {if(referenceNodes>=128){reason='reference_limit';break;} referenceNodes++;
+         refs.get(url).push({kind:'dom',tag:tag.toLowerCase(),attribute,places:[place(node)]});}
     }else if(['IMAGE','USE','OBJECT','EMBED','IFRAME','LINK'].includes(tag)){
       const urls=['href','xlink:href','src','data'].map(a=>absolute(node.getAttribute(a)||'',location.href));
       if(urls.some(url=>refs.has(url))) reason='unsupported_image_reference';

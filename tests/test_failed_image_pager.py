@@ -32,6 +32,7 @@ document.querySelector('.pagingJump').onclick=()=>{
     ('new_xhr_failed', False), ('preload', False), ('srcset_inside', False),
     ('input_inside', False), ('video_inside', False), ('source_inside', False),
     ('void_inputs', True), ('changed_input_value', False), ('changed_roster', False),
+    ('changed_widget', False), ('reference_limit', False),
 ])
 async def test_failed_css_image_requires_complete_component_scope_and_controller(case, expected):
     from playwright.async_api import async_playwright
@@ -87,6 +88,11 @@ async def test_failed_css_image_requires_complete_component_scope_and_controller
         html = html.replace('</script>', "document.querySelector('.pageNum').setAttribute('value','7');</script>")
     elif case == 'changed_roster':
         html = html.replace('</script>', "document.querySelector('#wp_news_w7 li').textContent='changed';</script>")
+    elif case == 'changed_widget':
+        html = html.replace('<div id="wp_news_w7">', '<div id="wp_news_w7"><p id="outside-card">original</p>')
+        html = html.replace('</script>', "document.querySelector('#outside-card').textContent='changed';</script>")
+    elif case == 'reference_limit':
+        html = html.replace('</aside>', ''.join('<a class="selected">item</a>' for _ in range(129)) + '</aside>')
     css = selector + '{background-image:url(/icon.gif);content:"icon";}'
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()

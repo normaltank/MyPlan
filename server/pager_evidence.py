@@ -69,7 +69,7 @@ def scope_digest(html: str, selector: str, *, _parser='html.parser') -> str:
 
 
 async def _controller_evidence(page: Any, facts: dict, html: str, tracker: Any,
-                               *, _scoped_images=False) -> dict | None:
+                               *, _scoped_images=False, _source_widget_selector=None) -> dict | None:
     """Server-published terminal navigation and a responsive, bound controller.
 
     The default only handles permanent script/style failures. A reviewed
@@ -82,6 +82,10 @@ async def _controller_evidence(page: Any, facts: dict, html: str, tracker: Any,
         return None
     raw = await tracker.document_response.text()
     selectors = (facts['roster_selector'],facts['pager_selector'])
+    if _scoped_images:
+        if not _source_widget_selector:
+            return None
+        selectors = (*selectors, _source_widget_selector)
     parser = 'lxml' if _scoped_images else 'html.parser'
     if tracker.document_response.status >= 400 or any(
             scope_digest(raw,s,_parser=parser) != scope_digest(html,s,_parser=parser) for s in selectors):
@@ -211,7 +215,8 @@ async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False
     if tracker.failures:
         try:
             controller = await _controller_evidence(page,before,html,tracker,
-                _scoped_images=_failed_image_scope is not None)
+                _scoped_images=_failed_image_scope is not None,
+                _source_widget_selector=initial_scope.get('source_widget_selector'))
         except Exception:
             controller = None
         if controller is None:
