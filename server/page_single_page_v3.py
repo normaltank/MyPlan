@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import re
 
 from bs4 import BeautifulSoup
 from soupsieve import SelectorSyntaxError
 
 from server import page_single_page_v2 as v2
 from server.failed_image_pager import _digest, install_stylesheet_capture, terminal_pagers
+from server.image_reference_evidence import absolute, css_graph, dom_graph, path, structural_selector
 
 MECHANISM = 'scoped_webplus_single_page_failed_images'
 
@@ -34,15 +34,6 @@ def probe(context, result):
     return {**v2.probe(context, result), 'failed_image_materials_sha256': _digest(result[2]['failed_image_materials'])}
 
 
-def _path(node):
-    parts = []
-    while node is not None and node.name != '[document]':
-        children = node.parent.find_all(recursive=False) if node.parent else [node]
-        parts.insert(0, f'{node.name}:nth-child({next(i for i, child in enumerate(children, 1) if child is node)})')
-        node = node.parent
-    return '>'.join(parts)
-
-
 def _valid_sample(scope, soup, root, pager, materials, url):
     if (scope['confirmed'] is not True or type(scope['document_status']) is not int or scope['document_status'] != 200
             or type(scope['script_errors']) is not int or scope['script_errors'] != 0 or scope['document_url'] != url):
@@ -61,6 +52,7 @@ def _valid_sample(scope, soup, root, pager, materials, url):
     if cssom['kind'] != 'cssom' or _digest(cssom['value']) != refs[0]:
         return False
     originals = {}
+    raw_sources = []
     total = 0
     for key in refs[1:]:
         item = materials[key]
@@ -69,10 +61,27 @@ def _valid_sample(scope, soup, root, pager, materials, url):
         if item['kind'] != 'stylesheet' or _digest(item) != key or hashlib.sha256(raw).hexdigest() != item['sha256']:
             return False
         originals[item['url']] = item['sha256']
+        raw_sources.append((item['url'], raw.decode('utf-8')))
     if total > 256 * 1024 or any(sheet['href'] and sheet['href'] not in originals for sheet in cssom['value']['sheets']):
         return False
     if {row['url'] for row in scope['references']} != {row[0] for row in failed}:
         return False
+    failed_urls = {row[0] for row in failed}
+    inline_sources = [(None, node.get_text()) for node in soup.select('style')]
+    cssom_graph, locations = set(), {}
+    for sheet_index, sheet in enumerate(cssom['value']['sheets']):
+        for rule_index, text in enumerate(sheet['rules']):
+            for key in css_graph([(sheet['href'], text)], failed_urls, soup, url):
+                cssom_graph.add(key)
+                locations.setdefault(key, set()).add((sheet_index, rule_index))
+    if cssom_graph != set(css_graph([*raw_sources, *inline_sources], failed_urls, soup, url)):
+        return False
+    if any(uri not in originals for uri in (
+            absolute(node['href'], url)
+            for node in soup.select('link[rel~=stylesheet][href]'))):
+        return False
+    dom = set(dom_graph(soup, failed_urls, url))
+    expected_graph, declared_graph = cssom_graph | dom, set()
     for row in scope['references']:
         if not row['items'] or not any(item['places'] for item in row['items']):
             return False
@@ -83,17 +92,26 @@ def _valid_sample(scope, soup, root, pager, materials, url):
                 selector = item['structural_selector']
                 if selector is None:
                     nodes = soup.select(item['location']['inline_path'])
+                    key = (row['url'], 'css', 'inline:'+item['location']['inline_path'],
+                           tuple(sorted(path(node) for node in nodes)))
                 else:
-                    if not re.fullmatch(r'[A-Za-z0-9_#.*\s>,\-]+', selector):
+                    if structural_selector(item['selector']) != structural_selector(selector):
                         return False
                     nodes = soup.select(selector)
-                expected = [{'path': _path(node), 'within_roster': root is node or root in node.parents,
+                    key = (row['url'], 'css', structural_selector(selector), tuple(sorted(path(node) for node in nodes)))
+                    if (item['location']['sheet'], item['location']['rule']) not in locations.get(key, set()):
+                        return False
+                declared_graph.add(key)
+                expected = [{'path': path(node), 'within_roster': root is node or root in node.parents,
                              'within_pager': pager is node or pager in node.parents,
                              'contains_scope': node is root or node in root.parents or node is pager or node in pager.parents}
                             for node in nodes]
                 if expected != item['places']:
                     return False
-            elif item['kind'] != 'img':
+            elif item['kind'] == 'dom':
+                for place in item['places']:
+                    declared_graph.add((row['url'], 'dom', item['tag'], item['attribute'], place['path']))
+            else:
                 return False
             for place in item['places']:
                 [node] = soup.select(place['path'])
@@ -101,7 +119,7 @@ def _valid_sample(scope, soup, root, pager, materials, url):
                         or root is node or pager is node or root in node.parents or pager in node.parents
                         or node in root.parents or node in pager.parents):
                     return False
-    return True
+    return declared_graph == expected_graph
 
 
 def valid(context, result, payload):
@@ -144,5 +162,5 @@ def register():
         'inaccessible CSS, transient/data failures and script errors remain unverified.',
         probe, valid, 'three stable image-reference samples + CSS originals + responsive controller + @2 source/widget proof',
         source_dependencies=('server/page_single_page_v2.py', 'server/failed_image_pager.py',
-                             'server/pager_evidence.py', 'server/browser_readiness.py',
+                             'server/image_reference_evidence.py', 'server/pager_evidence.py', 'server/browser_readiness.py',
                              'server/browser_batch_tool.py', 'server/agent_recon.py', 'server/source_qualification.py')))

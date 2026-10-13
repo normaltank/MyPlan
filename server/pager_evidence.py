@@ -63,8 +63,8 @@ FACTS = r'''selector => {
 }'''
 
 
-def scope_digest(html: str, selector: str) -> str:
-    nodes = BeautifulSoup(html, 'html.parser').select(selector)
+def scope_digest(html: str, selector: str, *, _parser='html.parser') -> str:
+    nodes = BeautifulSoup(html, _parser).select(selector)
     return hashlib.sha256(''.join(str(node) for node in nodes).encode('utf-8')).hexdigest()
 
 
@@ -82,7 +82,9 @@ async def _controller_evidence(page: Any, facts: dict, html: str, tracker: Any,
         return None
     raw = await tracker.document_response.text()
     selectors = (facts['roster_selector'],facts['pager_selector'])
-    if tracker.document_response.status >= 400 or any(scope_digest(raw,s) != scope_digest(html,s) for s in selectors):
+    parser = 'lxml' if _scoped_images else 'html.parser'
+    if tracker.document_response.status >= 400 or any(
+            scope_digest(raw,s,_parser=parser) != scope_digest(html,s,_parser=parser) for s in selectors):
         return None
     soup = BeautifulSoup(raw,'html.parser')
     boxes = soup.select(facts['pager_selector'])

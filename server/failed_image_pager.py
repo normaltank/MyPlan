@@ -36,7 +36,8 @@ _REFERENCES = r'''args => {
   const root=document.querySelector(args.source_widget_selector);
   const pager=document.querySelector(args.pager_selector);
   const all=[...document.querySelectorAll('*')];
-  if(!root || !pager || all.length>5000 || all.some(n=>n.shadowRoot))
+  if(!root || !pager || all.length>5000 || args.failures.length>32 || all.some(n=>n.shadowRoot)
+      || document.querySelector('base,svg,object,embed,iframe'))
     return {confirmed:false,reason:'unsupported_document_scope'};
   const path=node=>{const parts=[];for(let n=node;n;n=n.parentElement){
     const index=n.parentElement?[...n.parentElement.children].indexOf(n)+1:1;
@@ -46,6 +47,13 @@ _REFERENCES = r'''args => {
   const absolute=(value,base)=>{try{return new URL(value,base).href;}catch{return null;}};
   const refs=new Map(args.failures.map(f=>[f[0],[]])), sheets=[], seen=new Set();
   let reason=null, count=0;
+  const candidates=value=>{const parts=value.split(','), result=[];
+    for(const part of parts){const words=part.trim().split(/\s+/);
+      if(!words[0] || words.length>2 || (parts.length>1&&words.length!==2)
+         || (words.length===2&&!/^(?:\d+w|\d+(?:\.\d+)?x)$/.test(words[1])) || words[0].startsWith('data:'))
+        {reason='unparsed_srcset';continue;} result.push(absolute(words[0],location.href));
+    } return result;
+  };
   const inspect=(style,selector,nodes,base,location)=>{
     for(const property of style){
       const value=style.getPropertyValue(property);
@@ -56,6 +64,7 @@ _REFERENCES = r'''args => {
       for(const match of matches){
         const url=absolute(match[2],base); if(!refs.has(url)) continue;
         if(property!=='background-image'){reason='unsupported_image_property';continue;}
+        if(!/^url\(\s*(["']?)(.*?)\1\s*\)$/i.test(value)){reason='unsupported_image_value';continue;}
         let structural=selector, candidates=nodes;
         if(candidates===null){
           if(!/^[A-Za-z0-9_#.*\s>:,-]+$/.test(selector)){
@@ -84,6 +93,8 @@ _REFERENCES = r'''args => {
       for(const rule of rules){
         if(++count>4000){reason='css_rule_limit';return;}
         item.rules.push(rule.cssText);
+        if(!rule.selectorText && [...rule.cssText.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)]
+            .some(m=>refs.has(absolute(m[2],stylesheet.href||location.href)))) reason='unsupported_image_rule';
         if(rule.style && rule.selectorText)
           inspect(rule.style,rule.selectorText,null,stylesheet.href||location.href,{sheet:sheets.indexOf(item),rule:item.rules.length-1});
         else if(rule.style && /url\s*\(/i.test(rule.style.cssText)){
@@ -101,20 +112,21 @@ _REFERENCES = r'''args => {
   for(const node of all){
     if(node.style) inspect(node.style,null,[node],location.href,{inline_path:path(node)});
     const tag=node.tagName.toUpperCase();
-    if(tag==='IMG'){
-      const urls=[node.currentSrc,node.src];
-      if(node.srcset) for(const candidate of node.srcset.split(',')){
-        const tokens=candidate.trim().split(/\s+/);
-        if(tokens.length>2){reason='unparsed_srcset';continue;}
-        urls.push(absolute(tokens[0],location.href));
-      }
-      for(const url of new Set(urls)) if(refs.has(url)) refs.get(url).push({kind:'img',places:[place(node)]});
+    if(tag==='IMG'||tag==='SOURCE'||(tag==='INPUT'&&node.type==='image')||tag==='VIDEO'){
+      const attributes=[];
+      if((tag==='IMG'||tag==='INPUT')&&node.getAttribute('src')) attributes.push(['src',absolute(node.getAttribute('src'),location.href)]);
+      if((tag==='IMG'||tag==='SOURCE')&&node.getAttribute('srcset'))
+        for(const url of candidates(node.getAttribute('srcset'))) attributes.push(['srcset',url]);
+      if(tag==='VIDEO'&&node.getAttribute('poster')) attributes.push(['poster',absolute(node.getAttribute('poster'),location.href)]);
+      for(const [attribute,url] of attributes) if(refs.has(url))
+        refs.get(url).push({kind:'dom',tag:tag.toLowerCase(),attribute,places:[place(node)]});
     }else if(['IMAGE','USE','OBJECT','EMBED','IFRAME','LINK'].includes(tag)){
       const urls=['href','xlink:href','src','data'].map(a=>absolute(node.getAttribute(a)||'',location.href));
       if(urls.some(url=>refs.has(url))) reason='unsupported_image_reference';
     }
   }
   const references=[...refs].map(([url,items])=>({url,items}));
+  if(references.reduce((n,row)=>n+row.items.reduce((m,item)=>m+item.places.length,0),0)>128) reason='reference_limit';
   const inside=references.some(row=>row.items.some(item=>item.places.some(p=>p.within_roster||p.within_pager||p.contains_scope)));
   const absent=references.some(row=>!row.items.some(item=>item.places.length));
   return {confirmed:!reason&&!inside&&!absent,reason:reason||(inside?'image_inside_widget':absent?'image_reference_missing':null),

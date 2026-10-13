@@ -30,6 +30,8 @@ document.querySelector('.pagingJump').onclick=()=>{
     ('script_error', False), ('xhr_failed', False), ('unknown_selector', False),
     ('hover_inside', False), ('pager_inside', False), ('unreadable_css', False),
     ('new_xhr_failed', False), ('preload', False), ('srcset_inside', False),
+    ('input_inside', False), ('video_inside', False), ('source_inside', False),
+    ('void_inputs', True), ('changed_input_value', False), ('changed_roster', False),
 ])
 async def test_failed_css_image_requires_complete_component_scope_and_controller(case, expected):
     from playwright.async_api import async_playwright
@@ -72,6 +74,19 @@ async def test_failed_css_image_requires_complete_component_scope_and_controller
         html = html.replace('</head>', '<link rel="preload" as="image" href="/icon.gif"></head>')
     elif case == 'srcset_inside':
         html = html.replace('Person A', 'Person A<img src="/other.gif" srcset="/icon.gif 2x">')
+    elif case == 'input_inside':
+        html = html.replace('Person A', 'Person A<input type="image" src="/icon.gif">')
+    elif case == 'video_inside':
+        html = html.replace('Person A', 'Person A<video poster="/icon.gif"></video>')
+    elif case == 'source_inside':
+        html = html.replace('Person A', 'Person A<picture><source media="(min-width:99999px)" srcset="/icon.gif">'
+                            '<img src="/other.gif"></picture>')
+    elif case == 'void_inputs':
+        html = html.replace('<input class="pageNum">', '<input class="pageNum"><input type="hidden" value=""></input>')
+    elif case == 'changed_input_value':
+        html = html.replace('</script>', "document.querySelector('.pageNum').setAttribute('value','7');</script>")
+    elif case == 'changed_roster':
+        html = html.replace('</script>', "document.querySelector('#wp_news_w7 li').textContent='changed';</script>")
     css = selector + '{background-image:url(/icon.gif);content:"icon";}'
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -97,7 +112,8 @@ async def test_failed_css_image_requires_complete_component_scope_and_controller
             assert not any(proof['confirmed'] for proof in old)
             proofs, materials = await terminal_pagers(page, SELECTOR)
             assert any(proof['confirmed'] for proof in proofs) is expected
-            if case in {'inside', 'also_inside', 'pseudo_inside', 'hidden_inside', 'hover_inside', 'pager_inside', 'srcset_inside'}:
+            if case in {'inside', 'also_inside', 'pseudo_inside', 'hidden_inside', 'hover_inside', 'pager_inside', 'srcset_inside',
+                        'input_inside', 'video_inside', 'source_inside'}:
                 assert proofs[0]['request_scope_evidence']['samples'][0]['failed_resource_scope']['reason'] == 'image_inside_widget'
             if expected:
                 assert proofs[0]['controller_evidence']['probes'] == 2
@@ -158,13 +174,19 @@ async def test_v3_actual_source_stage_submission_and_reading(tmp_path):
             metadata = json.loads(Path(stage['results'][0]['capture_metadata']['evidence_path']).read_bytes())
             from server.agent_recon import selector_evidence_issues
             plan = {'school': '样本大学', 'college': '样本学院', 'branches': [branch]}
-            for change in ('missing_scope', 'inside_selector', 'missing_materials'):
+            for change in ('missing_scope', 'inside_selector', 'missing_materials', 'fake_dom', 'missing_reference', 'wrong_rule'):
                 altered = copy.deepcopy(metadata)
                 for sample in altered['evidence']['terminal_pagers'][0]['request_scope_evidence']['samples']:
                     if change == 'missing_scope':
                         sample.pop('failed_resource_scope')
                     elif change == 'inside_selector':
                         sample['failed_resource_scope']['references'][0]['items'][0]['structural_selector'] = '#wp_news_w7 li'
+                    elif change == 'fake_dom':
+                        sample['failed_resource_scope']['references'][0]['items'][0].update(kind='dom', tag='img', attribute='src')
+                    elif change == 'missing_reference':
+                        sample['failed_resource_scope']['references'][0]['items'] = []
+                    elif change == 'wrong_rule':
+                        sample['failed_resource_scope']['references'][0]['items'][0]['location']['rule'] = 999
                 if change == 'missing_materials':
                     altered['evidence']['failed_image_materials'] = {}
                 raw = json.dumps(altered, ensure_ascii=False).encode()

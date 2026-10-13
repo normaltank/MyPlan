@@ -1,0 +1,114 @@
+{
+  "url": "https://www.fjsmu.edu.cn/smxyszb/mkszyjbyljys/list.htm",
+  "model_calls": 0,
+  "scope": "Original HTTP response bytes and rendered UTF-8 snapshot for structural regression, no teacher delivery.",
+  "responses": [
+    {
+      "url": "https://www.fjsmu.edu.cn/smxyszb/mkszyjbyljys/list.htm",
+      "kind": "document",
+      "status": 200,
+      "sha256": "68be6af10b076bfd3c1fb9a55b102ec280e5bc1a2fbcee381fedb8472e135f02",
+      "bytes": 25631,
+      "file": "68be6af10b076bfd3c1fb9a55b102ec280e5bc1a2fbcee381fedb8472e135f02.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_css/_system/system.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "48ff48c9f5ee148356163feae8daa755a2f58c8840d442a915b915119430ce60",
+      "bytes": 30,
+      "file": "48ff48c9f5ee148356163feae8daa755a2f58c8840d442a915b915119430ce60.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_upload/site/1/style/89/89.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "aa3241d6752dafe8a2e26c414fbcb73967ad3f2ca67e8cf90bedc1f45cc7109f",
+      "bytes": 16,
+      "file": "aa3241d6752dafe8a2e26c414fbcb73967ad3f2ca67e8cf90bedc1f45cc7109f.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_upload/site/00/21/33/style/97/97.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "file": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_css/tpl2/system.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "fb8843249928c022d5f09ec411088c5bd5aa876018e05d99b28aa05511c595be",
+      "bytes": 168,
+      "file": "fb8843249928c022d5f09ec411088c5bd5aa876018e05d99b28aa05511c595be.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_js/_portletPlugs/sudyNavi/css/sudyNav.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "8ddace15ae47e074d6bc28a1d1f1cc22ed7bdac59c34ba4a37c8727126dfb4bd",
+      "bytes": 1594,
+      "file": "8ddace15ae47e074d6bc28a1d1f1cc22ed7bdac59c34ba4a37c8727126dfb4bd.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_css/tpl2/default/portlet/dtjt/2/picbase2.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "cd5ede1ef4283e348da94132becca6ec4233c71dd0f09c8e541ce59518e536a2",
+      "bytes": 2881,
+      "file": "cd5ede1ef4283e348da94132becca6ec4233c71dd0f09c8e541ce59518e536a2.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_js/_portletPlugs/datepicker/css/datepicker.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "7e41257e24b5598c6d3312068a0d501be577b07d1ae7cb7ca1382591a5ed1008",
+      "bytes": 5600,
+      "file": "7e41257e24b5598c6d3312068a0d501be577b07d1ae7cb7ca1382591a5ed1008.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_js/_portletPlugs/simpleNews/css/simplenews.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "e10c63fa0e0c6b6e8897285e689c78c6084e01164c3c7e6703d75a6297524510",
+      "bytes": 18057,
+      "file": "e10c63fa0e0c6b6e8897285e689c78c6084e01164c3c7e6703d75a6297524510.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_css/tpl2/default/default.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "c9cc0116f21403747eed7b48a245fe9bd9af016fca94d6e70b338b04af1ea919",
+      "bytes": 6389,
+      "file": "c9cc0116f21403747eed7b48a245fe9bd9af016fca94d6e70b338b04af1ea919.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_upload/tpl/07/21/1825/template1825/style.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "eccfd4ee4e8c1f3eaeea3b40bc495606b87f33426e7dbb61c12a9ea7d78a1447",
+      "bytes": 19440,
+      "file": "eccfd4ee4e8c1f3eaeea3b40bc495606b87f33426e7dbb61c12a9ea7d78a1447.bin"
+    },
+    {
+      "url": "https://www.fjsmu.edu.cn/_css/_system/system_editor.css",
+      "kind": "stylesheet",
+      "status": 200,
+      "sha256": "baa43276e2080643460a09528c717e78819b3a549986339c31b23bf8140f5460",
+      "bytes": 61589,
+      "file": "baa43276e2080643460a09528c717e78819b3a549986339c31b23bf8140f5460.bin"
+    }
+  ],
+  "rendered_sha256": "3049b2af7c12b414abf2561f9c7bac55361f985b23aadb2e56f25eb26d42dbdc",
+  "evidence_kind": "Original HTTP bytes; rendered.html is a separately identified UTF-8 browser serialization.",
+  "expected": {
+    "roster_selector": ".col_news_list ul.wp_article_list > li.list_item",
+    "widget": "#wp_news_w6",
+    "pager": "#wp_paging_w6 .wp_paging",
+    "visible_cards": 6,
+    "pages": 1,
+    "failed_asset": "https://www.fjsmu.edu.cn/_upload/tpl/07/21/1825/template1825/images/icon_column_2_hover.gif",
+    "scope": "This branch only; names/profiles/full-college completeness are not approved by this fixture."
+  }
+}
