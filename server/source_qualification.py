@@ -64,15 +64,32 @@ def _faculty_group_path(heading, title: str, url: str, target: dict) -> dict | N
 
     # A general menu or an unrelated sidebar cannot supply this relationship.
     # The selected witness must identify itself as the current-position path.
-    if not re.search(r'当前位置\s*[:：]', heading.get_text(' ', strip=True)):
-        return None
     links = heading.select('a[href]')
     if len(links) < 2:
         return None
+    position_label = bool(re.search(r'当前位置\s*[:：]', heading.get_text(' ', strip=True)))
+    if not position_label:
+        # An inline 首页 > faculty > current-group path is also explicit.
+        # Require the whole selected witness to be that path, not a nested
+        # menu with a faculty link somewhere among its other labels.
+        labels = [re.sub(r'\s+', '', link.get_text(' ', strip=True)) for link in links]
+        menu_context = any(node.name in {'aside', 'menu'}
+            or str(node.get('role') or '').lower() in {'menu', 'menubar'}
+            or re.search(r'menu|sidebar', ' '.join([*node.get('class', []), str(node.get('id') or '')]), re.I)
+            for node in [heading, *heading.parents] if node.name not in {'body', 'html', '[document]'})
+        if (len(links) < 3 or labels[0] != '首页'
+                or any(link.parent is not heading for link in links)
+                or menu_context
+                or re.sub(r'\s+', '', heading.get_text(' ', strip=True)) != '>'.join(labels)):
+            return None
     parent, current = links[-2:]
-    for node in (parent, current):
-        destination = urlsplit(urljoin(url, node['href']))
-        if (destination.scheme not in {'http', 'https'} or destination.username
+    for node in ((parent, current) if position_label else links):
+        try:
+            destination = urlsplit(urljoin(url, node['href']))
+            destination.port  # Invalid/out-of-range ports are not usable links.
+        except ValueError:
+            return None
+        if (destination.scheme not in {'http', 'https'} or destination.username is not None
                 or destination.password is not None
                 or destination.hostname != urlsplit(url).hostname):
             return None
