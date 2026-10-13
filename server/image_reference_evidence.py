@@ -166,6 +166,8 @@ def dom_graph(soup, failed, base):
     if soup.select('base,svg,object,embed,iframe'):
         raise ValueError('opaque document reference')
     for node in soup.find_all(True):
+        if node.get('background') is not None and absolute(node['background'], base) in failed:
+            raise ValueError('unsupported native image reference')
         attrs = []
         if node.name in {'img', 'source'}:
             if node.name == 'img' and node.get('src'):
