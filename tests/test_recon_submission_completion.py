@@ -201,5 +201,6 @@ async def test_real_scout_receipts_complete_stages_and_preserve_source_revalidat
         result = agent_recon._run_staged_harness('verified-stages', cfg, ())
         assert json.loads(result.final_response)['branches'] == [roster]
         assert [p['completion_reason'] for p in result.phase_metrics] == ['accepted_submission'] * 2
+        assert result.usage_unknown is True
         assert agent_recon.run_metrics(result.events)['model_calls'] == 2
     assert state['closed'] and not state['natural_return']

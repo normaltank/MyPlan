@@ -752,9 +752,16 @@ class AgentWorker:
         path = root / "recon-attempts.json"
         if attempts is None:
             try:
-                attempts = json.loads(path.read_text(encoding="utf-8"))["attempts"]
+                previous = json.loads(path.read_text(encoding="utf-8"))
+                attempts = previous["attempts"]
+                usage_unknown = usage_unknown or previous.get("usage_unknown", False)
             except (OSError, ValueError, KeyError):
                 attempts = []
+        # A completed phase may stop before an in-flight usage notification.
+        # Later known phases and budget exits cannot make that spend known.
+        usage_unknown = usage_unknown or any(
+            item.get('usage_unknown', False) or (item.get('cost') or {}).get('unknown_calls', 0) > 0
+            for attempt in attempts for item in [attempt, *(attempt.get('phases') or [])])
         value = {"status": status, "usage_unknown": usage_unknown, "attempts": attempts}
         root.mkdir(parents=True, exist_ok=True)
         staging = root / f"recon-attempts.{uuid.uuid4().hex}.tmp"

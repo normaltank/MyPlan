@@ -122,3 +122,63 @@ async def test_worker_stops_repair_loop_and_saves_budget_audit(tmp_path, monkeyp
                         "recon-attempts.json").read_text(encoding="utf-8"))
     assert audit["status"] == "recon_budget_exceeded"
     assert audit["usage_unknown"] is False
+
+
+@pytest.mark.parametrize('unknown_attempt', [
+    {'phases': [{'phase': 'discovery', 'usage_unknown': True}]},
+    {'cost': {'unknown_calls': 1, 'estimated_usd': None, 'known_usd': 0.1}},
+    {'usage_unknown': True},
+])
+def test_recon_audit_preserves_unknown_spend_across_known_budget_exit(tmp_path, unknown_attempt):
+    attempts = [unknown_attempt, {'status': 'recon_budget_exceeded', 'usage_unknown': False,
+                                 'cost': {'unknown_calls': 0, 'estimated_usd': 0.2}}]
+    AgentWorker._save_recon_audit(tmp_path, attempts, 'recon_budget_exceeded', usage_unknown=False)
+    path = tmp_path / 'recon-attempts.json'
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    assert saved['usage_unknown'] is True and saved['attempts'] == attempts
+    AgentWorker._save_recon_audit(tmp_path, None, 'capture_failed', usage_unknown=False)
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    assert saved['usage_unknown'] is True and saved['attempts'] == attempts
+
+
+def test_recon_audit_retains_legacy_unknown_flag_when_only_status_changes(tmp_path):
+    path = tmp_path / 'recon-attempts.json'
+    path.write_text(json.dumps({'status': 'recon_failed', 'usage_unknown': True, 'attempts': []}), encoding='utf-8')
+    AgentWorker._save_recon_audit(tmp_path, None, 'capture_failed', usage_unknown=False)
+    assert json.loads(path.read_text(encoding='utf-8'))['usage_unknown'] is True
+
+
+def test_recon_audit_keeps_fully_accounted_completion_known(tmp_path):
+    attempts = [{'usage_unknown': False, 'phases': [{'usage_unknown': False}],
+                 'cost': {'unknown_calls': 0, 'known_usd': 0.2, 'estimated_usd': 0.2}}]
+    AgentWorker._save_recon_audit(tmp_path, attempts, 'recon_completed')
+    saved = json.loads((tmp_path / 'recon-attempts.json').read_text(encoding='utf-8'))
+    assert saved['usage_unknown'] is False and saved['attempts'] == attempts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('unknown,unknown_budget,expected', [(False, False, False), (True, False, True),
+                                                          (False, True, True)])
+async def test_recon_result_and_worker_audit_keep_completion_usage_flag(
+        tmp_path, monkeypatch, unknown, unknown_budget, expected):
+    from source_contract_fixture import upgrade
+
+    plan = upgrade({'school': '样本大学', 'college': '样本学院', 'branches': [
+        {'url': 'https://example.edu/faculty', 'card_selector': 'li', 'single_page': True}]})
+    budget = agent_recon.ReconBudget()
+    def completed(*_):
+        budget.observe(_message())
+        if unknown_budget:
+            budget.mark_usage_unknown()
+        return SimpleNamespace(events=[_message()], finish_reason='completed',
+                               final_response=json.dumps(plan), usage_unknown=unknown,
+                               phase_metrics=[{'phase': 'branch', 'usage_unknown': unknown}])
+    monkeypatch.setattr(agent_recon, '_run_harness_blocking', completed)
+    result = await agent_recon.reconnoiter('样本大学', '样本学院', 'https://example.edu/',
+        config={'workspace': str(tmp_path), 'patches': ()}, budget=budget, session_id='usage-completion')
+    summary = result.summary()
+    assert summary['usage_unknown'] is expected
+    assert summary['model_calls'] == 1 and summary['token_usage']['cached_input'] == 20
+    AgentWorker._save_recon_audit(tmp_path, [summary], 'recon_completed')
+    saved = json.loads((tmp_path / 'recon-attempts.json').read_text(encoding='utf-8'))
+    assert saved['usage_unknown'] is expected and saved['attempts'] == [summary]
