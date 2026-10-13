@@ -606,8 +606,10 @@ def _restorable_prefix(branch: dict, pages: list[dict]) -> bool:
 
 async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                           resume_pages=None, source_target=None,
-                          terminal_verifier=None) -> tuple[list[tuple[str, str]], list[dict], dict]:
+                          terminal_verifier=None, page_setup=None) -> tuple[list[tuple[str, str]], list[dict], dict]:
     page = await context.new_page()
+    if page_setup is not None:
+        page_setup(page)
     from server.browser_readiness import install_request_tracking
     tracker = install_request_tracking(page)
     url = branch["url"]

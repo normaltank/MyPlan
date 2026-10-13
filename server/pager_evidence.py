@@ -63,24 +63,32 @@ FACTS = r'''selector => {
 }'''
 
 
-def scope_digest(html: str, selector: str) -> str:
-    nodes = BeautifulSoup(html, 'html.parser').select(selector)
+def scope_digest(html: str, selector: str, *, _parser='html.parser') -> str:
+    nodes = BeautifulSoup(html, _parser).select(selector)
     return hashlib.sha256(''.join(str(node) for node in nodes).encode('utf-8')).hexdigest()
 
 
-async def _controller_evidence(page: Any, facts: dict, html: str, tracker: Any) -> dict | None:
+async def _controller_evidence(page: Any, facts: dict, html: str, tracker: Any,
+                               *, _scoped_images=False, _source_widget_selector=None) -> dict | None:
     """Server-published terminal navigation and a responsive, bound controller.
 
-    No missing-asset URL whitelist: only permanent script/style failures may
-    be scoped away after source DOM and actual controller responses agree.
+    The default only handles permanent script/style failures. A reviewed
+    image-scope caller can use the same server and responsive-controller proof
+    for permanent image failures; there is no missing-asset URL allowlist.
     """
     if (tracker.script_errors or not tracker.failed_requests or tracker.document_response is None
-            or any(kind not in {'script','stylesheet'} or status not in (404,410)
+            or any(kind not in ({'image'} if _scoped_images else {'script','stylesheet'}) or status not in (404,410)
                    for _,kind,status in tracker.failed_requests)):
         return None
     raw = await tracker.document_response.text()
     selectors = (facts['roster_selector'],facts['pager_selector'])
-    if tracker.document_response.status >= 400 or any(scope_digest(raw,s) != scope_digest(html,s) for s in selectors):
+    if _scoped_images:
+        if not _source_widget_selector:
+            return None
+        selectors = (*selectors, _source_widget_selector)
+    parser = 'lxml' if _scoped_images else 'html.parser'
+    if tracker.document_response.status >= 400 or any(
+            scope_digest(raw,s,_parser=parser) != scope_digest(html,s,_parser=parser) for s in selectors):
         return None
     soup = BeautifulSoup(raw,'html.parser')
     boxes = soup.select(facts['pager_selector'])
@@ -166,7 +174,8 @@ async def scoped_terminal_pagers(page: Any, card_selector: str) -> list[dict]:
     return await terminal_pagers(page, card_selector, _scope_pending=True)
 
 
-async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False) -> list[dict]:
+async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False,
+                          _failed_image_scope=None) -> list[dict]:
     """Only current-browser evidence, never selector guesses or stale counters."""
     if not card_selector or not callable(getattr(page, 'evaluate', None)):
         return []
@@ -184,6 +193,8 @@ async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False
         if not _scope_pending:
             return {} if not tracker.pending else None
         scope = await _pending_scope(page, before, tracker)
+        if scope and _failed_image_scope is not None:
+            scope['failed_resource_scope'] = await _failed_image_scope(page, scope, tracker)
         return scope if scope and scope['blocking_pending_request_count'] == 0 else None
 
     initial_scope = await pending_evidence()
@@ -191,6 +202,9 @@ async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False
         return [{**proof, 'reason': 'network_not_idle'}]
     if _scope_pending:
         proof['request_scope_evidence'] = {'samples': [initial_scope]}
+    if (_failed_image_scope is not None
+            and initial_scope['failed_resource_scope'].get('confirmed') is not True):
+        return [{**proof, 'reason': 'failed_image_scope_unverified'}]
     html = await page.content()
     failures = tracker.failures
     failure_set = list(tracker.failed_requests)
@@ -200,7 +214,9 @@ async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False
         return [{**proof, 'reason': 'page_load_failed'}]
     if tracker.failures:
         try:
-            controller = await _controller_evidence(page,before,html,tracker)
+            controller = await _controller_evidence(page,before,html,tracker,
+                _scoped_images=_failed_image_scope is not None,
+                _source_widget_selector=initial_scope.get('source_widget_selector'))
         except Exception:
             controller = None
         if controller is None:
@@ -232,6 +248,8 @@ async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False
             clicked_scope = await pending_evidence()
             if clicked_scope is None or clicked_scope['source_widget_selector'] != initial_scope['source_widget_selector']:
                 return [{**proof, 'reason': 'network_not_idle'}]
+            if (_failed_image_scope is not None and clicked_scope['failed_resource_scope'] != initial_scope['failed_resource_scope']):
+                return [{**proof, 'reason': 'failed_image_scope_changed'}]
             proof['request_scope_evidence']['samples'].append(clicked_scope)
         if (popups or page.url != before['url'] or after != facts or current != digests
                 or tracker.document_response is not document):
@@ -242,6 +260,9 @@ async def terminal_pagers(page: Any, card_selector: str, *, _scope_pending=False
         stable_html = await page.content()
         stable = selected_digest(stable_html)
         final_scope = await pending_evidence()
+        if (_failed_image_scope is not None and final_scope is not None
+                and final_scope['failed_resource_scope'] != initial_scope['failed_resource_scope']):
+            return [{**proof, 'reason': 'failed_image_scope_changed'}]
         if _scope_pending:
             if final_scope is not None:
                 proof['request_scope_evidence']['samples'].append(final_scope)
