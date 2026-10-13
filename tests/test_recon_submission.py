@@ -33,7 +33,7 @@ async def test_schema_feedback_never_echoes_forbidden_teacher_values_or_keys(tmp
 def test_submission_schema_references_resolve_at_tool_root_and_target_is_explicit(tmp_path):
     schema = next(t["inputSchema"] for t in phase_tools("full") if t["name"] == "submit_plan")
     assert "Branch" in schema["$defs"]
-    assert schema["properties"]["plan"]["properties"]["branches"]["items"]["$ref"] == "#/$defs/Branch"
+    assert schema["properties"]["plan"]["anyOf"][0]["properties"]["branches"]["items"]["$ref"] == "#/$defs/Branch"
     patch = tmp_path / "runtime.yml"
     write_runtime_patch(patch, phase="branch", target=TARGET)
     entries = yaml.safe_load(patch.read_text(encoding="utf-8"))

@@ -135,12 +135,20 @@ TOOLS = [
 
 def phase_tools(phase: str) -> list[dict]:
     from server.recon_contract import submission_schema
+    schema = submission_schema(phase)
+    definitions = schema.pop('$defs', None)
+    selection = ('Discovery submits only candidate source relationships and dispositions; '
+                 'mechanism selection and page_type_catalog belong to the later branch phase. '
+                 if phase == 'discovery' else
+                 'Query page_type_catalog to choose registered mechanisms and inspect their applicability. ')
     submit = tool("submit_plan", "Submit this phase's structure-only plan. Schema and current-session browser "
                   "evidence are checked immediately. Fix reported paths/codes and retry; stop after accepted:true. "
-                  "Query page_type_catalog to choose registered mechanisms and inspect their applicability. "
+                  + selection + 'Pass arguments.plan as an object or one JSON encoding of that object; '
+                  'decoding does not supply missing fields or browser proof. '
                   "CSS selectors intentionally cannot contain Chinese. Never include teacher fields.",
-                  {"plan": submission_schema(phase)}, ("plan",))
-    definitions = submit["inputSchema"]["properties"]["plan"].pop("$defs", None)
+                  {"plan": {'anyOf': [schema, {'type': 'string', 'minLength': 2, 'maxLength': 1048576,
+                       'description': 'One JSON encoding of the exact structure-only object above; '
+                                      'decoded once and validated by the identical schema and evidence gates.'}]}}, ("plan",))
     if definitions:
         submit["inputSchema"]["$defs"] = definitions
     if phase == "discovery":
@@ -278,7 +286,7 @@ class BrowserScout:
 
     async def call(self, name: str, arguments: dict) -> dict:
         if name == "submit_plan":
-            from server.recon_contract import plan_digest, validate_submission
+            from server.recon_contract import plan_digest, submission_plan, validate_submission
             plan = arguments.get("plan")
             if self._dom_modified:
                 return {**self.submission_result({"accepted": False, "issues": [
@@ -286,6 +294,7 @@ class BrowserScout:
             from server.recon_progress import observation_fingerprint
             issues = validate_submission(plan, self.phase, self.target, self.events)
             if not issues:
+                plan = submission_plan(plan)
                 self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
                 return self.text_result({"accepted": True, "digest": plan_digest(plan)})
             key = (plan_digest(plan), observation_fingerprint(self.events, issues))
