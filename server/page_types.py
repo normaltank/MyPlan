@@ -698,3 +698,7 @@ _register_page_stages()
 from server.page_single_page_v2 import register as _register_single_page_v2  # noqa: E402
 
 _register_single_page_v2()
+
+from server.page_single_page_v3 import register as _register_single_page_v3  # noqa: E402
+
+_register_single_page_v3()
