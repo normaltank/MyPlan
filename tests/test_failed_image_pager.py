@@ -33,7 +33,7 @@ document.querySelector('.pagingJump').onclick=()=>{
     ('input_inside', False), ('video_inside', False), ('source_inside', False),
     ('void_inputs', True), ('changed_input_value', False), ('changed_roster', False),
     ('changed_widget', False), ('reference_limit', False),
-    ('body_background', False),
+    ('body_background', False), ('body_background_alias', False), ('body_background_other', False),
 ])
 async def test_failed_css_image_requires_complete_component_scope_and_controller(case, expected):
     from playwright.async_api import async_playwright
@@ -96,6 +96,10 @@ async def test_failed_css_image_requires_complete_component_scope_and_controller
         html = html.replace('</aside>', ''.join('<a class="selected">item</a>' for _ in range(129)) + '</aside>')
     elif case == 'body_background':
         html = html.replace('<body>', '<body background="/icon.gif">')
+    elif case == 'body_background_alias':
+        html = html.replace('<body>', r'<body background="\\faculty.example.edu\icon.gif">')
+    elif case == 'body_background_other':
+        html = html.replace('<body>', '<body background="/other.gif">')
     css = selector + '{background-image:url(/icon.gif);content:"icon";}'
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -128,9 +132,11 @@ async def test_failed_css_image_requires_complete_component_scope_and_controller
                 assert proofs[0]['controller_evidence']['probes'] == 2
                 assert materials
                 assert len(proofs[0]['request_scope_evidence']['samples']) == 3
-            if case == 'body_background':
-                assert await page.locator('body').evaluate('(node)=>getComputedStyle(node).backgroundImage') == f'url("{URL.rsplit("/", 1)[0]}/icon.gif")'
-                assert proofs[0]['request_scope_evidence']['samples'][0]['failed_resource_scope']['reason'] == 'unsupported_native_image_reference'
+            if case.startswith('body_background'):
+                if case == 'body_background':
+                    assert await page.locator('body').evaluate('(node)=>getComputedStyle(node).backgroundImage') == f'url("{URL.rsplit("/", 1)[0]}/icon.gif")'
+                if case != 'body_background_alias':
+                    assert proofs[0]['request_scope_evidence']['samples'][0]['failed_resource_scope']['reason'] == 'unsupported_native_image_reference'
         finally:
             await browser.close()
 
@@ -192,16 +198,17 @@ async def test_v3_actual_source_stage_submission_and_reading(tmp_path):
             saved_html = Path(original['evidence_path']).read_text(encoding='utf-8')
             captured = ([(URL, saved_html)], metadata['errors'], metadata['evidence'])
             assert await stage_evidence_for_result('pagination', branch, captured, requested_url=URL)
-            changed = BeautifulSoup(saved_html, 'html.parser')
-            changed.body['background'] = '/icon.gif'
-            altered_html = str(changed)
-            altered_evidence = copy.deepcopy(metadata['evidence'])
-            altered_sha = hashlib.sha256(altered_html.encode()).hexdigest()
-            altered_evidence['source_roles'][URL]['source_html_sha256'] = altered_sha
-            altered_evidence['pagination_termination']['source_sha256'] = altered_sha
-            with pytest.raises(ValueError, match='page type stage evidence validation failed'):
-                await stage_evidence_for_result('pagination', branch,
-                    ([(URL, altered_html)], [], altered_evidence), requested_url=URL)
+            for background in ('/icon.gif', r'\\faculty.example.edu\icon.gif', '/other.gif'):
+                changed = BeautifulSoup(saved_html, 'html.parser')
+                changed.body['background'] = background
+                altered_html = str(changed)
+                altered_evidence = copy.deepcopy(metadata['evidence'])
+                altered_sha = hashlib.sha256(altered_html.encode()).hexdigest()
+                altered_evidence['source_roles'][URL]['source_html_sha256'] = altered_sha
+                altered_evidence['pagination_termination']['source_sha256'] = altered_sha
+                with pytest.raises(ValueError, match='page type stage evidence validation failed'):
+                    await stage_evidence_for_result('pagination', branch,
+                        ([(URL, altered_html)], [], altered_evidence), requested_url=URL)
             from server.agent_recon import selector_evidence_issues
             plan = {'school': '样本大学', 'college': '样本学院', 'branches': [branch]}
             for change in ('missing_scope', 'inside_selector', 'missing_materials', 'fake_dom', 'missing_reference', 'wrong_rule'):

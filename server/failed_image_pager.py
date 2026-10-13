@@ -115,7 +115,7 @@ _REFERENCES = r'''args => {
   for(const stylesheet of document.styleSheets) sheet(stylesheet);
   for(const node of all){
     if(node.style) inspect(node.style,null,[node],location.href,{inline_path:path(node)});
-    if(node.hasAttribute('background')&&refs.has(absolute(node.getAttribute('background'),location.href)))
+    if(node.hasAttribute('background'))
       reason='unsupported_native_image_reference';
     const tag=node.tagName.toUpperCase();
     if(tag==='IMG'||tag==='SOURCE'||(tag==='INPUT'&&node.type==='image')||tag==='VIDEO'){
