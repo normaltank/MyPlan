@@ -236,7 +236,9 @@ def _watch_gate(event: dict[str, Any], submit_calls: set, rejections: dict | Non
 def last_gate_rejections(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """The latest rejection of each session still unaccepted, for a failure that has no plan."""
     rejections = cfg.get("gate_rejections") or {}
-    return [{"session_id": sid, "issues": issues} for sid, issues in list(rejections.items())]
+    contexts = cfg.get('gate_rejection_contexts') or {}
+    return [{"session_id": sid, **contexts.get(sid, {}), "issues": issues}
+            for sid, issues in list(rejections.items())]
 
 
 class PlanHygieneError(ReconError):
@@ -538,7 +540,18 @@ def build_repair_feedback(plan: dict[str, Any], report: dict[str, Any]) -> dict[
         if owner:
             issue["branch_url"] = owner
         issues.append(issue)
-    return {"previous_plan": plan, "issues": issues}
+    return {"previous_plan": plan, "issues": issues, "captured_issues": list(issues),
+            "phase_rejections": []}
+
+
+def _unique_repair_entries(*groups) -> list[dict]:
+    """Keep distinct controlled diagnostics without making provenance a retry key."""
+    entries = {}
+    for group in groups:
+        for item in group if isinstance(group, list) else []:
+            if isinstance(item, dict):
+                entries[json.dumps(item, sort_keys=True, ensure_ascii=False)] = item
+    return list(entries.values())
 
 
 def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
@@ -550,10 +563,15 @@ def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
     """
     previous = previous or {}
     merged = {**previous, **incoming}
-    issues = {}
-    for item in [*previous.get('issues', []), *incoming.get('issues', [])]:
-        issues[json.dumps(item, sort_keys=True, ensure_ascii=False)] = item
-    merged['issues'] = list(issues.values())
+    merged['issues'] = _unique_repair_entries(previous.get('issues'), incoming.get('issues'))
+    history = _unique_repair_entries(previous.get('phase_rejection_history'),
+        previous.get('phase_rejections'), incoming.get('phase_rejection_history'), incoming.get('phase_rejections'))
+    if history:
+        # A retired refusal must never become legacy URL feedback after its
+        # active snapshot is replaced. Keep its origin for suppression only.
+        merged['phase_rejection_history'] = history
+    if 'captured_issues' in previous or 'captured_issues' in incoming:
+        merged['captured_issues'] = _unique_repair_entries(previous.get('captured_issues'), incoming.get('captured_issues'))
     if 'known_urls' in previous or 'known_urls' in incoming:
         merged['known_urls'] = list(dict.fromkeys(url for url in [
             *previous.get('known_urls', []), *incoming.get('known_urls', [])] if _is_structure_url(url)))
@@ -574,6 +592,121 @@ def merge_repair_feedback(previous: dict | None, incoming: dict) -> dict:
         if not prior_urls <= proposed_urls:
             merged['previous_plan'] = prior_plan
     return merged
+
+
+def _phase_rejection(phase: str, session_id: str, url: str, issues: list[dict]) -> dict:
+    """Bind controlled issues to the phase invocation that produced them."""
+    return {'phase': phase, 'session_id': session_id, 'target_url': url, 'issues': issues}
+
+
+def _phase_repair_issues(feedback: dict, phase: str, url: str, branch_urls=()) -> list[dict]:
+    """Route controlled errors with their actual phase/session/target provenance.
+
+    Contextual refusals are the latest failed attempt's snapshot. Older gate
+    envelopes remain in the audit; captured structural failures retain their
+    existing URL ownership. Legacy URL-free schema feedback is discovery-only;
+    a branch error needs an exact URL or execution-owned provenance.
+    """
+    text_fields = ('path', 'need', 'selector')
+    code_fields = ('reason', 'failed_condition', 'role')
+    url_fields = ('url', 'directory_url', 'branch_url', 'page_url')
+    count_fields = ('branch_index', 'observed_count', 'candidate_count', 'card_count',
+                    'visible_cards', 'extracted_candidates', 'page', 'segment', 'extra_name_lines',
+                    'container_count', 'email_count')
+    branches = set(branch_urls)
+
+    def project(item, context, owner=None, depth=0):
+        if not isinstance(item, dict) or depth > 4:
+            return None
+        status = item.get('status')
+        if not isinstance(status, str) or not re.fullmatch(r'[a-z_]{1,80}', status):
+            return None
+        context = {**context, **{key: item[key] for key in ('phase', 'session_id', 'target_url') if key in item}}
+        origin_phase = context.get('phase')
+        target_url = context.get('target_url')
+        if origin_phase is not None and origin_phase != phase:
+            return None
+        if origin_phase is not None and (not _is_structure_url(target_url) or target_url != url):
+            return None
+        declared = item.get('branch_url') or item.get('directory_url')
+        page_url = item.get('url')
+        if declared and not _is_structure_url(declared):
+            return None
+        if page_url is not None and not _is_structure_url(page_url):
+            return None
+        bound = target_url if origin_phase == 'branch' else owner
+        if bound and (declared and declared != bound or page_url in branches and page_url != bound):
+            return None
+        owned = declared or bound or page_url
+        selected = {'status': status}
+        for key in url_fields:
+            if _is_structure_url(item.get(key)):
+                selected[key] = item[key]
+        for key in text_fields:
+            if isinstance(item.get(key), str) and not _EMAIL.search(item[key]):
+                selected[key] = item[key]
+        for key in code_fields:
+            if isinstance(item.get(key), str) and re.fullmatch(r'[a-z_]{1,80}', item[key]):
+                selected[key] = item[key]
+        for key in count_fields:
+            if type(item.get(key)) is int:
+                selected[key] = item[key]
+        if type(item.get('page_only')) is bool:
+            selected['page_only'] = item['page_only']
+        if isinstance(item.get('failed_conditions'), list):
+            selected['failed_conditions'] = [value for value in item['failed_conditions']
+                if isinstance(value, str) and re.fullmatch(r'[a-z_]{1,80}', value)]
+        if isinstance(item.get('sample_urls'), list):
+            selected['sample_urls'] = [value for value in item['sample_urls'] if _is_structure_url(value)]
+        if origin_phase is not None:
+            selected.update(phase=origin_phase, target_url=target_url)
+        sid = context.get('session_id')
+        if isinstance(sid, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,160}(?:-discover|-branch-[0-9]+)?', sid):
+            selected['session_id'] = sid
+        children = item.get('gate_issues')
+        if isinstance(children, list):
+            children = [value for child in children
+                        if (value := project(child, context, owned, depth + 1)) is not None]
+            if not children:
+                return None
+            selected['gate_issues'] = children
+        elif phase == 'branch':
+            if owned != url:
+                return None
+        elif origin_phase != 'discovery' and (owned or not (status.startswith('schema_')
+                                                           or status == 'plan_contract_rejected')):
+            return None
+        return selected
+
+    contexts = feedback.get('phase_rejections')
+    routed = []
+    contextual_issues = set()
+    for record in _unique_repair_entries(feedback.get('phase_rejection_history')):
+        contextual_issues.update(json.dumps(item, sort_keys=True, ensure_ascii=False)
+            for item in _unique_repair_entries(record.get('issues')))
+    for item in _unique_repair_entries(feedback.get('captured_issues')):
+        if value := project(item, {}):
+            routed.append(value)
+    for record in contexts if isinstance(contexts, list) else []:
+        if not isinstance(record, dict):
+            continue
+        if record.get('phase') not in {'discovery', 'branch'}:
+            continue
+        context = {key: record[key] for key in ('phase', 'session_id', 'target_url') if key in record}
+        items = record.get('issues')
+        for item in items if isinstance(items, list) else []:
+            contextual_issues.add(json.dumps(item, sort_keys=True, ensure_ascii=False))
+            if value := project(item, context):
+                routed.append(value)
+    items = feedback.get('issues')
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or json.dumps(item, sort_keys=True, ensure_ascii=False) in contextual_issues:
+            continue
+        if contexts is not None and 'gate_issues' in item and 'phase' not in item:
+            continue
+        if value := project(item, {}):
+            routed.append(value)
+    return _unique_repair_entries(routed)
 
 
 def _profile_issue_branch(plan: dict[str, Any], issue: dict[str, Any]) -> str | None:
@@ -1571,9 +1704,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
     errors = []
 
     def scoped_issues(url: str) -> list[dict]:
-        return [item for item in feedback.get("issues", [])
-                if isinstance(item, dict) and url in
-                (item.get("url"), item.get("directory_url"), item.get("branch_url"))]
+        return _phase_repair_issues(feedback, 'branch', url, urls)
 
     def repair_profiles(url: str) -> dict[str, list[str]]:
         """Profile pages where the harvest found this branch's profile selector wrong."""
@@ -1609,7 +1740,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             prompt += "\n" + PROVIDED_LINKS_PROMPT + "给定链接：\n" + "\n".join(provided)
         if feedback:
             if phase == "discovery":
-                scoped = {"known_urls": required_urls}
+                scoped = {"known_urls": required_urls,
+                          "issues": _phase_repair_issues(feedback, phase, url, urls)}
             else:
                 previous = next((branch for branch in
                     (feedback.get("previous_plan") or {}).get("branches", [])
@@ -1620,6 +1752,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             if scoped.get("issues") or scoped.get("known_urls") or scoped.get("previous_branch"):
                 prompt += "\n本阶段结构反馈：" + json.dumps(scoped, ensure_ascii=False, separators=(",", ":"))
         sid = f"{session_id}-{suffix}"
+        if 'gate_rejection_contexts' in cfg:
+            cfg['gate_rejection_contexts'][sid] = {'phase': phase, 'target_url': url}
         phase_patches = patches
         if cfg.get("runtime_patch"):
             original = Path(cfg["runtime_patch"])
@@ -1639,6 +1773,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             # The stop is about this session's branch; the gate issues keep their own pages.
             exc.safe_feedback = {"issues": [{"status": exc.code, "url": url, "gate_issues": [
                 gate for item in exc.safe_feedback["issues"] for gate in item["gate_issues"]]}]}
+            exc.safe_feedback['phase_rejections'] = [_phase_rejection(phase, sid, url,
+                exc.safe_feedback['issues'])]
             exc.phase_metric = {"phase": phase, "session_id": sid, "effort": phase_cfg.get("effort"),
                                 "evidence_root": str(recon_evidence_root() / sid), "gate_stop": exc.code,
                                 **run_metrics(exc.phase_events)}
@@ -1688,6 +1824,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             routed = [{'status': 'plan_contract_rejected', 'gate_issues': issues}] if all(
                 item['status'].startswith('schema_') for item in issues) else issues
             error.safe_feedback = {'known_urls': required_urls, 'issues': routed}
+            error.safe_feedback['phase_rejections'] = [_phase_rejection('discovery',
+                discovery_session_id, target['url'], routed)]
             raise error
         urls = list(dict.fromkeys(branch['url'] for branch in discovery['branches']))
         discovery_checkpoint = {"plan": discovery, "events": discovery_events,
@@ -1825,6 +1963,8 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
                                    getattr(failure, "safe_feedback", {}).get("issues", [])]
                 error.safe_feedback = {"previous_plan": plan, "known_urls": urls,
                                        "issues": feedback_issues or [{"status": "plan_contract_rejected"}]}
+                error.safe_feedback['phase_rejections'] = [record for failure in errors
+                    for record in getattr(failure, 'safe_feedback', {}).get('phase_rejections', [])]
             # Aggregate all completed sibling usage, including failed-phase usage.
             if fatal:
                 partials = [failure.diagnostics for failure in errors if isinstance(failure, (
@@ -2139,6 +2279,7 @@ async def reconnoiter(
     cancel_event = threading.Event()
     cfg["cancel_event"] = cancel_event
     cfg["gate_rejections"] = {}  # shared by every phase session of this call
+    cfg['gate_rejection_contexts'] = {}  # execution-owned provenance, never inferred from a session name
     budget_before = budget.snapshot() if budget else None
     Path(cfg["workspace"]).mkdir(parents=True, exist_ok=True)
 
@@ -2202,7 +2343,18 @@ async def reconnoiter(
                 if not existing:
                     actual = [issue for entry in rejected for issue in entry['issues']]
                     feedback['issues'] = [{'status': 'plan_contract_rejected', 'gate_issues': actual}]
-                    error.safe_feedback = feedback
+                records = list(feedback.get('phase_rejections', []))
+                attributed = {record.get('session_id') for record in records}
+                records.extend(_phase_rejection(entry['phase'], entry['session_id'], entry['target_url'],
+                    [{'status': 'plan_contract_rejected', 'gate_issues': entry['issues']}])
+                    for entry in rejected if entry.get('phase') in {'discovery', 'branch'}
+                    and entry['session_id'] not in attributed)
+                feedback['phase_rejections'] = records
+                error.safe_feedback = feedback
+        if isinstance(error, ReconPlanError):
+            safe = dict(getattr(error, 'safe_feedback', {}))
+            safe.setdefault('phase_rejections', [])
+            error.safe_feedback = safe
         raise
     except Exception as exc:  # dsh / SDK 层异常
         raise ReconError(f"dsh 调用失败：{type(exc).__name__}: {exc}") from exc
