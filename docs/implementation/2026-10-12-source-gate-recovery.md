@@ -110,3 +110,11 @@
 require_submission阶段现只在当前会话、真实submit_plan工具、摘要与提交计划匹配的接受收据上结束SDK阶段；预算、实际已收用量和取消先处理，既有后置Schema、来源、名单与阶段校验继续执行。保存completion_reason=accepted_submission；可能在途请求的用量仍未知，不能把已收到用量当完整账单。不要求工具提交的旧调用不变。
 
 整合后的新增收束检查与公共侦察/来源/分页/详情/缓存历史检查共119项通过，包括实际BrowserScout discovery→branch及错误来源绑定反例；ruff通过。补丁提供方两轴复审无确认问题，本树另运行组合检查。实际付费SDK退出延迟、加载与全院采集结果尚待新运行证明。
+
+219d3f7的CI run38283054320最终ruff与浏览器success，非浏览器1 failed、1867 passed、2 skipped。失败是test_plan_cache_contract_includes_executable_registry_source构造的临时源码副本漏了新增recon_progress.py（及source_navigation.py）；精确archive本地全单元复现同一失败。现补齐副本，并分别验证两个公共模块变化确实使缓存契约变化，生产失效规则不放宽。
+
+## 完整同页机构署名
+
+独立只读维护核对池州原件21个合法CSS组合，正文没有中文大学名，logo仅学院alt、footer为英文大学名；标题的完整分隔段恰为“池州学院马克思主义学院”。原_document_branding只认独立分隔段等于学校或学院，两项均false。其12个真实BrowserScout控制实验只在内存补完整school+college署名段，原HTML及三个选区SHA不变；原件组织用途处置通过，错署名/错输入/附加前后缀、faculty_roster声称领导页和body重叠仍拒绝，原始历史拒绝记录保留。
+
+本树按该有界规则改写：非空school与college组成的完整分隔段可同时提供机构署名，仍须独立机构区域、当前用途、名单范围和浏览器证明。无substring、简称、翻译或域名许可，也不能由领导页处置通过推断教师资格或全院无师资。本树原代码两项静态正例及真实浏览器正例先失败；修复后相关79项检查通过，两轴只读复审另核对既有来源、职称路径、研究生导师正反例与缓存依赖。结构类型版本不改，公共来源协议2仍是本PR尚未发布候选，按精确提交发布与重新核验。

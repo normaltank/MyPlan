@@ -89,9 +89,9 @@ def _faculty_group_path(heading, title: str, url: str, target: dict) -> dict | N
 def _document_branding(title: str, target: dict) -> dict[str, bool]:
     """Exact institution signature segments in the current browser document title."""
     segments = [part.strip() for part in re.split(r'[-—_|]', title)]
-    return {field: bool(str(target.get(field) or '').strip()
-                        and str(target[field]).strip() in segments)
-            for field in ('school', 'college')}
+    institutions = {field: str(target.get(field) or '').strip() for field in ('school', 'college')}
+    complete = bool(all(institutions.values()) and institutions['school'] + institutions['college'] in segments)
+    return {field: bool(name and (name in segments or complete)) for field, name in institutions.items()}
 
 
 def organizational_purpose(text: str, scope, target: dict) -> bool:

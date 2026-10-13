@@ -16,7 +16,7 @@ def body(reply):
 
 @pytest.mark.browser
 @pytest.mark.asyncio
-async def test_real_chizhou_unknown_exclusion_feedback_and_repeated_source_receipts(tmp_path):
+async def test_real_chizhou_complete_institution_signature_supports_organizational_disposition(tmp_path):
     raw = Path('tests/fixtures/source_disposition/chizhou-current-leaders.html').read_bytes()
     assert hashlib.sha256(raw).hexdigest() == 'ffd913c28f2f7529a89436b22fdc5ef2edad656651833df81b3325a5cd61f653'
     url = 'http://my.czu.edu.cn/xygk/xrld.htm'
@@ -39,12 +39,10 @@ async def test_real_chizhou_unknown_exclusion_feedback_and_repeated_source_recei
             await scout.call('browser_navigate', {'url': url})
             for _ in range(3):
                 proof = body(await scout.call('browser_verify_source', {key: item[key] for key in SOURCE_FIELDS}))
-                assert proof['confirmed'] is True and proof['non_faculty_purpose'] is False
+                assert proof['confirmed'] is True and proof['college_bound'] is True
+                assert proof['non_faculty_purpose'] is True
                 reply = body(await scout.call('submit_plan', {'plan': plan}))
-                assert reply['accepted'] is False
-                issue, = reply['issues']
-                assert issue['failed_condition'] == 'non_faculty_purpose_unverified'
-            assert reply['stop'] == 'recon_gate_stalled'
+                assert reply['accepted'] is True and 'stop' not in reply
         finally:
             await browser.close()
 
