@@ -1,0 +1,551 @@
+{
+  "batch_id": "type-explore-20261012-001",
+  "purpose": "exploration, not frozen-stage acceptance",
+  "frozen_at": "2026-10-12T15:52:17.063245+08:00",
+  "code_commit": "419c892764b6f3e7c6846f9924ee8ec1d830bf98",
+  "sampling_method": "Python random.Random(seed).sample(sorted eligible official directory college edges, 10)",
+  "random_seed": 14114118251785040303,
+  "frame_count": 46,
+  "eligible_count": 45,
+  "history_scope": "primary tasks.db read-only plus documented case-library match; unseen only in this recorded scope",
+  "template_overlap": "same university CMS possible; faculty templates not inspected before sample",
+  "selection_fixed_before_faculty_browsing": true,
+  "frame": [
+    {
+      "school": "三明学院",
+      "college": "体育与康养学院",
+      "url": "https://tyxy.fjsmu.edu.cn/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "信息工程学院",
+      "url": "https://xxgc.fjsmu.edu.cn/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "创业管理学院",
+      "url": "https://www.fjsmu.edu.cn/cxcycz/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "建筑工程学院",
+      "url": "https://www.fjsmu.edu.cn/jzgcxynew/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "教育与音乐学院",
+      "url": "https://www.fjsmu.edu.cn/jyxy/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "文化传播学院",
+      "url": "https://www.fjsmu.edu.cn/wcxy/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "机电工程学院",
+      "url": "https://www.fjsmu.edu.cn/jdgcxy/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "泰宁文旅现代产业学院",
+      "url": "https://tnxy.fjsmu.edu.cn/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "海外学院(外国语学院)",
+      "url": "https://fcollege.fjsmu.edu.cn/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "海峡理工学院",
+      "url": "https://www.fjsmu.edu.cn/hxlg/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "经济与管理学院",
+      "url": "https://glxy.fjsmu.edu.cn/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "艺术与设计学院",
+      "url": "https://www.fjsmu.edu.cn/ysysj/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "资源与化工学院",
+      "url": "https://www.fjsmu.edu.cn/xnfzsyzx/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "三明学院",
+      "college": "马克思主义学院",
+      "url": "https://www.fjsmu.edu.cn/smxyszb/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "体育学院",
+      "url": "http://tyx.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "商学院（法学院）",
+      "url": "http://jmx.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "地理与规划学院",
+      "url": "http://lyx.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "外国语学院",
+      "url": "http://wgy.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "文学与传媒学院",
+      "url": "http://zwx.czu.edu.cn/index/syx.htm",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "旅游与历史文化学院",
+      "url": "http://lyxy.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "机电工程学院（半导体学院）",
+      "url": "http://wlx.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "材料与环境工程学院",
+      "url": "http://hxx.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "继续教育学院（乡村振兴学院）",
+      "url": "http://jxjy.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "艺术与教育学院",
+      "url": "http://ysx.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "池州学院",
+      "college": "马克思主义学院",
+      "url": "http://my.czu.edu.cn/",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "体育学院",
+      "url": "http://tyxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "化学化工学院",
+      "url": "http://cces.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "历史学院",
+      "url": "https://lsxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "国家安全与应急管理学院",
+      "url": "https://yjgl.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "地理科学学院",
+      "url": "http://dkxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "外国语学院",
+      "url": "http://wgy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "教育学院",
+      "url": "http://jyxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "数学与统计学院",
+      "url": "http://math.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "文学院",
+      "url": "https://wxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "新闻学院",
+      "url": "http://soj.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "民族师范学院",
+      "url": "http://msy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "法学与社会学学院",
+      "url": "http://fsxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "物理与电子信息工程学院",
+      "url": "http://wlx.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "生命科学学院",
+      "url": "http://skxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "经济管理学院（旅游学院）",
+      "url": "https://lyxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "继续教育与培训学院",
+      "url": "http://cjxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "美术学院",
+      "url": "http://msx.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "计算机学院",
+      "url": "http://jsj.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "音乐学院",
+      "url": "http://music.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "马克思主义学院",
+      "url": "http://sdmy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory"
+    }
+  ],
+  "excluded_known": [
+    {
+      "school": "池州学院",
+      "college": "大数据与人工智能学院",
+      "url": "http://ai.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "prior_tasks": [
+        {
+          "school": "池州学院",
+          "college": "大数据与人工智能学院",
+          "url": "http://ai.czu.edu.cn",
+          "basis": "docs/research/case-library/2026-10-02-batch-4.md"
+        }
+      ]
+    }
+  ],
+  "selected": [
+    {
+      "school": "池州学院",
+      "college": "继续教育学院（乡村振兴学院）",
+      "url": "http://jxjy.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 1,
+      "result": "not_run"
+    },
+    {
+      "school": "池州学院",
+      "college": "外国语学院",
+      "url": "http://wgy.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 2,
+      "result": "not_run"
+    },
+    {
+      "school": "池州学院",
+      "college": "马克思主义学院",
+      "url": "http://my.czu.edu.cn/",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 3,
+      "result": "not_run"
+    },
+    {
+      "school": "池州学院",
+      "college": "商学院（法学院）",
+      "url": "http://jmx.czu.edu.cn",
+      "directory_url": "https://www.czu.edu.cn/czxyold/jgsz.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\czu.html",
+      "directory_sha256": "c3995020d05ff72023b925d07fc1e9f80891fde95528b6ecf2b2dabdb525854f",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 4,
+      "result": "not_run"
+    },
+    {
+      "school": "三明学院",
+      "college": "泰宁文旅现代产业学院",
+      "url": "https://tnxy.fjsmu.edu.cn/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 5,
+      "result": "not_run"
+    },
+    {
+      "school": "三明学院",
+      "college": "建筑工程学院",
+      "url": "https://www.fjsmu.edu.cn/jzgcxynew/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 6,
+      "result": "not_run"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "计算机学院",
+      "url": "http://jsj.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 7,
+      "result": "not_run"
+    },
+    {
+      "school": "三明学院",
+      "college": "马克思主义学院",
+      "url": "https://www.fjsmu.edu.cn/smxyszb/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 8,
+      "result": "not_run"
+    },
+    {
+      "school": "青海师范大学",
+      "college": "历史学院",
+      "url": "https://lsxy.qhnu.edu.cn/",
+      "directory_url": "https://www.qhnu.edu.cn/zzjg/xybx.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\qhnu.html",
+      "directory_sha256": "2a3e0b66337c20067b91c1f2ebce694af98f58282cacced7e86517c8fd8bc303",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 9,
+      "result": "not_run"
+    },
+    {
+      "school": "三明学院",
+      "college": "经济与管理学院",
+      "url": "https://glxy.fjsmu.edu.cn/",
+      "directory_url": "https://www.fjsmu.edu.cn/jxdw_5322/list.htm",
+      "directory_original": "C:\\Users\\27451\\.codex\\worktrees\\autonomous-type-library\\MyPlan\\server\\outputs\\type-maintenance-20261012\\sampling-frame\\fjsmu-teaching.html",
+      "directory_sha256": "6fc7561bd146397daf06cc70832b2b4712cbd1906a6e92f167350bf547a2f782",
+      "name_and_official_link_basis": "explicit college anchor in saved official university directory",
+      "order": 10,
+      "result": "not_run"
+    }
+  ]
+}

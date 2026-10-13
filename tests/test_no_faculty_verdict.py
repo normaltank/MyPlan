@@ -96,7 +96,7 @@ def test_a_scout_without_a_roster_gets_a_college_review_page(tmp_path, monkeypat
     _fail(queue, task)
     url = browser.get(f"/api/task/{task.task_id}").json()["review_url"]
     page = browser.get(url).text
-    assert "https://oec.x.edu.cn/" in page and "侦察超时" in page and "本学院没有专任教师" in page
+    assert "https://oec.x.edu.cn/" in page and "侦察超时" in page and "确认无师资" in page
     assert browser.post(f"/api/task/{task.task_id}/no-faculty", headers={"X-CSRF-Token": csrf}).status_code == 200
     page = browser.get(url).text
     assert "已判为无师资" in page and 'class="secondary no-faculty"' not in page
@@ -111,6 +111,13 @@ def test_other_failures_do_not_offer_the_college_verdict(tmp_path, monkeypatch):
                            "", "审计未通过交付门禁", "fixture", claimed.lease_token)
     assert "review_url" not in browser.get(f"/api/task/{task.task_id}").json()
     assert browser.get(f"/review/task/{task.task_id}").status_code == 404
+    # A parser failure is not evidence of no faculty, but it must not hide an
+    # independent human's college-range confirmation entry.
+    payload = browser.get(f"/api/task/{task.task_id}").json()
+    assert payload['no_faculty_review_url'] == f'/review/task/{task.task_id}/college'
+    page = browser.get(payload['no_faculty_review_url'])
+    assert page.status_code == 200 and '确认无师资' in page.text
+    assert '兼职、外聘' in page.text and '不能单独证明无师资' in page.text
 
 
 def test_university_review_lists_every_college_with_the_verdict(tmp_path, monkeypatch):
@@ -123,7 +130,28 @@ def test_university_review_lists_every_college_with_the_verdict(tmp_path, monkey
     [scope] = browser.get("/api/batch/b").json()["delivery_scopes"]
     assert scope["state"] == "ready"
     page = browser.get(scope["review_url"]).text
-    assert "继续教育学院" in page and "1 人：陈成涛" in page and page.count("本学院没有专任教师</button>") == 2
+    assert "继续教育学院" in page and "1 人：陈成涛" in page and page.count("确认无师资</button>") == 2
     assert browser.post(f"/api/task/{offices.task_id}/no-faculty", headers={"X-CSRF-Token": csrf}).status_code == 200
     page = browser.get(scope["review_url"]).text
-    assert page.count("本学院没有专任教师</button>") == 1 and "已判为无师资" in page
+    assert page.count("确认无师资</button>") == 1 and "已判为无师资" in page
+
+
+def test_running_college_has_no_verdict_entry_and_cannot_be_closed(tmp_path, monkeypatch):
+    queue = AgentTaskQueue(tmp_path / 'tasks.db')
+    browser, _ = _signed_in(queue, monkeypatch, tmp_path)
+    task = queue.submit_task('样本大学', '样本学院')
+    queue.claim_task('fixture', task_id=task.task_id)
+    assert 'no_faculty_review_url' not in browser.get(f'/api/task/{task.task_id}').json()
+    assert browser.get(f'/review/task/{task.task_id}/college').status_code == 409
+
+
+def test_human_verdict_retains_previous_usage_and_failure_stats(tmp_path):
+    queue = AgentTaskQueue(tmp_path / 'tasks.db')
+    task = queue.submit_task('样本大学', '样本学院')
+    claimed = queue.claim_task('fixture', task_id=task.task_id)
+    before = {'total': 0, 'failure_codes': ['recon_budget_exceeded'],
+              'recon_usage': {'uncached_input': 100, 'cached_input': 200, 'output': 50}}
+    queue.sync_task_result(task.task_id, [], before, '', '侦察未完成', 'fixture', claimed.lease_token)
+    assert queue.mark_no_faculty(task.task_id, 7)
+    saved = queue.get_task(task.task_id).stats
+    assert saved['no_faculty']['previous_stats'] == before

@@ -686,6 +686,7 @@ async def _capture_branch(context: Any, branch: dict[str, Any], *, on_page=None,
                     unresolved.append({'url': page.url, 'status': 'source_role_evidence_unverified',
                                        'reason': 'source_verification_failed'})
                 evidence.setdefault('source_roles', {})[page.url] = source_proof
+                evidence.setdefault('related_source_originals', []).extend(captured_source.get('related_sources', []))
                 html = captured_source.get('html') or html
             if branch.get("kind") == "image_table":
                 from server.image_table_browser import verify_table_images
@@ -999,11 +1000,15 @@ def _save_capture_snapshots(out, name, navigation_pages, all_pages, profile_html
 
 
 def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_evidence, selector_sources,
-                             candidates=()):
+                             candidates=(), *, blocked_profile_urls=()):
     unresolved = []
     from server.profile_content import scope_profile_html
     scoped_profile_html = dict(profile_html)
     profile_scope_evidence = {}
+    for url in blocked_profile_urls:
+        scoped_profile_html[url] = ''
+        if url not in selectors_by_url or not profile_html.get(url):
+            unresolved.append({'url': url, 'status': 'profile_content_not_verified'})
     for url, selectors in selectors_by_url.items():
         if not profile_html.get(url):
             continue
@@ -1013,6 +1018,9 @@ def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_eviden
             selector = profile_live_evidence[url]["profile_content_selector"]
             start_selector = profile_live_evidence[url]["profile_content_start_selector"]
         else:
+            scoped_profile_html[url] = ''
+            unresolved.append({'url': url, 'status': (
+                'profile_content_selector_conflict' if len(selectors) > 1 else 'profile_content_selector_invalid')})
             continue
         scoped, evidence, issue = scope_profile_html(profile_html[url], selector, url,
                                                    start_selector=start_selector)
@@ -1031,6 +1039,12 @@ def _scope_captured_profiles(profile_html, selectors_by_url, profile_live_eviden
                 issue['browser_evidence'] = profile_live_evidence.get(url)
         if issue:
             unresolved.append(issue)
+            # The full failed page is retained in originals/snapshots for review.
+            # It must not become parser/OCR input when the requested scope failed.
+            scoped_profile_html[url] = ''
+        elif url in blocked_profile_urls:
+            unresolved.append({'url': url, 'status': 'profile_content_not_verified'})
+            scoped_profile_html[url] = ''
         else:
             scoped_profile_html[url] = scoped
             profile_scope_evidence[url] = {**evidence,
@@ -1390,8 +1404,11 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
     # Preserve raw captures above; only the parser receives the verified subtree copy.
     scoped_profile_html, profile_scope_evidence, scope_issues = _scope_captured_profiles(
         profile_html, roster_reconciliation.profile_content_selectors,
-        profile_live_evidence, roster_reconciliation.profile_content_sources, candidates)
+        profile_live_evidence, roster_reconciliation.profile_content_sources, candidates,
+        blocked_profile_urls={item['url'] for item in unresolved
+                              if item.get('status') == 'profile_content_browser_unverified'})
     unresolved.extend(scope_issues)
+    unverified_profile_urls = {issue['url'] for issue in scope_issues}
     finish_stage("profile_capture_and_scope")
     from server.image_biography import (audit_profile_media, browser_asset_size, fetch_browser_asset,
                                         media_references)
@@ -1527,6 +1544,7 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         agent_name=plan.get("agent_name", "Browser-assisted Subagent"),
         profileless_urls=roster_urls,
         verified_profile_urls=set(profile_scope_evidence),
+        unverified_profile_urls=unverified_profile_urls,
         title_field_evidence=title_field_evidence,
         defer_homepage_projection=True,
     ) if admitted else {"sheet1_with_email": [], "sheet2_no_email": [],
@@ -1616,7 +1634,10 @@ async def run_plan(plan: dict[str, Any], browser_context: Any, output_dir: str |
         "attribution_scope": ("image_table_cells" if (row["主页"], row["姓名"]) in table_profileless
                               else "pdf_roster_record" if (row["主页"], row["姓名"]) in pdf_record_keys
                               else "segmented_article_record"
-                              if (row["主页"], row["姓名"]) in segment_records else "candidate_and_profile"),
+                              if (row["主页"], row["姓名"]) in segment_records else
+                              "unverified_profile_container" if row["主页"] in unverified_profile_urls
+                              else "candidate_and_profile"),
+        **({"profile_fields_unread": True} if row["主页"] in unverified_profile_urls else {}),
         **({"segment_record": segment_records[(row["主页"], row["姓名"])].provenance()}
            if (row["主页"], row["姓名"]) in segment_records else {}),
         **({"html_table_rows": table_row_sources(row)} if table_row_sources(row) else {}),

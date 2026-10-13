@@ -830,6 +830,7 @@
         }
         function failureLabel(task) {
             if (task.official_site_issue) return [task.official_site_message || '官网异常，待人工确认', 'warn'];
+            if (task.stats?.partial_capture?.record_count) return ['部分读取（' + task.stats.partial_capture.record_count + ' 条记录待核）', 'warn'];
             if (task.source_review_required) return ['来源范围待核验', 'warn'];
             const kind = failureKind(task);
             return [FAILURE_LABELS[kind] || '失败', kind === 'failed' ? 'danger' : 'warn'];
@@ -863,11 +864,12 @@
             const review = st.review_url ? `<a href="${escapeHtml(st.review_url)}">${icon('review')}人工复核</a>`
                 : st.university_review_url ? `<a href="${escapeHtml(st.university_review_url)}">${icon('review')}同名复核</a>` : '';
             const sourceReview = st.source_disposition_review_url ? `<a href="${escapeHtml(st.source_disposition_review_url)}">${icon('review')}来源决定改选</a>` : '';
+            const collegeVerdict = st.no_faculty_review_url ? `<a href="${escapeHtml(st.no_faculty_review_url)}">${icon('review')}${st.stats?.no_faculty ? '无师资判定' : '确认无师资'}</a>` : '';
             // A person who checked the site can close a college that publishes no faculty roster.
             return `
                 <div class="subtask">
                     <div class="subtask-name"><span class="subtask-college">${escapeHtml(st.college)}</span><span class="subtask-school">${escapeHtml(st.school)}</span></div>
-                    <div class="subtask-actions"><span class="pill pill-dot" data-tone="${tone}"${busy ? ' data-busy' : ''}>${text}</span>${download}${review}${sourceReview}</div>
+                    <div class="subtask-actions"><span class="pill pill-dot" data-tone="${tone}"${busy ? ' data-busy' : ''}>${text}</span>${download}${review}${sourceReview}${collegeVerdict}</div>
                 </div>`;
         }
 

@@ -409,9 +409,9 @@ class AgentTaskQueue:
                      'coverage_scope': 'no_faculty_reviewed',
                      'no_faculty': {'reviewed_by': reviewed_by, 'reviewed_at': now,
                                     'previous_status': row['status'], 'previous_error': row['error'],
-                                    'previous_total': previous.get('total', 0)}}
+                                    'previous_total': previous.get('total', 0), 'previous_stats': previous}}
             meta = json.loads(row['meta_json'])
-            meta.update(progress=100, current_step='人工判定：本学院没有专任教师', teachers_preview=[])
+            meta.update(progress=100, current_step='人工确认：本学院无师资', teachers_preview=[])
             con.execute("DELETE FROM records WHERE task_id=?", (task_id,))
             updated = con.execute("""UPDATE tasks SET status='completed',error=NULL,stats_json=?,meta_json=?,
                 download_url=NULL,finished_at=?,lease_until=NULL,lease_token=NULL
@@ -636,6 +636,13 @@ class AgentTaskQueue:
                     if row is None:
                         raise KeyError(task_id)
                     raise LeaseConflictError(task_id)
+                if records:
+                    self._write_records(con, task_id, records)
+                    row = con.execute('SELECT meta_json FROM tasks WHERE task_id=?', (task_id,)).fetchone()
+                    meta = json.loads(row['meta_json'])
+                    meta.update(teachers_preview=records[:10],
+                                current_step='部分记录已保留，未完成范围及字段待核验')
+                    con.execute('UPDATE tasks SET meta_json=? WHERE task_id=?', (_json(meta), task_id))
         else:
             self.complete_task(task_id, records, stats, worker_id=worker_id, lease_token=lease_token)
             with self._connect() as con:

@@ -17,9 +17,13 @@ CHILDREN = ['https://example.edu/cards', 'https://example.edu/article']
 
 
 def pair(name, args, result, cid):
+    call = {'callId': cid, 'name': 'mcp__playwright__' + name, 'arguments': json.dumps(args)}
+    if name == 'browser_verify_source':
+        # BrowserScout binds this URL before executing the call. These
+        # component events span several pages with the same witness CSS.
+        call['source_url'] = result['url']
     return [
-        {'type': 'tool/call', 'data': {'callId': cid, 'name': 'mcp__playwright__' + name,
-                                     'arguments': json.dumps(args)}},
+        {'type': 'tool/call', 'data': call},
         {'type': 'tool/result', 'data': {'message': {'content': [
             {'toolCallId': cid, 'content': [{'type': 'text', 'text': json.dumps(result)}]}]}}},
     ]

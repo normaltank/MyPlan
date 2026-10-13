@@ -88,7 +88,9 @@ TOOLS = [
          {"urls": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 8}}, ("urls",)),
     tool("browser_structure", "Read repeated DOM subtree containers and counts; inspect their returned CSS paths.", RANGE),
     tool('browser_verify_source', 'Capture the complete current source scope, actual page purpose title/current navigation and target-college context. '
-         'A role enum alone does not prove faculty membership. Unknown/organizational sources remain auxiliary observations.',
+         'A role enum alone does not prove faculty membership. A faculty-group continuation may require one native canonical-root '
+         'read and visible reciprocal roster pager links. Large full_source_result packets are complete local hashed evidence, '
+         'automatically checked by submission; never narrow a source just to shorten its proof. Unknown/organizational sources remain auxiliary observations.',
          {'source_role': {'type': 'string', 'enum': ['faculty_roster', 'organizational_membership', 'unverified_people_source']},
           'source_container_selector': STRING, 'role_evidence_selector': STRING, 'source_context_selector': STRING,
           'unit_selector': STRING},
@@ -168,9 +170,8 @@ class BrowserScout:
         self._image_reads: dict[str, dict] = {}
         self._observed_forward_selectors: dict[tuple[str, str], set[str]] = {}
         self._unproved_navigation_actions: set[tuple[str, str, str]] = set()
-        # Rejected submissions by everything the gate reads: plan, evidence, DOM state.
-        self._rejections: dict[tuple, tuple[int, list[dict]]] = {}
-        self._unchanged_resubmissions = 0
+        # Rejected plans by meaningful observations and actual failed conditions.
+        self._rejections: dict[tuple, tuple[int, list[dict], int]] = {}
         from server.empty_roster import install_empty_roster_tracking
         install_empty_roster_tracking(page)
 
@@ -261,21 +262,24 @@ class BrowserScout:
             if self._dom_modified:
                 return {**self.text_result({"accepted": False, "issues": [
                     {"path": "$", "status": "browser_dom_modified"}]}), "isError": True}
-            # The gate is a function of the plan and this session's evidence, so an
-            # identical resubmission with no new browser call cannot pass.
-            key = (plan_digest(plan), len(self.events))
+            from server.recon_progress import observation_fingerprint
+            issues = validate_submission(plan, self.phase, self.target, self.events)
+            if not issues:
+                self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
+                return self.text_result({"accepted": True, "digest": plan_digest(plan)})
+            key = (plan_digest(plan), observation_fingerprint(self.events, issues))
             if key in self._rejections:
-                self._unchanged_resubmissions += 1
-                number, issues = self._rejections[key]
+                number, _, repetitions = self._rejections[key]
+                repetitions += 1
+                self._rejections[key] = (number, issues, repetitions)
                 reply = {"accepted": False, "unchanged_resubmission": number, "issues": issues,
-                         "retry": "Same plan and no new browser evidence since this submission was rejected. "
+                         "retry": "Same plan, observations and failed conditions as an earlier rejected submission. "
                                   "Collect the proof each issue's need names before submitting again."}
-                if self._unchanged_resubmissions >= UNCHANGED_RESUBMISSIONS_STOP:
+                if repetitions >= UNCHANGED_RESUBMISSIONS_STOP:
                     reply["stop"] = "recon_gate_stalled"
                 return {**self.text_result(reply), "isError": True}
-            issues = validate_submission(plan, self.phase, self.target, self.events)
             if issues:
-                self._rejections[key] = (len(self._rejections) + 1, issues)
+                self._rejections[key] = (len(self._rejections) + 1, issues, 0)
                 reply = {"accepted": False, "submission": len(self._rejections), "issues": issues,
                          "retry": "Each issue names its url, failed_condition, closest observation and the "
                                   "proof it still needs: collect that proof in the browser, then resubmit."}
@@ -283,21 +287,37 @@ class BrowserScout:
                     # Every failure is a page fact seen on two opens; no plan passes it.
                     reply["stop"] = "recon_page_unverifiable"
                 return {**self.text_result(reply), "isError": True}
-            self.save("accepted.json", json.dumps(plan, ensure_ascii=False))
-            return self.text_result({"accepted": True, "digest": plan_digest(plan)})
+        cid = str(len(self.events))
+        source_url = self.page.url if name == 'browser_verify_source' else None
+        call_data = {'callId': cid, 'name': 'mcp__playwright__' + name,
+                     'arguments': json.dumps(arguments)}
+        if source_url is not None:
+            call_data['source_url'] = source_url
+        self.events.append({'type': 'tool/call', 'data': call_data})
         try:
             reply = await self._browser_call(name, arguments)
         except Exception as exc:
-            if name != 'browser_navigate':
+            if name == 'browser_verify_source':
+                from server.source_qualification import SOURCE_EVIDENCE_VERSION, SOURCE_FIELDS, digest
+                failed = {'url': self.page.url, 'source_call_url': source_url,
+                    'source_evidence_version': SOURCE_EVIDENCE_VERSION,
+                    **{key: arguments.get(key) for key in SOURCE_FIELDS},
+                    'unit_selector': arguments.get('unit_selector'),
+                    'status': 'browser_source_verification_failed', 'error_type': type(exc).__name__}
+                import contextlib
+                with contextlib.suppress(Exception):
+                    original = await self.page.content()
+                    failed['source_html_sha256'] = digest(original)
+                    failed['original_path'] = str(self.save('source-error.html', original.encode('utf8')))
+                failed['evidence_path'] = str(self.save('source-error.json', json.dumps(failed, ensure_ascii=False)))
+                reply = {**self.text_result(failed), 'isError': True}
+            elif name != 'browser_navigate':
                 raise
-            reply = {**self.text_result({'requested_url': arguments['url'],
-                                         'error': type(exc).__name__}), 'isError': True}
-        cid = str(len(self.events))
-        self.events.extend([
-            {"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__" + name,
-                                            "arguments": json.dumps(arguments)}},
-            {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": cid, **reply}]}}},
-        ])
+            else:
+                reply = {**self.text_result({'requested_url': arguments['url'],
+                                             'error': type(exc).__name__}), 'isError': True}
+        self.events.append({'type': 'tool/result', 'data': {
+            'message': {'content': [{'toolCallId': cid, **reply}]}}})
         return reply
 
     async def _people(self) -> dict | None:
@@ -534,13 +554,35 @@ class BrowserScout:
                 await self.snapshot()
         elif name == 'browser_verify_source':
             from server.source_qualification import verify_source
+            source_call_url = self.page.url
             captured = {}
             value = await verify_source(self.page, arguments, self.target or {}, local_capture=captured)
+            value['source_call_url'] = source_call_url
             if captured.get('html'):
                 value['original_path'] = str(self.save('source.html', captured['html'].encode('utf-8')))
+            for related in captured.get('related_sources', []):
+                related_path = str(self.save('source-parent.html', related['html'].encode('utf-8')))
+                relation = value.get('pagination_relationship') or {}
+                if related['url'] == relation.get('root_url'):
+                    relation['root_original_path'] = related_path
+                value.setdefault('related_source_originals', []).append({
+                    'url': related['url'], 'original_path': related_path})
             witness_path = self.save('source-witness.json', json.dumps(value, ensure_ascii=False))
             value['evidence_path'] = str(witness_path)
             await self.snapshot()
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf8')
+            if len(encoded) > MAX_INLINE_BYTES:
+                complete_path = self.save('source-result.json', encoded)
+                preview = {key: value[key] for key in (
+                    'url', 'source_call_url', 'source_evidence_version', 'source_role',
+                    'source_container_selector', 'role_evidence_selector', 'source_context_selector',
+                    'unit_selector', 'units_within_scope', 'scope_count', 'role_count', 'context_count',
+                    'confirmed', 'role_supported', 'college_bound', 'witness_visible', 'dom_stable',
+                    'network_idle', 'reason', 'faculty_group_path', 'pagination_relationship_issue',
+                    'source_html_sha256', 'original_path', 'evidence_path') if key in value}
+                preview['full_source_result'] = {'sha256': hashlib.sha256(encoded).hexdigest(),
+                                                'evidence_path': str(complete_path)}
+                return self.text_result(preview)
         elif name == "browser_verify":
             from server.page_types import binding_for, normalize_branch, ROLE_PARAMETERS
             # This tool proves the roster mechanism, not the applicability of

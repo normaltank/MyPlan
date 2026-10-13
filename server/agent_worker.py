@@ -290,7 +290,7 @@ class AgentWorker:
         except Exception as exc:  # One college must not stop the other agents.
             print(f"[worker] 未捕获异常 task={task.task_id[:8]}: "
                   f"{type(exc).__name__}: {exc}", flush=True)
-            await self._mark_failed(task, f"{type(exc).__name__}: {exc}")
+            await self._mark_failed(task, f"{type(exc).__name__}: {exc}", failure_codes=['worker_runtime_failed'])
 
     # ── 单条工单 ──────────────────────────────────────────────────────────
     async def _process(self, task: Any) -> None:
@@ -329,7 +329,7 @@ class AgentWorker:
         except asyncio.TimeoutError:
             self._save_recon_audit(task_output_dir, None, "task_timeout", usage_unknown=True)
             await self._mark_failed(
-                task, f"超过最大运行时长 {self.max_task_seconds:.0f}s，判定卡死")
+                task, f"超过最大运行时长 {self.max_task_seconds:.0f}s，判定卡死", failure_codes=['task_timeout'])
             return
         except (ReconError, PlanHygieneError) as exc:
             await self._mark_failed(task, f"侦察失败：{exc}{gate_rejection_summary(exc)}")
@@ -360,6 +360,7 @@ class AgentWorker:
                 reason,
                 failure_codes=[u.get("status") for u in unresolved],
                 failure_issues=unresolved,
+                partial_report=report,
             )
             return
 
@@ -430,7 +431,20 @@ class AgentWorker:
                                 if key not in {"plan_digest", "evidence_captured_at"}},
                 "delivery_ready": bool(result.get("delivery_ready"))})
             # Keep every finished pass observable even if the next one times out.
-            return save_runtime(result)
+            result = save_runtime(result)
+            retained = dict(result)
+            receipt_id = uuid.uuid4().hex
+            if result.get('records_path'):
+                source = Path(result['records_path']).resolve()
+                if source.is_file() and source.is_relative_to(output_dir.resolve()):
+                    snapshot = output_dir / f'capture-records.{receipt_id}.json'
+                    snapshot.write_bytes(source.read_bytes())
+                    retained['records_path'] = str(snapshot)
+                    retained['original_records_path'] = str(source)
+            staging = output_dir / f'capture-result.{uuid.uuid4().hex}.tmp'
+            staging.write_text(json.dumps(retained, ensure_ascii=False, indent=2), encoding='utf8')
+            staging.replace(output_dir / 'capture-result.json')
+            return result
 
         def save_runtime(result):
             from server.harvest_runtime_report import build_runtime_report
@@ -524,8 +538,15 @@ class AgentWorker:
                 self._save_recon_audit(output_dir, attempts, status,
                                       usage_unknown=getattr(exc, "usage_unknown", True))
                 rejected = getattr(exc, "diagnostics", {}).get("last_gate_rejections")
-                save_runtime({"unresolved": [{"status": status,
-                                              **({"last_gate_rejections": rejected} if rejected else {})}]})
+                issue = {"status": status, **({"last_gate_rejections": rejected} if rejected else {})}
+                if report.get('records_path'):
+                    # A later repair failure cannot erase the preceding capture.
+                    report = {**report, 'delivery_ready': False,
+                              'unresolved': [*(report.get('unresolved') or []), issue],
+                              'recon_attempts': attempts.copy()}
+                    save_runtime(report)
+                    break
+                save_runtime({"unresolved": [issue]})
                 raise
             if self._capture_plan_key(recon.plan) in harvested_keys:
                 # Capture is deterministic for a plan: a plan this task already
@@ -540,8 +561,14 @@ class AgentWorker:
             attempts.append(recon.summary())
             self._save_recon_audit(output_dir, attempts, "recon_completed")
             self._save_active_plan(task, output_dir, recon, attempts)
+            # A browser failure must still include the scout that just finished.
+            save_runtime(report)
             previous_source_audit = report.get('audit_path')
             report = await capture(recon.plan, attempt_dir, 0)
+            if recon.diagnostics.get('stop_reason'):
+                report['unresolved'] = [*(report.get('unresolved') or []),
+                                        {'status': recon.diagnostics['stop_reason']}]
+                report['delivery_ready'] = False
             if (recon.plan.get('source_dispositions') and previous_source_audit
                     and previous_source_audit != report.get('audit_path') and Path(previous_source_audit).is_file()):
                 # Historical people/source observations stay in their original
@@ -596,6 +623,8 @@ class AgentWorker:
                     pass  # Unsupported interactions or missing evidence are researched again.
                 await self._attach_cross_check(task, recon.plan, report, deadline)
                 return report
+            if recon.diagnostics.get('stop_reason') == 'recon_budget_exceeded':
+                break  # Capture the proved subset without spending past the college budget.
             recovery = classify_issues(report.get("unresolved") or [])
             structural = recovery.structure
             if recovery.stop or not structural:
@@ -919,7 +948,8 @@ class AgentWorker:
     # ── 失败出口（三要素围栏）────────────────────────────────────────────
     async def _mark_failed(self, task: Any, reason: str,
                            failure_codes: list[str | None] | None = None,
-                           failure_issues: list[dict] | None = None) -> None:
+                           failure_issues: list[dict] | None = None,
+                           partial_report: dict | None = None) -> None:
         """把工单标记为终态失败。
 
         注意：**绝不修改内存里的 `task.status`。**
@@ -931,6 +961,38 @@ class AgentWorker:
         print(f"[worker]   ❌ {task.school}-{task.college}: {reason}", flush=True)
         try:
             stats = {"total": 0, "with_email": 0, "no_email": 0}
+            records = []
+            task_root = (self.output_dir / 'tasks' / task.task_id).resolve()
+            if partial_report is None:
+                with contextlib.suppress(OSError, ValueError):
+                    saved_capture = json.loads((task_root / 'capture-result.json').read_text(encoding='utf8'))
+                    if isinstance(saved_capture, dict):
+                        partial_report = saved_capture
+            if partial_report and partial_report.get('records_path'):
+                from server.browser_batch_sync import FIELDS
+                record_path = Path(partial_report['records_path']).resolve()
+                if record_path.is_file() and record_path.is_relative_to(task_root):
+                    candidate_rows = None
+                    with contextlib.suppress(OSError, ValueError):
+                        candidate_rows = json.loads(record_path.read_text(encoding='utf-8'))
+                    if (isinstance(candidate_rows, list) and len(candidate_rows) == partial_report.get('total')
+                            and all(isinstance(row, dict) and set(row) == FIELDS
+                                    and row['学校'] == task.school and row['学院'] == task.college
+                                    for row in candidate_rows)):
+                        records = candidate_rows
+                        stats.update(total=len(records), with_email=sum(bool(row['邮箱']) for row in records),
+                                     no_email=sum(not row['邮箱'] for row in records))
+                        stats['partial_capture'] = {'record_count': len(records), 'records_path': str(record_path),
+                            'records_sha256': hashlib.sha256(record_path.read_bytes()).hexdigest(),
+                            'delivery_verified': False,
+                            'unresolved_count': len(failure_issues or partial_report.get('unresolved') or [])}
+                        if failure_issues is None:
+                            failure_issues = partial_report.get('unresolved')
+                            failure_codes = [*(failure_codes or []),
+                                             *(item.get('status') for item in failure_issues or [])]
+                        for field in ('audit_path', 'coverage_path', 'coverage_scope', 'source_dispositions'):
+                            if field in partial_report:
+                                stats[field] = partial_report[field]
             if failure_codes:
                 stats["failure_codes"] = sorted({safe_failure_code(code) for code in failure_codes})
             if failure_issues is not None:
@@ -951,7 +1013,7 @@ class AgentWorker:
                         if field in stats['runtime_report']:
                             stats[field] = stats['runtime_report'][field]
             self.queue.sync_task_result(
-                task.task_id, [], stats,
+                task.task_id, records, stats,
                 "", reason,
                 worker_id=task.worker_id, lease_token=task.lease_token,
             )

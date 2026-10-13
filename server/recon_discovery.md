@@ -8,10 +8,12 @@ browser_navigate 已返回页面摘要（标题、标题行、常见正文容器
 未找到名录、页面失败或零候选都不等于学院无师资；“无师资学院”需要人工确认，不能由本阶段自行结案。
 补缺反馈中的 known_urls 是此前已经观察的来源，逐项重新检查。每个URL必须进入当前branches或source_dispositions，不得无依据省略；重定向应实际打开验证。已确证组织用途的来源可退出活跃采集分支，但不能宣称组织成员都不是教师。
 每个相关人员来源先用 browser_verify_source 证明：source_role 为 faculty_roster、organizational_membership 或 unverified_people_source；source_container_selector 指完整实际正文/名录容器，role_evidence_selector 指实际主标题或指向当前页的导航位置，source_context_selector 指独立于正文的学院归属上下文。用途主标题与完整容器须唯一可见；source_context_selector可用逗号组合本页实际学校品牌和学院页头/导航/页脚区域，逐区域可见、DOM稳定、请求结束并共同绑定当前URL/HTML。不得用教师履历提到的学校或正文整页代替机构branding。faculty_roster 还须标题/当前页导航中的正向师资关系及目标学院上下文；同页侧栏“师资”链接或学校域名本身不够。栏目用途不明或只有组织/委员会成员关系时保留来源并选择辅助/未知角色，不删人、不声称学院无师资。兼职外聘正式师资来源仍可通过同一证明。
+上下文优先选择能提供所需品牌的最小可见区域；页脚已经有学校学院名称时无需再加入含隐藏菜单或未加载图片的整个页头。当前文档标题中的精确机构署名由工具独立核验，模型不抄写或补造署名。“当前位置：师资队伍 → 教授/副教授”等职称分类须选择包含完整路径的真实区域，“师资队伍 → 专任教师 → 系/教研室”等当前教学单位师资分组同样选择完整当前位置路径，标题与末端链接须绑定当前页；组织机构下的同名教研室不能因此获得师资许可。仅“教授”或“教研室”字样不够。source_scope_issue 与 source_scope_blocking_requests 表示正文范围或访问仍未证明；可重新打开同一官方页并再核验一次，工具仅在新导航也实见相同永久失败且正文已证明稳定时使用既有复读规则。来源或归属仍不能确认时保留为 unverified_people_source 或相应 source_dispositions，结束本阶段，不为同一未解条件不断更换 CSS 和重复调用。
 使用 submit_plan 提交 JSON：顶层 school、college、branches，可选source_dispositions，可保留旧source_kind作兼容形态元数据，它不证明师资资格。branches 每项包含 url 和上述四个来源结构字段，必须与成功 browser_verify_source 参数逐字一致。不得附加 name、label、说明、确认布尔值、正文引用、SHA或教师数据；证据由浏览器工具保存。
 工具即时检查格式、目标与本轮浏览器证据。accepted:false 时按 issues 的字段路径和错误码修正；accepted:true 后立即结束，回复“计划已提交”，无需再次抄写 JSON。
 提交参数示例（示例 URL 必须替换为本轮实际核实的 URL）：
 {{"plan":{{"school":"{school}","college":"{college}","branches":[{{"url":"https://example.edu/faculty/","source_role":"faculty_roster","source_container_selector":"main .faculty-list","role_evidence_selector":"main h1","source_context_selector":"header .college-name"}}]}}}}
+计划被拒后，按具体 failed_condition 补足缺少的证据。重复打开同页、保存新副本、取得同样的验证回执不会自动算进展；新的相关导航范围、有效结构配置或原件选区事实才允许重新尝试。工具返回 recon_gate_stalled 时保留当前未知范围并结束本阶段，不能再用无关 JS、截图或目录查询重置计数；复杂学院仍可继续核实新的分支。
 
 本工单：
 目标学校：{school}
@@ -24,3 +26,7 @@ branches可为空，但必须保留至少一个source_dispositions；这只保�
 来源用途与成员身份分开判断：已由实际标题和正文证明为组织／委员会名单时，用 organizational_membership 描述来源，不因成员可能是教师而把明确组织用途改成未知用途；这不证明成员不是教师，也不提供教师任职许可。仅用途或学院归属确实未明时用 unverified_people_source。source_context_selector 组合中的每个区域都须是独立机构品牌；纯路径面包屑不能充当学校学院品牌，不要把它附加到有效页脚。工具的 non_institutional_context_count／source_context_issue 指出上下文错误，须依实际已访问页面重查品牌区域，不能绕过证据校验。
 
 “组织建设”页面只有在当前标题／导航已绑定且完整正文明确列出党委书记、纪委书记或党支部等组织任职标签时，才按党建组织任职目录核验组织用途；工作总结或仅政策说明不能靠标题关键词退出师资来源。组织角色仍不证明成员的教师身份，学校学院品牌和原件门禁保持。
+
+
+来源证据协议2由工具读取，不能在计划中填source_evidence_version、source_call_url、confirmed或full_source_result。职称／教学单位页优先用完整当前位置路径作为role_evidence_selector；仅有职称或旁边师资菜单不足以证明关系。分页页若末端栏目链接指向首页，工具最多读取一个实际栏目首页，核实同学院、师资父路径及名单旁真实双方分页链接并保存原件；失败仍保留当前来源待核。若当前组链接指向另一个官方URL且没有分页关系，应依实际链接核查该URL，不把原URL直接宣称合格。
+工具反馈分别保留归属、用途、可见性、范围、DOM、网络、参数与版本的失败条件；未知用途不等于已证明非师资。新同源同参数调用出错或未完成时，旧成功证明不能继续授权。full_source_result是完整本地证据的SHA引用，提交门禁和采集消费者自行校验展开；无需缩小名单或手写证明。

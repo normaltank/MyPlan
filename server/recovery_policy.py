@@ -44,7 +44,7 @@ _GROUPS = {
         name_list_item_unrecognized table_image_selector_unverified recon_gate_stalled
         roster_profile_link_outside_card source_role_evidence_unverified""",
     "stop": """lease_renewal_failed repair_skipped_task_deadline recon_budget_exceeded recon_phase_limit
-        recon_failed task_timeout missing_entry_url delivery_sync_failure missing_audit_file""",
+        recon_failed task_timeout worker_runtime_failed missing_entry_url delivery_sync_failure missing_audit_file""",
 }
 POLICIES: dict[str, Action] = {code: action for action, codes in _GROUPS.items() for code in codes.split()}
 POLICIES.update(source_unreadable='review', source_structure_unresolved='review',

@@ -375,6 +375,10 @@ async def start_batch_collection(req: BatchCollectRequest, request: Request = No
 
 def present_task(data, scope):
     data["delivery_scope"] = scope
+    if (data.get('task_type') == 'harvest' and
+            (no_faculty_review.can_judge(data.get('status'), data.get('stats'))
+             or data.get('stats', {}).get('no_faculty'))):
+        data['no_faculty_review_url'] = f"/review/task/{data['task_id']}/college"
     if data.get('stats', {}).get('source_disposition_reviews'):
         data['source_disposition_review_url'] = f"/review/task/{data['task_id']}/source-disposition"
     if (data.get("status") == "running" and
@@ -498,6 +502,8 @@ async def task_image_review_page(task_id: str, request: Request):
         endpoint=f'/api/task/{task_id}/review/source-disposition',
         artifact_endpoint=f'/api/task/{task_id}/review/disposition-original',
         csrf=request.cookies.get(CSRF_COOKIE, '')) + '</html>')
+    rendered = rendered.replace('</html>', no_faculty_review.render_action_section(task,
+        csrf_token=request.cookies.get(CSRF_COOKIE, '')) + '</html>')
     return rendered
 
 
@@ -785,6 +791,16 @@ async def retry_task_after_image_review(task_id: str, request: Request):
     if not agent_queue.retry_failed_review_task(task_id):
         raise HTTPException(status_code=409, detail='工单状态已变化，请刷新页面')
     return {'status': 'queued', 'task_id': task_id}
+
+
+@app.get('/review/task/{task_id}/college', response_class=HTMLResponse)
+async def college_faculty_verdict_page(task_id: str, request: Request):
+    task = agent_queue.get_task(task_id)
+    if not task or task.task_type != 'harvest':
+        raise HTTPException(status_code=404, detail='没有该学院任务')
+    if not (no_faculty_review.can_judge(task.status, task.stats) or task.stats.get('no_faculty')):
+        raise HTTPException(status_code=409, detail='只有已结束且未标为官网异常的学院任务可以确认师资范围')
+    return no_faculty_review.render_college_page(task, csrf_token=request.cookies.get(CSRF_COOKIE, ''))
 
 
 @app.post('/api/task/{task_id}/no-faculty')

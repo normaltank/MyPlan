@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
 
 SourceRole = Literal['faculty_roster', 'organizational_membership', 'unverified_people_source']
+SOURCE_EVIDENCE_VERSION = 2
 ROLES = frozenset({'faculty_roster', 'organizational_membership', 'unverified_people_source'})
 SOURCE_FIELDS = frozenset({'source_role', 'source_container_selector', 'role_evidence_selector',
                            'source_context_selector'})
@@ -24,7 +25,7 @@ SOURCE_FIELDS = frozenset({'source_role', 'source_container_selector', 'role_evi
 _FACULTY_PURPOSE = re.compile(
     r'(?:师资(?:队伍|名录|力量|介绍|简介)|教师(?:名单|名录|队伍|介绍|简介|风采)|'
     r'教职工(?:名单|名录|队伍)|教授博士介绍|导师(?:名单|名录|介绍|信息|队伍|风采)|'
-    r'(?:博士生|硕士生)导师|教学(?:队伍|名师)|'
+    r'(?:博士生|硕士生|研究生)导师|教学(?:队伍|名师)|'
     r'(?:专任|兼职|外聘|客座)教师|客座教授|faculty(?:\s+members)?|academic\s+staff)', re.I)
 _ORGANIZATIONAL_PURPOSE = re.compile(
     r'(?:党(?:委|总支|支部)(?:成员|委员|组成|领导)?|'
@@ -55,6 +56,42 @@ def _purpose_label(text: str, target: dict) -> str:
 def faculty_purpose(text: str, target: dict) -> bool:
     """A complete affirmative label, including ordinary target-branded titles."""
     return bool(_FACULTY_PURPOSE.fullmatch(_purpose_label(text, target)))
+
+
+def _faculty_group_path(heading, title: str, url: str, target: dict) -> dict | None:
+    """Read an explicit current group path; a continuation still needs a link proof."""
+    from server.titles import TITLE_KEYWORDS
+
+    # A general menu or an unrelated sidebar cannot supply this relationship.
+    # The selected witness must identify itself as the current-position path.
+    if not re.search(r'当前位置\s*[:：]', heading.get_text(' ', strip=True)):
+        return None
+    links = heading.select('a[href]')
+    if len(links) < 2:
+        return None
+    parent, current = links[-2:]
+    for node in (parent, current):
+        destination = urlsplit(urljoin(url, node['href']))
+        if (destination.scheme not in {'http', 'https'} or destination.username
+                or destination.password is not None
+                or destination.hostname != urlsplit(url).hostname):
+            return None
+    label = current.get_text(' ', strip=True)
+    group = (label in TITLE_KEYWORDS or bool(re.fullmatch(
+        r'[\u4e00-\u9fffA-Za-z·（）()]+(?:系|教研室|教学部)', label)))
+    if (faculty_purpose(parent.get_text(' ', strip=True), target)
+            and group and _purpose_label(title, target) == label):
+        return {'root_url': urljoin(url, current['href']),
+                'faculty_parent_url': urljoin(url, parent['href']), 'group_label': label}
+    return None
+
+
+def _document_branding(title: str, target: dict) -> dict[str, bool]:
+    """Exact institution signature segments in the current browser document title."""
+    segments = [part.strip() for part in re.split(r'[-—_|]', title)]
+    institutions = {field: str(target.get(field) or '').strip() for field in ('school', 'college')}
+    complete = bool(all(institutions.values()) and institutions['school'] + institutions['college'] in segments)
+    return {field: bool(name and (name in segments or complete)) for field, name in institutions.items()}
 
 
 def organizational_purpose(text: str, scope, target: dict) -> bool:
@@ -137,9 +174,10 @@ def _branding_text(context, url: str, field: str) -> str:
         str(image.get('alt') or image.get('title') or '') for image in fragment.find_all('img'))
 
 
-def witness(html: str, url: str, branch: dict, target: dict) -> dict:
+def witness(html: str, url: str, branch: dict, target: dict, *, pagination_relationship=None) -> dict:
     """Read complete local witnesses; a model supplies only role and CSS."""
-    result = {'url': url, **{key: branch.get(key) for key in SOURCE_FIELDS},
+    result = {'url': url, 'source_evidence_version': SOURCE_EVIDENCE_VERSION,
+              **{key: branch.get(key) for key in SOURCE_FIELDS},
               'source_html_sha256': digest(html), 'role_supported': False}
     if not source_claim_valid(branch):
         return {**result, 'reason': 'source_claim_missing'}
@@ -191,7 +229,10 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
     result['non_institutional_context_count'] = sum(not _institution_context(context) for context in contexts)
     result['source_context_issue'] = ('source_context_overlaps_content' if not separate_context else
                                       'source_context_not_institutional' if not institutional_context else None)
-    college_bound = bool(college and college in branding['college'] and school and school in branding['school']
+    document_branding = _document_branding(title, target)
+    result['document_title_branding'] = document_branding
+    college_bound = bool(college and (college in branding['college'] or document_branding['college'])
+                         and school and (school in branding['school'] or document_branding['school'])
                          and separate_context and institutional_context)
     result.update(title_bound=title_bound, current_link_bound=bool(own_links), college_bound=college_bound)
     # A positive, source-bound organizational purpose can retire an old roster
@@ -205,8 +246,14 @@ def witness(html: str, url: str, branch: dict, target: dict) -> dict:
         and ((title_bound and organizational_purpose(title, scope, target))
              or any(organizational_purpose(text, scope, target) for text in own_links)))
     if branch['source_role'] == 'faculty_roster':
+        group_path = _faculty_group_path(heading, title, url, target)
+        result['faculty_group_path'] = group_path
+        from server.source_navigation import relationship_matches
+        paginated_group = bool(group_path and pagination_relationship and relationship_matches(
+            html, url, branch, group_path, pagination_relationship))
         purpose = bool((title_bound and faculty_purpose(title, target))
-                       or any(faculty_purpose(text, target) for text in own_links))
+                       or any(faculty_purpose(text, target) for text in own_links)
+                       or (group_path and group_path['root_url'] == url) or paginated_group)
         result['role_supported'] = bool(purpose and college_bound and units_within)
         if not result['role_supported']:
             result['reason'] = 'faculty_relationship_unverified'
@@ -234,8 +281,10 @@ class SourceEvidence:
 
 def captured_source_evidence(html: str, url: str, branch: dict, target: dict,
                              proof: dict | None = None) -> SourceEvidence:
-    current = witness(html, url, branch, target)
-    keys = ('url', *SOURCE_FIELDS, 'unit_selector', 'units_within_scope', 'source_html_sha256', 'selected_scope_sha256',
+    proof = read_source_packet(proof)
+    current = witness(html, url, branch, target,
+                      pagination_relationship=(proof if isinstance(proof, dict) else {}).get('pagination_relationship'))
+    keys = ('source_evidence_version', 'url', *SOURCE_FIELDS, 'unit_selector', 'units_within_scope', 'source_html_sha256', 'selected_scope_sha256',
             'role_scope_sha256', 'context_scope_sha256')
     proven = (isinstance(proof, dict) and proof.get('confirmed') is True
               and proof.get('dom_stable') is True and proof.get('network_idle') is True
@@ -318,13 +367,27 @@ def owned_profile_relationship(html: str | None, url: str, name: str, target: di
                           owner_name=name)
 
 
-async def verify_source(page, branch: dict, target: dict, *, local_capture: dict | None = None) -> dict:
+async def _verify_source_here(page, branch: dict, target: dict, *, local_capture: dict | None = None,
+                              extra_witness_selectors: tuple[str, ...] = ()) -> dict:
     """Current browser proof shares the existing visibility/network/DOM contract."""
     from server.profile_structure import _FACTS, verify_profile_container
+    from server.browser_readiness import install_request_tracking
+    tracker = install_request_tracking(page)
+    key = (page.url, branch['source_container_selector'])
+    previous = getattr(page, '_faculty_source_read', None)
+    recurring = None
+    if (previous and previous['key'] == key and tracker.document_response is not None
+            and previous['navigation_response'] is not tracker.document_response):
+        recurring = previous['failed_requests']
     captured = {}
-    scope = await verify_profile_container(page, branch['source_container_selector'], local_capture=captured)
+    scope = await verify_profile_container(page, branch['source_container_selector'], local_capture=captured,
+                                           recurring_failures=recurring)
+    page._faculty_source_read = {'key': key, 'navigation_response': tracker.document_response,
+                                'failed_requests': captured.get('failed_requests', [])}
+    read_activity = tracker.activity - tracker.image_activity
     html = captured.get('html') or await page.content()
     value = witness(html, page.url, branch, target)
+    first_witness = value.copy()
     visible = True
     rendered_context = ''
     for key in ('role_evidence_selector', 'source_context_selector'):
@@ -344,73 +407,260 @@ async def verify_source(page, branch: dict, target: dict, *, local_capture: dict
                 rendered_context += ' ' + ' '.join(await node.locator('img').evaluate_all(
                     "nodes => nodes.filter(n => n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden')"
                     ".map(n => n.alt || n.title || '')"))
+    document_branding = _document_branding(await page.title(), target)
     rendered_affiliation = all(str(target.get(field) or '').strip()
-                               and str(target[field]).strip() in rendered_context for field in ('school', 'college'))
-    value['rendered_context_sha256'] = digest(rendered_context)
+                               and (str(target[field]).strip() in rendered_context or document_branding[field])
+                               for field in ('school', 'college'))
+    # Capture final HTML and all computed witness visibility in one browser
+    # task. A theme stylesheet outside the selected nodes can still hide them.
+    selectors = [branch[key] for key in ('source_container_selector', 'role_evidence_selector',
+                                        'source_context_selector')]
+    selectors.extend(extra_witness_selectors)
+    from server.profile_content import TRIVIAL_HIDDEN_CHARS
+    from server.word_toc import live_decorations
+    snapshot = await page.evaluate('args => { const facts = (' + _FACTS + ''');
+        const rows=args.selectors.map((selector,role)=>[...document.querySelectorAll(selector)].map((_,index)=>
+          facts({selector,index,start:null,trivialChars:role===0?args.trivialChars:0,
+            wordToc:role===0?args.wordToc:[],allowEmpty:false})));
+        const doctype=document.doctype?new XMLSerializer().serializeToString(document.doctype):'';
+        return {url:location.href,html:doctype+document.documentElement.outerHTML,rows}; }''',
+        {'selectors': selectors, 'trivialChars': TRIVIAL_HIDDEN_CHARS,
+         'wordToc': live_decorations(html, selectors[0])})
+    final_html = snapshot['html']
+    final_value = witness(final_html, snapshot['url'], branch, target)
+    # Compare the complete semantic witness, including non_faculty_purpose and
+    # any future decision dependencies; the unrelated original SHA may differ.
+    stable = scope.get('dom_stable') is True and all(first_witness.get(key) == final_value.get(key)
+        for key in set(first_witness) | set(final_value) if key != 'source_html_sha256')
+    final_visible = all((bool(rows) if index == 2 else len(rows) == 1) and all(
+        facts['container_visible'] and not facts['hidden_content_count'] and not facts['active_animation_count']
+        for facts in rows) for index, rows in enumerate(snapshot['rows']))
+    visible = visible and final_visible
+    network_idle = (scope.get('network_idle') is True
+                    and read_activity == tracker.activity - tracker.image_activity)
+    value = {**final_value, 'rendered_context_sha256': digest(rendered_context)}
     if branch['source_role'] == 'faculty_roster' and not rendered_affiliation:
         value.update(role_supported=False, college_bound=False, reason='source_context_not_visible')
     if not rendered_affiliation:
         value['non_faculty_purpose'] = False
-    # Proof must bind the page after all witness visibility reads as well.
-    stable = scope.get('dom_stable') is True and digest(await page.content()) == value['source_html_sha256']
-    value.update(dom_stable=stable, network_idle=scope.get('network_idle') is True,
-                 witness_visible=visible, confirmed=bool(scope.get('confirmed') and stable and visible
+    value.update(source_html_sha256=digest(final_html), dom_stable=stable, network_idle=network_idle,
+                 witness_visible=visible, confirmed=bool(scope.get('confirmed') and stable and visible and network_idle
                                                        and value['role_supported']))
+    value['final_witness_facts_sha256'] = digest(json.dumps(snapshot['rows'], sort_keys=True))
+    if extra_witness_selectors:
+        value['extra_witness_selectors'] = list(extra_witness_selectors)
+        value['extra_witness_facts'] = snapshot['rows'][3:]
+    value['source_request_evidence'] = {'current_failures': list(tracker.failed_requests),
+        'previous_navigation_failures': recurring, 'server_rendered_content': scope.get('server_rendered_content'),
+        'scope_blocking_failed_requests': scope.get('blocking_failed_request_count'),
+        'scope_blocking_pending_requests': scope.get('blocking_pending_request_count'),
+        'scope_network_idle': scope.get('network_idle'), 'final_network_idle': network_idle,
+        'final_non_image_activity_delta': tracker.activity - tracker.image_activity - read_activity,
+        'final_pending_requests': [(getattr(request, 'url', ''), getattr(request, 'resource_type', ''))
+                                   for request in tracker.pending],
+        'main_document_url': getattr(tracker.document_response, 'url', None),
+        'main_document_status': getattr(tracker.document_response, 'status', None)}
+    if not scope.get('confirmed'):
+        value['source_scope_issue'] = scope.get('reason') or scope.get('scope_issue')
+        value['source_scope_blocking_requests'] = scope.get('blocking_requests', [])
+    elif not network_idle:
+        value['source_scope_issue'] = 'network_activity_changed'
     value['proof_sha256'] = digest(json.dumps(value, sort_keys=True, ensure_ascii=False))
     if local_capture is not None:
-        local_capture.update(html=html)
+        local_capture.update(html=final_html)
     return value
 
 
-def source_event_proof(branch: dict, events: list[dict]) -> dict | None:
-    """Accept only the dedicated browser call matching this exact claim."""
-    if not source_claim_valid(branch):
+async def verify_source(page, branch: dict, target: dict, *, local_capture: dict | None = None) -> dict:
+    """Prove this source; at most one canonical faculty-root read can bind pagination."""
+    capture = {}
+    value = await _verify_source_here(page, branch, target, local_capture=capture)
+    path = value.get('faculty_group_path')
+    ready = all(value.get(key) is True for key in (
+        'college_bound', 'units_within_scope', 'witness_visible', 'dom_stable', 'network_idle'))
+    if (not value['confirmed'] and ready and branch['source_role'] == 'faculty_roster'
+            and path and path['root_url'] != page.url):
+        import asyncio
+        from server.source_navigation import read_pagination_parent
+        related = {'related_sources': [], 'root_observation': {'url': path['root_url']}}
+        try:
+            related = await asyncio.wait_for(read_pagination_parent(
+                page, branch, target, path, local_capture=related), timeout=30)
+        except TimeoutError:
+            related['reason'] = 'pagination_parent_timeout'
+        if related.get('relationship'):
+            value = related['current_proof']
+            capture['html'] = related['html']
+            value.update(pagination_relationship=related['relationship'], role_supported=True, confirmed=True)
+            value.pop('reason', None)
+        else:
+            value['pagination_relationship_issue'] = related.get('reason', 'pagination_relationship_unverified')
+            value['pagination_parent_observation'] = related.get('root_observation', {})
+        capture['related_sources'] = related.get('related_sources', [])
+        value['proof_sha256'] = digest(json.dumps(value, sort_keys=True, ensure_ascii=False))
+    if local_capture is not None:
+        local_capture.update(capture)
+    return value
+
+
+def read_source_packet(packet: dict | None) -> dict | None:
+    """Expand the browser-owned hashed source packet, preserving all proof fields."""
+    if not isinstance(packet, dict):
         return None
-    calls, candidate = {}, None
+    if 'full_source_result' not in packet:
+        return packet
+    reference = packet['full_source_result']
+    if (not isinstance(reference, dict) or set(reference) != {'sha256', 'evidence_path'}
+            or not re.fullmatch(r'[a-f0-9]{64}', str(reference.get('sha256', '')))
+            or not isinstance(reference.get('evidence_path'), str)):
+        return None
+    from pathlib import Path
+    path = Path(reference['evidence_path'])
+    try:
+        if path.suffix != '.json' or path.stat().st_size > 1024 * 1024:
+            return None
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != reference['sha256']:
+            return None
+        value = json.loads(raw)
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) and 'full_source_result' not in value else None
+
+
+def _source_observations(branch: dict, events: list[dict]):
+    """Yield calls in initiation order, retaining failed/incomplete latest calls."""
+    if not source_claim_valid(branch):
+        return
+    calls, ordered, current_url = {}, [], None
     for event in events:
         data = event.get('data') or {}
-        if event.get('type') == 'tool/call' and data.get('name') == 'mcp__playwright__browser_verify_source':
+        if event.get('type') == 'tool/call':
             try:
-                calls[data['callId']] = json.loads(data.get('arguments') or '{}')
+                args = json.loads(data.get('arguments') or '{}')
             except (ValueError, KeyError):
                 continue
+            if not isinstance(args, dict):
+                continue
+            name = data.get('name')
+            if name == 'mcp__playwright__browser_navigate':
+                current_url = args.get('url')
+            entry = {'args': args, 'name': name, 'url': data.get('source_url') or current_url,
+                     'proof': None, 'observation': None, 'error': False, 'complete': False}
+            calls[data.get('callId')] = entry
+            if name == 'mcp__playwright__browser_verify_source' and all(
+                    args.get(key) == branch[key] for key in SOURCE_FIELDS):
+                ordered.append(entry)
         elif event.get('type') == 'tool/result':
             for block in (data.get('message') or {}).get('content', []):
-                args = calls.get(block.get('toolCallId'))
-                if args is None or block.get('isError'):
+                entry = calls.get(block.get('toolCallId'))
+                if entry is None:
                     continue
+                entry.update(complete=True, error=block.get('isError') is True)
                 for item in block.get('content', []):
                     if item.get('type') != 'text':
                         continue
                     try:
-                        proof = json.loads(item['text'])
+                        value = json.loads(item['text'])
                     except (ValueError, KeyError):
                         continue
-                    if not isinstance(proof, dict) or not isinstance(args, dict):
+                    if not isinstance(value, dict):
                         continue
-                    if (proof.get('url') == branch['url']
-                            and all(args.get(key) == branch[key] for key in SOURCE_FIELDS)):
-                        candidate = None
-                    unit = source_unit_selector(branch)
-                    if (proof.get('url') == branch['url'] and proof.get('confirmed') is True
-                            and all(args.get(key) == branch[key] == proof.get(key) for key in SOURCE_FIELDS)
-                            and (not unit or (args.get('unit_selector') == unit
-                                              and proof.get('unit_selector') == unit and proof.get('units_within_scope') is True))
-                            and all(proof.get(key) is True for key in ('role_supported', 'witness_visible', 'dom_stable', 'network_idle'))
-                            and all(re.fullmatch(r'[0-9a-f]{64}', str(proof.get(key, ''))) for key in (
-                                'source_html_sha256', 'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256'))):
-                        candidate = proof
+                    if entry['name'] == 'mcp__playwright__browser_survey':
+                        visits = value.get('pages') or []
+                        current_url = (visits[-1].get('url') if isinstance(visits, list) and visits
+                                       and isinstance(visits[-1], dict) else None)
+                    if entry['name'] == 'mcp__playwright__browser_verify_source':
+                        entry['url'] = value.get('source_call_url') or entry['url'] or value.get('url')
+                        expanded = read_source_packet(value)
+                        if expanded is None:
+                            entry['observation'] = value
+                            continue
+                        value = expanded
+                    if value.get('url'):
+                        current_url = value['url']
+                    if entry['name'] == 'mcp__playwright__browser_verify_source':
+                        entry['url'] = value.get('source_call_url') or entry['url'] or value.get('url')
+                        entry['observation'] = value
+                        if not entry['error']:
+                            entry['proof'] = value
+    for entry in ordered:
+        if entry['url'] == branch['url']:
+            yield entry['args'], entry['proof'], entry
+
+
+def source_event_proof(branch: dict, events: list[dict]) -> dict | None:
+    """Accept only the latest dedicated browser call matching this exact claim."""
+    candidate = None
+    unit = source_unit_selector(branch)
+    for args, proof, _ in _source_observations(branch, events):
+        candidate = None
+        if not isinstance(proof, dict) or proof.get('url') != branch.get('url'):
+            continue
+        if (proof.get('confirmed') is True and proof.get('source_evidence_version') == SOURCE_EVIDENCE_VERSION
+                and all(branch[key] == proof.get(key) for key in SOURCE_FIELDS)
+                and (not unit or (args.get('unit_selector') == unit
+                                  and proof.get('unit_selector') == unit and proof.get('units_within_scope') is True))
+                and all(proof.get(key) is True for key in ('role_supported', 'witness_visible', 'dom_stable', 'network_idle'))
+                and all(re.fullmatch(r'[0-9a-f]{64}', str(proof.get(key, ''))) for key in (
+                    'source_html_sha256', 'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256'))):
+            candidate = proof
     return candidate
 
 
 def source_event_issues(branch: dict, events: list[dict]) -> list[dict]:
     if source_event_proof(branch, events) is not None:
         return []
-    return [{'url': branch.get('url'), 'status': 'source_role_evidence_unverified',
+    observations = list(_source_observations(branch, events))
+    issue = {'url': branch.get('url'), 'status': 'source_role_evidence_unverified',
              'failed_condition': 'current_source_role_proof_missing',
-             'need': 'Use browser_verify_source with this exact role and witness selectors plus the current unit_selector. '
-                     'Observe the actual title/current navigation and separate school/college context. '
-                     'If faculty relationship cannot be proved, retain the source as organizational_membership or unverified_people_source.'}]
+             'need': 'Use browser_verify_source with this exact role, witness selectors and unit_selector. '
+                     'Use the failed conditions to correct CSS, affiliation or the current purpose/navigation scope; '
+                     'retry access only when the actual request or DOM facts changed. '
+                     'An unrecognized purpose is still unknown, not proof of a non-faculty page. '
+                     'Keep its original and unresolved scope while processing other supported sources.'}
+    if observations:
+        args, proof, call = observations[-1]
+        if not isinstance(proof, dict) or proof.get('url') != branch.get('url'):
+            condition = ('source_verification_tool_failed' if call['error'] else
+                         'source_verification_reply_invalid' if call['complete'] else 'source_verification_incomplete')
+            issue.update(failed_condition=condition, failed_conditions=[condition])
+            if isinstance(call['observation'], dict):
+                issue['closest_observation'] = {key: call['observation'][key] for key in (
+                    'url', 'source_call_url', *SOURCE_FIELDS, 'unit_selector', 'status', 'error_type',
+                    'source_html_sha256', 'original_path', 'evidence_path') if key in call['observation']}
+            return [issue]
+        failures = []
+        if proof.get('source_evidence_version') != SOURCE_EVIDENCE_VERSION:
+            failures.append('source_evidence_version_mismatch')
+        if not all(proof.get(key) == branch[key] for key in SOURCE_FIELDS):
+            failures.append('current_source_parameter_binding_missing')
+        unit = source_unit_selector(branch)
+        if unit and (args.get('unit_selector') != unit or proof.get('unit_selector') != unit):
+            failures.append('current_source_unit_binding_missing')
+        if proof.get('units_within_scope') is False:
+            failures.append('source_units_outside_scope')
+        for fact, condition in (
+                ('witness_visible', 'source_witness_not_visible'),
+                ('college_bound', 'target_institution_unverified'),
+                ('role_supported', 'faculty_relationship_unverified'),
+                ('dom_stable', 'source_dom_unstable'),
+                ('network_idle', 'source_network_not_idle')):
+            if proof.get(fact) is not True:
+                failures.append(condition)
+        if not all(re.fullmatch(r'[0-9a-f]{64}', str(proof.get(key, ''))) for key in (
+                'source_html_sha256', 'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256')):
+            failures.append('source_snapshot_binding_missing')
+        failures = failures or [proof.get('source_scope_issue') or 'source_scope_unverified']
+        issue.update(failed_condition=failures[0], failed_conditions=failures,
+            closest_observation={key: proof[key] for key in (
+                'url', 'source_evidence_version', *SOURCE_FIELDS, 'unit_selector', 'scope_count', 'role_count', 'context_count',
+                'units_within_scope', 'college_bound', 'title_bound', 'current_link_bound', 'role_supported',
+                'witness_visible', 'dom_stable', 'network_idle', 'confirmed', 'reason', 'source_context_issue',
+                'source_scope_issue', 'pagination_relationship_issue', 'faculty_group_path', 'source_html_sha256',
+                'selected_scope_sha256', 'role_scope_sha256', 'context_scope_sha256',
+                'original_path', 'evidence_path') if key in proof})
+    return [issue]
 
 
 async def capture_source_dispositions(context, plan: dict, output_dir) -> tuple[list[dict], list[dict]]:

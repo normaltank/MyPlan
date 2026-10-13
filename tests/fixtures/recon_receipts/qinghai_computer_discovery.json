@@ -1,0 +1,19 @@
+{
+  "plan": {
+    "branches": [
+      {
+        "role_evidence_selector": "div.erji-title h1.fl",
+        "source_container_selector": "div.erji-content > div.erji-title",
+        "source_context_selector": "div#header .logo.fl",
+        "source_role": "faculty_roster",
+        "url": "https://jsj.qhnu.edu.cn/szdw1/fjs.htm"
+      }
+    ],
+    "college": "计算机学院",
+    "school": "青海师范大学"
+  },
+  "receipt": {
+    "accepted": true,
+    "digest": "8620b0b245640848c9b5c1ab6e3c5a7f27797e65bd97d16e1f648c1cf55a62f3"
+  }
+}
