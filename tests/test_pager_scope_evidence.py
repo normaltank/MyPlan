@@ -14,6 +14,45 @@ PAGE = '''<div id="wp_news_w7"><ul><li>张伟</li><li>李明</li></ul></div>
 <li class="page_jump"><em class="curr_page">1</em><em class="all_pages">1</em></li>
 </ul></div>'''
 
+
+@pytest.mark.browser
+@pytest.mark.asyncio
+@pytest.mark.parametrize('inside', [False, True])
+async def test_pending_image_is_scoped_to_the_roster_and_pager(inside):
+    import asyncio
+    from playwright.async_api import async_playwright
+    from server.browser_readiness import install_request_tracking
+    from server.pager_evidence import scoped_terminal_pagers, terminal_pagers
+    image = '<img src="/portrait.png">'
+    html = PAGE.replace('张伟</li>', '张伟' + image + '</li>') if inside else PAGE + image
+    release = asyncio.Event()
+    requested = asyncio.Event()
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        context = await browser.new_context()
+        async def route(request):
+            if request.request.url.endswith('/portrait.png'):
+                requested.set()
+                await release.wait()
+                await request.fulfill(body='', content_type='image/png')
+            else:
+                await request.fulfill(body=html, content_type='text/html; charset=utf-8')
+        await context.route('**/*', route)
+        page = await context.new_page()
+        install_request_tracking(page)
+        await page.goto(URL, wait_until='domcontentloaded')
+        await requested.wait()
+        try:
+            [legacy] = await terminal_pagers(page, SELECTOR)
+            assert not legacy['confirmed']
+            [proof] = await scoped_terminal_pagers(page, SELECTOR)
+            assert proof['confirmed'] is (not inside)
+            if not inside:
+                assert all(sample['ignored_pending_images'] for sample in proof['request_scope_evidence']['samples'])
+        finally:
+            release.set()
+            await browser.close()
+
 CONTROLLER_PAGE = PAGE.replace('<a class="next"', '<a class="first" href="javascript:void(0)"></a>'
     '<a class="prev" href="javascript:void(0)"></a><a class="last" href="javascript:void(0)"></a><a class="next"').replace(
     '<li class="page_jump">','<li class="page_jump"><input class="pageNum"><a class="pagingJump" href="javascript:void(0)">jump</a>') + '''

@@ -132,6 +132,8 @@ class TypeDefinition:
     stage_probe: Callable[..., Any] | None = None
     evidence_validator: Callable[..., bool] | None = None
     evidence_contract: str = ''
+    # Reviewed repository code only; this field is never accepted from a plan.
+    source_dependencies: tuple[str, ...] = ()
 
 
 _REGISTRY: dict[tuple[str, int], TypeDefinition] = {}
@@ -173,6 +175,10 @@ def register_type(definition: TypeDefinition) -> None:
         raise ValueError('page type stage evidence requires probe, validator and contract')
     if inspect.iscoroutinefunction(definition.evidence_validator):
         raise ValueError('page type evidence validator must be synchronous')
+    if (type(definition.source_dependencies) is not tuple
+            or any(not isinstance(name, str) or not re.fullmatch(r'server/[A-Za-z0-9_/]+\.py', name)
+                   or not (_REPO_ROOT / name).is_file() for name in definition.source_dependencies)):
+        raise ValueError('page type dependencies must be existing reviewed server source files')
     key = (definition.type_id, definition.implementation_version)
     if key in _REGISTRY:
         raise ValueError('page type version is already registered')
@@ -428,6 +434,8 @@ def _definition_sources(definition: TypeDefinition) -> dict[str, Path]:
             # Absolute keys prevent unrelated external modules colliding by basename.
             key = str(path)
         paths[key] = path
+    for name in definition.source_dependencies:
+        paths[name] = _REPO_ROOT / name
     return paths
 
 
@@ -686,3 +694,7 @@ _register_rank_grid()
 from server.page_stage_types import register as _register_page_stages  # noqa: E402
 
 _register_page_stages()
+
+from server.page_single_page_v2 import register as _register_single_page_v2  # noqa: E402
+
+_register_single_page_v2()

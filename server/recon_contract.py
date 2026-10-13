@@ -33,7 +33,8 @@ class RosterFields(SourceFields):
     source_kind: Source | None = None
     card_selector: Selector | None = None
     single_page: bool | None = Field(default=None, description=(
-        "Use true only after browser_verify reports pagination_termination.confirmed; "
+        "Use true only after browser_verify reports pagination_termination.confirmed, or the exact "
+        "selected pagination version passes browser_verify_stage; "
         "pagination.total is a candidate count, not completion evidence."))
     next_selector: Selector | None = None
     max_pages: Count | None = None
