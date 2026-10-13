@@ -39,7 +39,7 @@
 | roster.cards、roster.segmented、roster.image_table | 旧卡片／媒体读取、分段平铺、图片表格；segmented、image_table 与严格空态须各自精确 legacy roster@1 |
 | pagination.single_page、pagination.next_control | 旧单页或 next 控件；single_page 仍需真实终止证明 |
 | [pagination.single_page@2](../../server/page_single_page_v2.py) | 普通 DOM 名单与 WebPlus 原生分页共享 widget ID，页码／总数一致的单页；实际点击前进控件并保存三次请求范围及名单／分页／widget 摘要。只允许明确绑定到两个范围之外的待加载 img；范围内图片、未知请求、脚本异常、文档或名单变化均不通过。必须用 browser_verify_stage 实际执行并绑定当前版本；不会升级旧计划，不支持图片表格、分段、空态或 initial_click_selector |
-| [pagination.single_page@3](../../server/page_single_page_v3.py)（本地候选，未发布） | 延续 @2 的普通单页 WebPlus 合同；另在可定位的 DOM／受支持 CSS 引用全部处于 news widget、pager 及其祖先之外时，处理永久失败图片。必须保存 CSS 正文／CSSOM 与三次引用样本，并实际探测服务器绑定的分页控制器；隐藏／伪元素／状态引用也检查。范围未知、复杂或不可读 CSS、脚本／XHR／文档失败仍不通过。边界及原件见 [失败图片候选记录](../audits/2026-10-13-sanming-failed-image-scope.md) |
+| [pagination.single_page@3](../../server/page_single_page_v3.py) | 延续 @2 的普通单页 WebPlus 合同；另在可定位的 DOM／受支持 CSS 引用全部处于 news widget、pager 及其祖先之外时，处理永久失败图片。必须保存 CSS 正文／CSSOM 与三次引用样本，并实际探测服务器绑定的分页控制器；隐藏／伪元素／状态引用也检查。范围未知、native background 属性、复杂或不可读 CSS、脚本／XHR／文档失败仍不通过。精确候选、验证及发布边界见 [失败图片维护记录](../audits/2026-10-13-sanming-failed-image-scope.md) |
 | detail.profile | 旧个人页读取与正文范围证明 |
 | [roster.rank_grid](../../server/page_type_rank_grid.py) | 按明确职称组、唯一标题起点和名单单元独立解析，单元可多人；每人链接按自身 anchor 归属。未知职称／token／结构及同页同名同主页多位置保留未解决，不调用旧 cards parser 代替 |
 | [entrance.scoped_links](../../server/page_stage_types.py) | 当前已加载 navigation DOM 中选定容器的可见同站 descendant anchors；保留完整来源集合，需无未证明父分页，不是任意动态栏目遍历 |
