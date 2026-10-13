@@ -190,9 +190,9 @@ async def test_gate_ends_the_session_when_every_failure_is_a_page_fact(tmp_path)
 def test_harness_watch_keeps_the_last_rejection_and_raises_the_stop():
     rejections, calls = {}, set()
     issue = {"path": "$", "status": "profile_content_not_verified", "url": URL, "page_only": True}
-    def reply(value, cid="s1"):
+    def reply(value, cid="s1", *, is_error=True):
         return [{"type": "tool/call", "data": {"callId": cid, "name": "mcp__playwright__submit_plan"}},
-                {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": cid, "isError": True,
+                {"type": "tool/result", "data": {"message": {"content": [{"toolCallId": cid, "isError": is_error,
                  "content": [{"type": "text", "text": json.dumps(value)}]}]}}}]
     for item in reply({"accepted": False, "issues": [issue]}):
         assert _watch_gate(item, calls, rejections, "sid") is None
@@ -201,7 +201,7 @@ def test_harness_watch_keeps_the_last_rejection_and_raises_the_stop():
             for item in reply({"accepted": False, "issues": [issue], "stop": "recon_page_unverifiable"}, "s2")][-1]
     assert isinstance(stop, ReconGateStopped) and isinstance(stop, ReconPlanError)
     assert stop.safe_feedback == {"issues": [{"status": "recon_page_unverifiable", "url": URL, "gate_issues": [issue]}]}
-    for item in reply({"accepted": True, "digest": "x"}, "s3"):
+    for item in reply({"accepted": True, "digest": "x"}, "s3", is_error=False):
         _watch_gate(item, calls, rejections, "sid")
     assert rejections == {}
     error = SimpleNamespace(diagnostics={"last_gate_rejections": [{"session_id": "sid", "issues": [

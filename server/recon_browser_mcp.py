@@ -245,6 +245,27 @@ class BrowserScout:
                 "evidence_path": str(evidence), "retry": "Use a narrower container, smaller limit, or compact JS result."})
         return {"content": [{"type": "text", "text": full}], "isError": False}
 
+    def submission_result(self, value: dict) -> dict:
+        """Preserve rejection controls and a readable preview under the tool limit."""
+        encoded = json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        if value.get('accepted') is not False or len(encoded) <= MAX_INLINE_BYTES:
+            return self.text_result(value)
+        from server.recon_contract import SUBMISSION_CONTROL_FIELDS, compact_submission_issue
+        original = self.save('json', encoded)
+        issues = value['issues']
+        preview = {key: value[key] for key in SUBMISSION_CONTROL_FIELDS if key in value}
+        preview.update(issues=[], issue_count=len(issues), issues_truncated=True, full_submission_result={
+            'sha256': hashlib.sha256(encoded).hexdigest(), 'evidence_path': str(original)})
+        for issue in issues:
+            preview['issues'].append(compact_submission_issue(issue))
+            preview['issues_truncated'] = len(preview['issues']) < len(issues)
+            if len(json.dumps(preview, ensure_ascii=False, separators=(',', ':')).encode('utf-8')) > MAX_INLINE_BYTES:
+                preview['issues'].pop()
+                preview['issues_truncated'] = True
+                break
+        return {'content': [{'type': 'text', 'text': json.dumps(preview, ensure_ascii=False, separators=(',', ':'))}],
+                'isError': False}
+
     async def snapshot(self) -> None:
         html = await self.page.content()
         digest = hashlib.sha256(html.encode("utf-8")).hexdigest()
@@ -260,7 +281,7 @@ class BrowserScout:
             from server.recon_contract import plan_digest, validate_submission
             plan = arguments.get("plan")
             if self._dom_modified:
-                return {**self.text_result({"accepted": False, "issues": [
+                return {**self.submission_result({"accepted": False, "issues": [
                     {"path": "$", "status": "browser_dom_modified"}]}), "isError": True}
             from server.recon_progress import observation_fingerprint
             issues = validate_submission(plan, self.phase, self.target, self.events)
@@ -277,7 +298,7 @@ class BrowserScout:
                                   "Collect the proof each issue's need names before submitting again."}
                 if repetitions >= UNCHANGED_RESUBMISSIONS_STOP:
                     reply["stop"] = "recon_gate_stalled"
-                return {**self.text_result(reply), "isError": True}
+                return {**self.submission_result(reply), "isError": True}
             if issues:
                 self._rejections[key] = (len(self._rejections) + 1, issues, 0)
                 reply = {"accepted": False, "submission": len(self._rejections), "issues": issues,
@@ -286,7 +307,7 @@ class BrowserScout:
                 if all(item.get("page_only") for item in issues):
                     # Every failure is a page fact seen on two opens; no plan passes it.
                     reply["stop"] = "recon_page_unverifiable"
-                return {**self.text_result(reply), "isError": True}
+                return {**self.submission_result(reply), "isError": True}
         cid = str(len(self.events))
         source_url = self.page.url if name == 'browser_verify_source' else None
         call_data = {'callId': cid, 'name': 'mcp__playwright__' + name,

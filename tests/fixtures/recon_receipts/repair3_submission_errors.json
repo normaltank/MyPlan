@@ -1,0 +1,161 @@
+{
+  "commit": "e83a67b46cdc7b7a5f0e4bd0bc646dce60cc13a1",
+  "cases": [
+    {
+      "session_id": "recon-b072291dd18e-discover",
+      "transcript_sha256": "cd496d7071927170532b1ef0e512c2ba6c0b6839c54b70965c14abefddee513b",
+      "events": [
+        {
+          "type": "tool/call",
+          "seq": 334,
+          "time": 1791857937571,
+          "data": {
+            "turn": 1,
+            "step": 65,
+            "callId": "call_00_XW3ccYlnsZV1mBr68v5f8714",
+            "name": "mcp__playwright__submit_plan",
+            "arguments": "{\"plan\": {\"branches\": [{\"role_evidence_selector\": \"div.biaoTi\", \"source_container_selector\": \"div.wape-right ul.ss\", \"source_context_selector\": \"div.foot\", \"source_role\": \"faculty_roster\", \"url\": \"https://jmx.czu.edu.cn/szdw/jsml.htm\"}], \"college\": \"商学院\", \"school\": \"池州学院\"}}"
+          }
+        },
+        {
+          "type": "tool/result",
+          "seq": 335,
+          "time": 1791857937584,
+          "data": {
+            "turn": 1,
+            "step": 65,
+            "message": {
+              "source": {
+                "kind": "tool",
+                "callId": "call_00_XW3ccYlnsZV1mBr68v5f8714"
+              },
+              "content": [
+                {
+                  "type": "tool-result",
+                  "toolCallId": "call_00_XW3ccYlnsZV1mBr68v5f8714",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Error: {\"accepted\":false,\"submission\":3,\"issues\":[{\"path\":\"$\",\"status\":\"queued_target_changed\"}],\"retry\":\"Each issue names its url, failed_condition, closest observation and the proof it still needs: collect that proof in the browser, then resubmit.\"}"
+                    }
+                  ],
+                  "isError": true
+                }
+              ],
+              "role": "user",
+              "id": "15430ee1-ff11-4e48-9ab5-bbf2b0f38c97"
+            }
+          },
+          "sourceEventSeqs": [
+            334
+          ],
+          "surfaceOp": "append"
+        }
+      ]
+    },
+    {
+      "session_id": "recon-535b7b69fd5c-discover",
+      "transcript_sha256": "c22ef27909b94507f9b8bbdb73fc1c71a1a182380badded28b5d50a51895aff3",
+      "events": [
+        {
+          "type": "tool/call",
+          "seq": 429,
+          "time": 1791858364352,
+          "data": {
+            "turn": 1,
+            "step": 84,
+            "callId": "call_00_4GELj53MtUIwz97F4MYG0295",
+            "name": "mcp__playwright__submit_plan",
+            "arguments": "{\"plan\": {\"branches\": [{\"role_evidence_selector\": \".arti_title\", \"source_container_selector\": \".wp_articlecontent\", \"source_context_selector\": \".wrapper.header, .wrapper.footer-top\", \"source_role\": \"faculty_roster\", \"url\": \"https://www.fjsmu.edu.cn/jzgcxynew/2026/0625/c4592a183129/page.htm\"}], \"college\": \"建筑工程学院\", \"school\": \"三明学院\", \"source_dispositions\": [{\"reason\": \"source_unreadable\", \"url\": \"https://www.fjsmu.edu.cn/jzgcxynew/\"}]}}"
+          }
+        },
+        {
+          "type": "tool/result",
+          "seq": 430,
+          "time": 1791858364510,
+          "data": {
+            "turn": 1,
+            "step": 84,
+            "message": {
+              "source": {
+                "kind": "tool",
+                "callId": "call_00_4GELj53MtUIwz97F4MYG0295"
+              },
+              "content": [
+                {
+                  "type": "tool-result",
+                  "toolCallId": "call_00_4GELj53MtUIwz97F4MYG0295",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Error: {\"accepted\":false,\"submission\":2,\"issues\":[{\"failed_condition\":\"access_failure_not_observed\",\"closest_observation\":{\"url\":\"https://www.fjsmu.edu.cn/jzgcxynew/\",\"requested_url\":\"https://www.fjsmu.edu.cn/jzgcxynew/\",\"status\":200,\"source_html_sha256\":\"7ffe04faec67161cca2113eefb012983981cd653f749f5626793c58627f27cb6\",\"original_path\":\"C:\\\\Users\\\\27451\\\\.codex\\\\worktrees\\\\autonomous-type-library\\\\MyPlan\\\\.runtime\\\\frozen-source-e83a67b\\\\server\\\\outputs\\\\recon-evidence\\\\recon-535b7b69fd5c-discover\\\\67e5456785594a7690d1c78c26c6abe9\\\\0248.source.html\"},\"need\":\"Open this source in the browser and retain its actual access result and original. source_unreadable requires an observed error or HTTP failure; an unresolved readable source requires its captured original. Preserve the unknown scope.\",\"url\":\"https://www.fjsmu.edu.cn/jzgcxynew/\",\"reason\":\"source_unreadable\",\"status\":\"source_disposition_unverified\"},{\"path\":\"$.branches[0]\",\"url\":\"https://www.fjsmu.edu.cn/jzgcxynew/2026/0625/c4592a183129/page.htm\",\"status\":\"source_role_evidence_unverified\",\"failed_condition\":\"target_institution_unverified\",\"need\":\"Use browser_verify_source with this exact role, witness selectors and unit_selector. Use the failed conditions to correct CSS, affiliation or the current purpose/navigation scope; retry access only when the actual request or DOM facts changed. An unrecognized purpose is still unknown, not proof of a non-faculty page. Keep its original and unresolved scope while processing other supported sources.\",\"failed_conditions\":[\"target_institution_unverified\",\"faculty_relationship_unverified\"],\"closest_observation\":{\"url\":\"https://www.fjsmu.edu.cn/jzgcxynew/2026/0625/c4592a183129/page.htm\",\"source_evidence_version\":2,\"source_context_selector\":\".wrapper.header, .wrapper.footer-top\",\"role_evidence_selector\":\".arti_title\",\"source_container_selector\":\".wp_articlecontent\",\"source_role\":\"faculty_roster\",\"unit_selector\":null,\"scope_count\":1,\"role_count\":1,\"context_count\":2,\"units_within_scope\":true,\"college_bound\":false,\"title_bound\":true,\"current_link_bound\":false,\"role_supported\":false,\"witness_visible\":true,\"dom_stable\":true,\"network_idle\":true,\"confirmed\":false,\"reason\":\"source_context_not_visible\",\"source_context_issue\":null,\"faculty_group_path\":null,\"source_html_sha256\":\"0e360e07d85fa345299f9e048888c159ff30e5f99c27cd5ab26d8eb057c97e78\",\"selected_scope_sha256\":\"87c570f45e31ae6ebb0af4b3fdd02fda5fbc814d0fe44385aa5c0da6ffc403a1\",\"role_scope_sha256\":\"5fd472965fc3bd61af6cea791c45c978f5429c42ac2f87931aa8176316ac67fd\",\"context_scope_sha256\":\"c8821b1785a2748e8c30f43f437125bc4ff20885a05c23eecd94074332d1259b\",\"original_path\":\"C:\\\\Users\\\\27451\\\\.codex\\\\worktrees\\\\autonomous-type-library\\\\MyPlan\\\\.runtime\\\\frozen-source-e83a67b\\\\server\\\\outputs\\\\recon-evidence\\\\recon-535b7b69fd5c-discover\\\\67e5456785594a7690d1c78c26c6abe9\\\\0328.source.html\",\"evidence_path\":\"C:\\\\Users\\\\27451\\\\.codex\\\\worktrees\\\\autonomous-type-library\\\\MyPlan\\\\.runtime\\\\frozen-source-e83a67b\\\\server\\\\outputs\\\\recon-evidence\\\\recon-535b7b69fd5c-discover\\\\67e5456785594a7690d1c78c26c6abe9\\\\0329.source-witness.json\"}}],\"retry\":\"Each issue names its url, failed_condition, closest observation and the proof it still needs: collect that proof in the browser, then resubmit.\"}"
+                    }
+                  ],
+                  "isError": true
+                }
+              ],
+              "role": "user",
+              "id": "aa46b86e-9acb-4874-9c5c-862c54f036bb"
+            }
+          },
+          "sourceEventSeqs": [
+            429
+          ],
+          "surfaceOp": "append"
+        }
+      ]
+    },
+    {
+      "session_id": "recon-c10ecbbae233-discover",
+      "transcript_sha256": "0801fadabc396e67b1108c0ea0ccff1f95a5a2fdbcfed9d14f2236fc1b43dc20",
+      "events": [
+        {
+          "type": "tool/call",
+          "seq": 394,
+          "time": 1791859200900,
+          "data": {
+            "turn": 1,
+            "step": 77,
+            "callId": "call_00_3QPuF0eUcpHIEpQb69ZY1954",
+            "name": "mcp__playwright__submit_plan",
+            "arguments": "{\"plan\": {\"branches\": [], \"college\": \"经济与管理学院\", \"school\": \"三明学院\", \"source_dispositions\": [{\"reason\": \"source_relationship_unverified\", \"role_evidence_selector\": \"span.Column_Position\", \"source_container_selector\": \"ul.wp_article_list\", \"source_context_selector\": \".container.logo, footer.footer\", \"source_role\": \"unverified_people_source\", \"url\": \"https://glxy.fjsmu.edu.cn/lyglx/list.htm\"}]}}"
+          }
+        },
+        {
+          "type": "tool/result",
+          "seq": 395,
+          "time": 1791859200968,
+          "data": {
+            "turn": 1,
+            "step": 77,
+            "message": {
+              "source": {
+                "kind": "tool",
+                "callId": "call_00_3QPuF0eUcpHIEpQb69ZY1954"
+              },
+              "content": [
+                {
+                  "type": "tool-result",
+                  "toolCallId": "call_00_3QPuF0eUcpHIEpQb69ZY1954",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Error: {\"accepted\":false,\"submission\":6,\"issues\":[{\"url\":\"https://glxy.fjsmu.edu.cn/lyglx/list.htm\",\"status\":\"source_disposition_unverified\",\"failed_condition\":\"source_witness_not_visible\",\"need\":\"Use browser_verify_source with this exact role, witness selectors and unit_selector. Use the failed conditions to correct CSS, affiliation or the current purpose/navigation scope; retry access only when the actual request or DOM facts changed. An unrecognized purpose is still unknown, not proof of a non-faculty page. Keep its original and unresolved scope while processing other supported sources.\",\"failed_conditions\":[\"source_witness_not_visible\",\"target_institution_unverified\"],\"closest_observation\":{\"url\":\"https://glxy.fjsmu.edu.cn/lyglx/list.htm\",\"source_evidence_version\":2,\"source_context_selector\":\".container.logo, footer.footer\",\"source_role\":\"unverified_people_source\",\"source_container_selector\":\"ul.wp_article_list\",\"role_evidence_selector\":\"span.Column_Position\",\"unit_selector\":null,\"scope_count\":1,\"role_count\":1,\"context_count\":2,\"units_within_scope\":true,\"college_bound\":false,\"title_bound\":true,\"current_link_bound\":true,\"role_supported\":true,\"witness_visible\":false,\"dom_stable\":true,\"network_idle\":true,\"confirmed\":false,\"source_context_issue\":null,\"source_scope_issue\":\"hidden_content\",\"source_html_sha256\":\"3410ecb730b732cbc469e66a6afc6fdd87cdddb89a219f1cad35212e725c237e\",\"selected_scope_sha256\":\"b87bea5ccae9daa8d3f308f633fbdf2e0caf3c19a2ee9d8433918e6b3434558e\",\"role_scope_sha256\":\"3288dda970e8d5c15378f83a6ed422d951ddf9645850b5462d6b70d8a94833eb\",\"context_scope_sha256\":\"0612b1545c736ad1f9faceb0334fa768ea36d8b2cd1cdaf1658b8c04c920a7f3\",\"original_path\":\"C:\\\\Users\\\\27451\\\\.codex\\\\worktrees\\\\autonomous-type-library\\\\MyPlan\\\\.runtime\\\\frozen-source-e83a67b\\\\server\\\\outputs\\\\recon-evidence\\\\recon-c10ecbbae233-discover\\\\a7cefa30c3f54721b9b9dc06133c20f1\\\\0311.source.html\",\"evidence_path\":\"C:\\\\Users\\\\27451\\\\.codex\\\\worktrees\\\\autonomous-type-library\\\\MyPlan\\\\.runtime\\\\frozen-source-e83a67b\\\\server\\\\outputs\\\\recon-evidence\\\\recon-c10ecbbae233-discover\\\\a7cefa30c3f54721b9b9dc06133c20f1\\\\0312.source-witness.json\"},\"reason\":\"source_relationship_unverified\"}],\"retry\":\"Each issue names its url, failed_condition, closest observation and the proof it still needs: collect that proof in the browser, then resubmit.\"}"
+                    }
+                  ],
+                  "isError": true
+                }
+              ],
+              "role": "user",
+              "id": "b777cb97-bf5a-409e-a915-e8f371550fc9"
+            }
+          },
+          "sourceEventSeqs": [
+            394
+          ],
+          "surfaceOp": "append"
+        }
+      ]
+    }
+  ]
+}

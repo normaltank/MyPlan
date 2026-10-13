@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, TypeAdapter, model_validator
@@ -142,6 +143,65 @@ def submission_schema(phase: str) -> dict:
 def plan_digest(plan: Any) -> str:
     return hashlib.sha256(json.dumps(plan, sort_keys=True, ensure_ascii=False,
                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+SUBMISSION_CONTROL_FIELDS = ('accepted', 'submission', 'unchanged_resubmission', 'stop', 'retry')
+SUBMISSION_ISSUE_FIELDS = ('path', 'url', 'status', 'reason', 'failed_condition', 'failed_conditions', 'page_only', 'need')
+
+
+def compact_submission_issue(issue: dict) -> dict:
+    """Keep actionable conditions; the complete observation is in the hashed result."""
+    return {key: issue[key] for key in SUBMISSION_ISSUE_FIELDS if key in issue}
+
+
+def decode_submission_reply(text: str, *, is_error: bool = False) -> dict | None:
+    """Decode a bound submit reply, including SDK-wrapped rejections only.
+
+    Callers must first bind the toolCallId to an actual submit_plan call. This
+    decoder provides diagnostics, never permission to accept an error reply.
+    """
+    if not isinstance(text, str):
+        return None
+    wrapped = text.startswith('Error: ')
+    try:
+        value = json.loads(text[len('Error: '):] if wrapped else text)
+    except (ValueError, TypeError):
+        return None
+    if (not isinstance(value, dict) or type(value.get('accepted')) is not bool
+            or ((is_error or wrapped) and value['accepted'])):
+        return None
+    if 'full_submission_result' not in value:
+        return value
+    # Large packets are rejection diagnostics; acceptance still uses the
+    # existing small, non-error, actual-plan-digest receipt.
+    reference = value['full_submission_result']
+    if (value['accepted'] or not isinstance(reference, dict)
+            or set(reference) != {'sha256', 'evidence_path'}
+            or not re.fullmatch(r'[a-f0-9]{64}', str(reference.get('sha256', '')))
+            or not isinstance(reference.get('evidence_path'), str)):
+        return None
+    path = Path(reference['evidence_path'])
+    try:
+        if path.suffix != '.json' or path.stat().st_size > 1024 * 1024:
+            return None
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != reference['sha256']:
+            return None
+        complete = json.loads(raw)
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if (not isinstance(complete, dict) or complete.get('accepted') is not False
+            or 'full_submission_result' in complete
+            or not isinstance(complete.get('issues'), list)
+            or not all(isinstance(issue, dict) for issue in complete['issues'])
+            or type(value.get('issue_count')) is not int or value['issue_count'] != len(complete['issues'])
+            or not isinstance(value.get('issues'), list)
+            or type(value.get('issues_truncated')) is not bool
+            or value['issues_truncated'] != (len(value['issues']) < len(complete['issues']))
+            or any(value.get(key) != complete.get(key) for key in SUBMISSION_CONTROL_FIELDS)
+            or value['issues'] != [compact_submission_issue(issue) for issue in complete['issues'][:len(value['issues'])]]):
+        return None
+    return complete
 
 
 def _safe_path(loc: tuple) -> str:

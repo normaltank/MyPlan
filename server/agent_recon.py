@@ -202,9 +202,14 @@ class ReconGateStopped(ReconPlanError):
 def _watch_gate(event: dict[str, Any], submit_calls: set, rejections: dict | None,
                 session_id: str) -> ReconGateStopped | None:
     """Follow submit_plan replies: keep the latest rejection, and stop when the gate says so."""
+    from server.recon_contract import decode_submission_reply
     data = event.get("data") or {}
-    if event.get("type") == "tool/call" and data.get("name") == "mcp__playwright__submit_plan":
-        submit_calls.add(data.get("callId"))
+    if event.get('type') == 'tool/call':
+        call_id = data.get('callId')
+        if data.get('name') == 'mcp__playwright__submit_plan' and isinstance(call_id, str) and call_id:
+            submit_calls.add(call_id)
+        else:
+            submit_calls.discard(call_id)
         return None
     if event.get("type") != "tool/result":
         return None
@@ -212,10 +217,8 @@ def _watch_gate(event: dict[str, Any], submit_calls: set, rejections: dict | Non
         if block.get("toolCallId") not in submit_calls:
             continue
         for content in block.get("content", []):
-            try:
-                reply = json.loads(content.get("text", "")) if content.get("type") == "text" else None
-            except (TypeError, ValueError):
-                reply = None
+            reply = (decode_submission_reply(content.get('text', ''), is_error=block.get('isError') is True)
+                     if content.get('type') == 'text' else None)
             if not isinstance(reply, dict):
                 continue
             if reply.get("accepted") is True:
@@ -1964,13 +1967,13 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
             run_kwargs: dict[str, Any] = {"session_id": session_id}
             def on_notification(notification: Any) -> None:
                 accepted_plan = None
+                gate_stop = None
                 if (notification.method == "session.event"
                         and notification.payload.get("sessionId") == session_id):
                     event = notification.payload.get("event")
                     if isinstance(event, dict):
                         seen_events.append(event)
-                        if stop := _watch_gate(event, submit_calls, cfg.get("gate_rejections"), session_id):
-                            raise stop
+                        gate_stop = _watch_gate(event, submit_calls, cfg.get("gate_rejections"), session_id)
                         phase_usage.observe(event)
                         if budget is not None:
                             budget.observe(event)
@@ -1988,6 +1991,8 @@ def _execute_harness(prompt: str, session_id: str, cfg: dict[str, Any], patches:
                 if ((cancel_event is not None and cancel_event.is_set())
                         or (branch_stop_event is not None and branch_stop_event.is_set())):
                     raise ReconCancelled("侦察已被调用方停止（超时）")
+                if gate_stop is not None:
+                    raise gate_stop
                 if accepted_plan is not None:
                     raise _ReconSubmissionComplete(accepted_plan)
             run_kwargs["on_notification"] = on_notification
