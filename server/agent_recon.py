@@ -1852,6 +1852,7 @@ def _run_staged_harness(session_id: str, cfg: dict[str, Any], patches: tuple[str
             raise error
         return SimpleNamespace(final_response=json.dumps(plan, ensure_ascii=False), finish_reason="completed",
                                 events=events, phase_metrics=phases,
+                                usage_unknown=any(phase.get('usage_unknown', False) for phase in phases),
                                 partial_metrics=partial_metrics,
                                 stop_reason=stop_reason,
                                 discovery_session_id=discovery_session_id,
@@ -2225,6 +2226,8 @@ async def reconnoiter(
                      (getattr(result, 'partial_metrics', None) or {}).items()
                      if key in {'model_calls', 'token_usage', 'budget_total'}},
                      **({"cost": budget.delta(budget_before)["cost"]} if budget else {}),
+                     "usage_unknown": bool(getattr(result, 'usage_unknown', False) or
+                         (budget and budget.delta(budget_before)["cost"]["unknown_calls"])),
                      **({'stop_reason': result.stop_reason} if getattr(result, 'stop_reason', None) else {}),
                      "phases": getattr(result, "phase_metrics", []),
                      "discovery_pages": discovery_evidence(
