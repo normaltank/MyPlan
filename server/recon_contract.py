@@ -141,9 +141,70 @@ def submission_schema(phase: str) -> dict:
     return MODELS.get(phase, Plan).model_json_schema()
 
 
+class SubmissionPlanInputError(ValueError):
+    """A controlled transport failure, never an exception containing plan values."""
+
+
+def submission_plan(plan: Any) -> dict:
+    """Decode one JSON-string transport layer, then keep all structural gates.
+
+    No envelope guessing, field removal, JSON repair or executable parsing.
+    Objects and their JSON encodings describe exactly the same configuration.
+    """
+    if isinstance(plan, dict):
+        return plan
+    if not isinstance(plan, str):
+        raise SubmissionPlanInputError('plan_object_missing')
+    try:
+        byte_count = len(plan.encode('utf-8'))
+    except UnicodeError:
+        raise SubmissionPlanInputError('plan_json_invalid_unicode') from None
+    if byte_count > 1024 * 1024:
+        raise SubmissionPlanInputError('plan_json_too_large')
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise SubmissionPlanInputError('plan_json_duplicate_key')
+            result[key] = value
+        return result
+
+    def invalid_constant(_value):
+        raise SubmissionPlanInputError('plan_json_nonfinite')
+
+    try:
+        parsed = json.loads(plan, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+    except SubmissionPlanInputError:
+        raise
+    except (ValueError, TypeError, RecursionError):
+        raise SubmissionPlanInputError('plan_json_invalid') from None
+    if not isinstance(parsed, dict):
+        raise SubmissionPlanInputError('plan_json_not_object')
+    try:
+        json.dumps(parsed, ensure_ascii=False, allow_nan=False).encode('utf-8')
+    except UnicodeError:
+        raise SubmissionPlanInputError('plan_json_invalid_unicode') from None
+    except ValueError:
+        raise SubmissionPlanInputError('plan_json_nonfinite') from None
+    except RecursionError:
+        raise SubmissionPlanInputError('plan_json_invalid') from None
+    return parsed
+
+
 def plan_digest(plan: Any) -> str:
-    return hashlib.sha256(json.dumps(plan, sort_keys=True, ensure_ascii=False,
-                                    separators=(",", ":")).encode("utf-8")).hexdigest()
+    try:
+        plan = submission_plan(plan)
+    except SubmissionPlanInputError:
+        pass  # Invalid proposals have a fingerprint, never execution authority.
+    raw = json.dumps(plan, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    try:
+        encoded = raw.encode('utf-8')
+    except UnicodeError:
+        # Invalid proposals still participate in bounded refusal accounting;
+        # valid Chinese object digests retain their original UTF-8 protocol.
+        encoded = json.dumps(plan, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode('ascii')
+    return hashlib.sha256(encoded).hexdigest()
 
 
 SUBMISSION_CONTROL_FIELDS = ('accepted', 'submission', 'unchanged_resubmission', 'stop', 'retry')
@@ -323,6 +384,14 @@ def validate_submission(plan: Any, phase: str, target: dict | None,
                         events: list[dict]) -> list[dict]:
     """Schema, queued target and current-browser proof; never return input values."""
     try:
+        plan = submission_plan(plan)
+    except SubmissionPlanInputError as exc:
+        return [{'path': '$.plan', 'status': 'schema_model_type', 'failed_condition': str(exc),
+                 'need': 'Call submit_plan with arguments.plan as the structural JSON object, or one '
+                         'JSON encoding of that object. Do not flatten the fields, wrap another plan, '
+                         'encode twice, add duplicate keys, or repair malformed JSON. No source '
+                         'qualification is granted by decoding.'}]
+    try:
         MODELS.get(phase, Plan).model_validate(plan)
     except ValidationError as exc:
         return [{"path": _safe_path(e["loc"]), "status": "schema_" + e["type"]}
@@ -367,7 +436,7 @@ def submitted_plan(events: list[dict]) -> dict | None:
         data = event.get("data") or {}
         if event.get("type") == "tool/call" and data.get("name") == "mcp__playwright__submit_plan":
             try:
-                calls[data["callId"]] = json.loads(data.get("arguments") or "{}").get("plan")
+                calls[data["callId"]] = submission_plan(json.loads(data.get("arguments") or "{}").get("plan"))
             except (ValueError, TypeError, KeyError):
                 continue
         elif event.get("type") == "tool/result":
